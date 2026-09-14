@@ -1,5 +1,5 @@
 import { MATERIALS, PRODUCTS, eventById } from '../game/data';
-import { MONTH_NAMES, money, signedMoney } from '../game/format';
+import { MONTH_NAMES, money, priceDelta, signedMoney } from '../game/format';
 import type { GameState } from '../game/types';
 
 export function BriefingModal({ state, onConfirm }: { state: GameState; onConfirm: () => void }) {
@@ -8,37 +8,59 @@ export function BriefingModal({ state, onConfirm }: { state: GameState; onConfir
   return (
     <div className="overlay">
       <div className="modal">
-        <p className="kicker" style={{ color: '#8a7040' }}>
-          {MONTH_NAMES[state.month - 1]} · 行业月报
-        </p>
-        <h2>开市之前</h2>
-        <p className="lead">原料报价先落地，成品需求随后公布。看完这张纸，才进入本月事件。</p>
-        <p className="kicker" style={{ color: '#8a7040', marginTop: 8 }}>
-          原料报价
-        </p>
-        <div className="market-table">
-          {visibleMaterials.map((item) => (
-            <div className="quote" key={item.id}>
-              <em>{item.name}</em>
-              <strong>{money(state.materialPrices[item.id])} / 件</strong>
-            </div>
-          ))}
-        </div>
-        <p className="kicker" style={{ color: '#8a7040' }}>
-          成品市价
-        </p>
-        <div className="market-table">
-          {products.map((item) => (
-            <div className="quote" key={item.id}>
-              <em>
-                {item.tier} · {item.name}
-              </em>
-              <strong>
-                {money(state.productPrices[item.id] ?? item.basePrice)} · 需求 {state.demand[item.id] ?? 0}
-              </strong>
-            </div>
-          ))}
-        </div>
+        <h2>{MONTH_NAMES[state.month - 1]} · 行业月报</h2>
+        <p className="sheet-caption">原料报价</p>
+        <table className="sheet">
+          <thead>
+            <tr>
+              <th>品种</th>
+              <th>代码</th>
+              <th className="num">报价</th>
+              <th className="num">较基准</th>
+            </tr>
+          </thead>
+          <tbody>
+            {visibleMaterials.map((item) => {
+              const price = state.materialPrices[item.id];
+              const delta = priceDelta(price, item.basePrice);
+              return (
+                <tr key={item.id}>
+                  <td>{item.name}</td>
+                  <td>{item.short}</td>
+                  <td className="num">{money(price)} / 件</td>
+                  <td className={`num delta-${delta.tone}`}>{delta.text}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+        <p className="sheet-caption">成品市价</p>
+        <table className="sheet">
+          <thead>
+            <tr>
+              <th>档位</th>
+              <th>产品</th>
+              <th className="num">市价</th>
+              <th className="num">需求</th>
+              <th className="num">较基准</th>
+            </tr>
+          </thead>
+          <tbody>
+            {products.map((item) => {
+              const price = state.productPrices[item.id] ?? item.basePrice;
+              const delta = priceDelta(price, item.basePrice);
+              return (
+                <tr key={item.id}>
+                  <td>{item.tier}</td>
+                  <td>{item.name}</td>
+                  <td className="num">{money(price)}</td>
+                  <td className="num">{state.demand[item.id] ?? 0}</td>
+                  <td className={`num delta-${delta.tone}`}>{delta.text}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
         <div className="footer-actions">
           <button className="btn" onClick={onConfirm}>
             收下月报
@@ -68,7 +90,10 @@ export function EventModal({
         <p className="lead">{event.body}</p>
         {event.choices.map((choice, index) => (
           <button className="choice" key={choice.label} onClick={() => onChoose(index)}>
-            <b>{choice.label}</b>
+            <span className="choice-top">
+              <b>{choice.label}</b>
+              <em>{choice.cost}</em>
+            </span>
             <span>{choice.hint}</span>
           </button>
         ))}

@@ -19,10 +19,13 @@ import {
 } from '../game/engine';
 import { MONTH_NAMES, ROLE_HINT, ROLE_LABEL, money, qty } from '../game/format';
 import type { GameAction, GameState, MaterialId, Role } from '../game/types';
+import { FinancePage } from './FinancePage';
+import { JournalPage } from './JournalPage';
 
 const ROLES: Role[] = ['production', 'management', 'sales', 'rd'];
 const QTY = [10, 20, 40];
-const LOAN = [20, 40, 80];
+const LOAN = [2, 4, 8];
+type MainPage = 'ops' | 'books' | 'journal';
 
 export function Board({
   state,
@@ -31,6 +34,7 @@ export function Board({
   state: GameState;
   dispatch: (action: GameAction) => void;
 }) {
+  const [page, setPage] = useState<MainPage>('ops');
   const [material, setMaterial] = useState<MaterialId>('a');
   const [buyQty, setBuyQty] = useState(20);
   const [loanAmt, setLoanAmt] = useState(40);
@@ -58,7 +62,7 @@ export function Board({
           </div>
         </div>
         <div className="stats">
-          <div className={`stat ${state.cash < 80 ? 'bad' : 'good'}`}>
+          <div className={`stat ${state.cash < 8 ? 'bad' : 'good'}`}>
             <em>现金</em>
             <strong>{money(state.cash)}</strong>
           </div>
@@ -66,7 +70,7 @@ export function Board({
             <em>负债</em>
             <strong>{money(state.debt)}</strong>
           </div>
-          <div className={`stat ${netAssetsOf(state) < 200 ? 'bad' : 'good'}`}>
+          <div className={`stat ${netAssetsOf(state) < 20 ? 'bad' : 'good'}`}>
             <em>净资产</em>
             <strong>{money(netAssetsOf(state))}</strong>
           </div>
@@ -81,8 +85,44 @@ export function Board({
         </div>
       </header>
 
+      <nav className="tabs" aria-label="主页面">
+        <button className={page === 'ops' ? 'tab on' : 'tab'} onClick={() => setPage('ops')}>
+          经营
+        </button>
+        <button className={page === 'books' ? 'tab on' : 'tab'} onClick={() => setPage('books')}>
+          财务报表
+        </button>
+        <button className={page === 'journal' ? 'tab on' : 'tab'} onClick={() => setPage('journal')}>
+          日志与成就
+        </button>
+      </nav>
+
+      {page === 'books' && <FinancePage state={state} />}
+      {page === 'journal' && <JournalPage state={state} />}
+      {page === 'ops' && (
       <div className="layout">
         <aside className="stack">
+          <section className="panel">
+            <h3>市场行情</h3>
+            {PRODUCTS.filter((item) => state.unlockedProducts.includes(item.id)).map((item) => (
+              <div className="row" key={item.id}>
+                <span>{item.name}</span>
+                <span>
+                  {money(state.productPrices[item.id] ?? item.basePrice)} · {demandOf(state, item.id)}
+                </span>
+              </div>
+            ))}
+            {state.modifiers.extraCapacity || state.modifiers.extraDemand || state.modifiers.priceBonus || state.modifiers.nextBuyDiscount ? (
+              <p className="hint" style={{ marginTop: 12 }}>
+                本月修正：产能 {state.modifiers.extraCapacity} · 需求 {state.modifiers.extraDemand} · 售价{' '}
+                {Math.round(state.modifiers.priceBonus * 100)}% · 采购折扣 {Math.round(state.modifiers.nextBuyDiscount * 100)}%
+              </p>
+            ) : (
+              <p className="hint" style={{ marginTop: 12 }}>
+                价格按 0.1～0.5 跳动，需求按 5 件一档。
+              </p>
+            )}
+          </section>
           <section className="panel">
             <h3>公司盘面</h3>
             <div className="row">
@@ -293,39 +333,8 @@ export function Board({
             </section>
           )}
         </main>
-
-        <aside className="stack">
-          <section className="panel">
-            <h3>市场行情</h3>
-            {PRODUCTS.filter((item) => state.unlockedProducts.includes(item.id)).map((item) => (
-              <div className="row" key={item.id}>
-                <span>{item.name}</span>
-                <span>
-                  {money(state.productPrices[item.id] ?? item.basePrice)} · {demandOf(state, item.id)}
-                </span>
-              </div>
-            ))}
-            {state.modifiers.extraCapacity || state.modifiers.extraDemand || state.modifiers.priceBonus || state.modifiers.nextBuyDiscount ? (
-              <p className="hint" style={{ marginTop: 12 }}>
-                本月修正：产能 {state.modifiers.extraCapacity} · 需求 {state.modifiers.extraDemand} · 售价{' '}
-                {Math.round(state.modifiers.priceBonus * 100)}% · 采购折扣 {Math.round(state.modifiers.nextBuyDiscount * 100)}%
-              </p>
-            ) : (
-              <p className="hint" style={{ marginTop: 12 }}>
-                价格与需求每月都会漂移。研发会改写 BOM 和可卖结构。
-              </p>
-            )}
-          </section>
-          <section className="panel">
-            <h3>经营日志</h3>
-            <div className="log">
-              {state.log.map((line, index) => (
-                <p key={`${line}-${index}`}>{line}</p>
-              ))}
-            </div>
-          </section>
-        </aside>
       </div>
+      )}
     </div>
   );
 }

@@ -274,9 +274,125 @@ h1,
   background: var(--gold);
 }
 
+.tabs {
+  display: flex;
+  gap: 6px;
+  margin: 14px 0 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.tab {
+  border: none;
+  background: transparent;
+  color: var(--cream-dim);
+  padding: 10px 16px 12px;
+  letter-spacing: 0.12em;
+}
+
+.tab.on {
+  color: var(--gold-2);
+  box-shadow: inset 0 -2px 0 var(--gold);
+}
+
+.page-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.page-grid.journal {
+  grid-template-columns: 0.9fr 1.1fr;
+  align-items: start;
+}
+
+.sheet.dark th,
+.sheet.dark td {
+  border-bottom-color: rgba(243, 234, 212, 0.08);
+  color: var(--cream);
+}
+
+.sheet.dark thead th,
+.sheet.dark tbody tr:last-child td {
+  border-bottom-color: var(--line-strong);
+  color: var(--gold);
+}
+
+.sheet.dark .delta-flat,
+.sheet.dark .muted,
+.muted {
+  color: var(--cream-dim);
+}
+
+.log.tall {
+  max-height: min(68vh, 720px);
+}
+
+.achieve-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.achieve {
+  border: 1px solid var(--line);
+  background: var(--ink-2);
+  padding: 12px;
+}
+
+.achieve.on {
+  border-color: var(--line-strong);
+  background: #2a3324;
+}
+
+.achieve b {
+  display: block;
+  font-family: var(--serif);
+  margin-bottom: 6px;
+}
+
+.achieve p {
+  margin: 0;
+  color: var(--cream-dim);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.achieve em {
+  display: block;
+  margin-top: 8px;
+  font-style: normal;
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  color: var(--cream-dim);
+}
+
+.achieve.on em {
+  color: var(--gold);
+}
+
+.page-stack {
+  display: grid;
+  gap: 16px;
+}
+
+.sheet-section td {
+  padding-top: 16px;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: var(--gold);
+}
+
+.sheet-total td {
+  font-weight: 650;
+}
+
+.sheet .indent {
+  padding-left: 22px;
+}
+
 .layout {
   display: grid;
-  grid-template-columns: 300px 1fr 300px;
+  grid-template-columns: 320px 1fr;
   gap: 16px;
   margin-top: 16px;
 }
@@ -485,29 +601,73 @@ h1,
   border-color: #b8892d;
 }
 
-.choice b {
-  display: block;
+.choice-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
   margin-bottom: 4px;
 }
 
-.market-table {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 10px;
-  margin: 16px 0 20px;
-}
-
-.quote {
-  border: 1px solid #e0d2ab;
-  padding: 10px 12px;
-  background: rgba(255, 255, 255, 0.28);
-}
-
-.quote em {
-  display: block;
+.choice-top em {
   font-style: normal;
   font-size: 12px;
-  color: #7a6a45;
+  letter-spacing: 0.04em;
+  color: #8a7040;
+}
+
+.choice b {
+  display: block;
+}
+
+.sheet-caption {
+  margin: 22px 0 8px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  font-size: 11px;
+  color: #8a7040;
+}
+
+.sheet {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.sheet th,
+.sheet td {
+  padding: 9px 10px;
+  border-bottom: 1px solid #e4d7b4;
+  text-align: left;
+}
+
+.sheet thead th {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  color: #8a7040;
+  border-bottom: 1px solid #c9b88a;
+}
+
+.sheet tbody tr:last-child td {
+  border-bottom: 1px solid #c9b88a;
+}
+
+.sheet .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.sheet .delta-up {
+  color: #a44a32;
+}
+
+.sheet .delta-down {
+  color: #2f7a5e;
+}
+
+.sheet .delta-flat {
+  color: #8a7a58;
 }
 
 .produce-list {
@@ -559,11 +719,13 @@ h1,
   color: #a44a32;
 }
 
-.modal.dark .good {
+.modal.dark .good,
+.panel .good {
   color: var(--mint);
 }
 
-.modal.dark .bad {
+.modal.dark .bad,
+.panel .bad {
   color: var(--rose);
 }
 
@@ -583,7 +745,10 @@ h1,
 @media (max-width: 1080px) {
   .layout,
   .rule-grid,
-  .cards {
+  .cards,
+  .page-grid,
+  .page-grid.journal,
+  .achieve-grid {
     grid-template-columns: 1fr;
   }
 
