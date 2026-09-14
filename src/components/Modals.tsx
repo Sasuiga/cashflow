@@ -1,4 +1,5 @@
 import { MATERIALS, PRODUCTS, eventById } from '../game/data';
+import { equityAccounts, receivablesGross } from '../game/engine';
 import { MONTH_NAMES, money, priceDelta, signedMoney } from '../game/format';
 import { QUARTER_LABEL, basicGoalOf, challengePoolOf, climateById, marketDigest } from '../game/board';
 import type { GameState } from '../game/types';
@@ -195,7 +196,7 @@ export function ReportModal({ state, onNext }: { state: GameState; onNext: () =>
             </div>
           ))}
           <div>
-            <b>净现金流</b>
+            <b>本月收付净额</b>
             <b className={report.netCash >= 0 ? 'good' : 'bad'}>{signedMoney(report.netCash)}</b>
           </div>
           <div>
@@ -209,8 +210,24 @@ export function ReportModal({ state, onNext }: { state: GameState; onNext: () =>
             <span>{money(state.wagesPayable)}</span>
           </div>
           <div>
+            <span>应收账款 / 坏账准备</span>
+            <span>
+              {money(receivablesGross(state))} / {money(state.badDebtProvision ?? 0)}
+            </span>
+          </div>
+          <div>
+            <span>存货跌价准备</span>
+            <span>{money(state.inventoryProvision ?? 0)}</span>
+          </div>
+          <div>
             <span>净资产</span>
             <span className={report.netAssets >= 0 ? 'good' : 'bad'}>{money(report.netAssets)}</span>
+          </div>
+          <div>
+            <span>实收资本 / 盈余公积 / 未分配利润</span>
+            <span>
+              {money(equityAccounts(state).paidIn)} / {money(equityAccounts(state).surplus)} / {money(equityAccounts(state).retained)}
+            </span>
           </div>
         </div>
         {report.rdNote && <p className="lead">{report.rdNote}</p>}

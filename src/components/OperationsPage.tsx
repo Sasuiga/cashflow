@@ -1,5 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import {
+  AR_TERM_MONTHS,
+  CREDIT_SALE_RATE,
   FACTORY_COST,
   HAND_LIMIT,
   FACTORY_UPKEEP,
@@ -12,22 +14,29 @@ import {
   RD_UNLOCKS,
   SALARY,
   WORKERS_PER_MACHINE,
+  arCreditLossRate,
   cardById,
   eventById,
   productById,
 } from '../game/data';
 import {
-  bomCost,
+  arOverdueOf,
+  bomBookCost,
   capacityOf,
   demandOf,
+  finishedMaxAge,
+  finishedProvisionOf,
   hireEffectLines,
   loanLimit,
+  materialMaxAge,
+  materialProvisionOf,
   maxProduce,
   monthlyInterest,
   monthlySalary,
   monthOutlook,
   netAssetsOf,
   nextCardBuyAp,
+  receivablesNet,
   sellPriceOf,
   totalStaff,
 } from '../game/engine';
@@ -294,11 +303,22 @@ export function OperationsPage({
           </Actions>
         </Dept>
 
-        <Dept title="财务部" intro="借款、还款，调度现金与负债。" done={deptDone(state, 'finance')} open={open.finance} onToggle={() => toggle('finance')} wide>
+        <Dept title="财务部" intro="借款、还款，并盯紧应收账款账龄。" done={deptDone(state, 'finance')} open={open.finance} onToggle={() => toggle('finance')} wide>
           <Facts>
             <div className="row">
               <span>货币资金</span>
               <span>{money(state.cash)}</span>
+            </div>
+            <div className="row">
+              <span>应收账款</span>
+              <span>
+                账面 {money(receivablesNet(state))}
+                {(state.badDebtProvision ?? 0) > 0 ? `（已提坏账 ${money(state.badDebtProvision)}）` : ''}
+              </span>
+            </div>
+            <div className="row">
+              <span>其中逾期</span>
+              <span>{arOverdueOf(state) > 0 ? money(arOverdueOf(state)) : '无'}</span>
             </div>
             <div className="row">
               <span>短期借款</span>
@@ -318,6 +338,9 @@ export function OperationsPage({
               <span>净资产</span>
               <span>{money(netAssetsOf(state))}</span>
             </div>
+            <p className="hint" style={{ marginTop: 10 }}>
+              货款默认 {Math.round(CREDIT_SALE_RATE * 100)}% 赊销、账期 {AR_TERM_MONTHS} 个月。到期收回 65%，逾期 1 / 2 个月再收 40% / 20%。坏账准备：未到期 5%，逾期 1 / 2 / 3 个月及以上分别为 {Math.round(arCreditLossRate(1) * 100)}% / {Math.round(arCreditLossRate(2) * 100)}% / 100%。
+            </p>
           </Facts>
           <Actions
             note={
@@ -427,7 +450,7 @@ export function OperationsPage({
           </Actions>
         </Dept>
 
-        <Dept title="采购部" intro="按报价采购原料入库。" done={deptDone(state, 'store')} open={open.store} onToggle={() => toggle('store')}>
+        <Dept title="采购部" intro="按报价采购原料入库。库龄越长，跌价准备越高。" done={deptDone(state, 'store')} open={open.store} onToggle={() => toggle('store')}>
           <Facts title="库房现状">
             <div className="sheet-wrap">
             <table className="sheet dark">
@@ -436,18 +459,25 @@ export function OperationsPage({
                   <th>原料</th>
                   <th className="num">库存</th>
                   <th className="num">报价</th>
-                  <th className="num">存货金额</th>
+                  <th className="num">账面成本</th>
+                  <th className="num">最长库龄</th>
+                  <th className="num">跌价准备</th>
                 </tr>
               </thead>
               <tbody>
-                {visibleMaterials.map((item) => (
+                {visibleMaterials.map((item) => {
+                  const age = materialMaxAge(state, item.id);
+                  return (
                   <tr key={item.id}>
                     <td>{item.name}</td>
                     <td className="num">{qty(state.materials[item.id])}</td>
                     <td className="num">{money(state.materialPrices[item.id])} / 件</td>
-                    <td className="num">{money(state.materials[item.id] * state.materialPrices[item.id])}</td>
+                    <td className="num">{money(state.materialCost?.[item.id] ?? 0)}</td>
+                    <td className="num">{state.materials[item.id] > 0 ? `${age} 个月` : '—'}</td>
+                    <td className="num">{money(materialProvisionOf(state, item.id))}</td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
             </div>
@@ -458,11 +488,18 @@ export function OperationsPage({
                   .map((item) => (
                     <div className="row" key={item.id}>
                       <span>成品库存 · {item.name}</span>
-                      <span>{qty(state.finished[item.id] ?? 0)}</span>
+                      <span>
+                        {qty(state.finished[item.id] ?? 0)} · 账面 {money(state.finishedCost?.[item.id] ?? 0)}
+                        {finishedMaxAge(state, item.id) > 0 ? ` · 库龄 ${finishedMaxAge(state, item.id)} 个月` : ''}
+                        {finishedProvisionOf(state, item.id) > 0 ? ` · 跌价 ${money(finishedProvisionOf(state, item.id))}` : ''}
+                      </span>
                     </div>
                   ))}
               </div>
             )}
+            <p className="hint" style={{ marginTop: 10 }}>
+              库龄 0–1 个月不提跌价；2 个月 10%，3 个月 25%，4–5 个月 40%，6 个月及以上 70%。当月新增下月起算库龄。
+            </p>
           </Facts>
           <Actions note={acting ? (buyApFree ? '第三、四季度采购不耗行动点，仍要付现。' : '一次采购只买一种原料。有折扣时会写在报价里。') : '采购单要等事件结束后才能下。'}>
             <div className="qty-row">
@@ -531,7 +568,7 @@ export function OperationsPage({
                       {item.tier} · {item.name}
                     </td>
                     <td>{bomLabel(item.bom)}</td>
-                    <td className="num">{money(bomCost(state, item.id))}</td>
+                    <td className="num">{money(bomBookCost(state, item.id))}</td>
                   </tr>
                 ))}
               </tbody>
@@ -604,7 +641,7 @@ export function OperationsPage({
                           <span>可产 {can}</span>
                           <span>需求 {demand}</span>
                           <span>单价 {money(price)}</span>
-                          <span>单件成本 {money(bomCost(state, item.id))}</span>
+                          <span>单件料本 {money(bomBookCost(state, item.id))}</span>
                           <span>预计收入 {money(sold * price)}</span>
                           <span>{sold < demand ? '可能欠单' : '需求可覆盖'}</span>
                         </div>

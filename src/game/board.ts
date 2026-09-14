@@ -38,7 +38,7 @@ export const CLIMATES: ClimateDef[] = [
     name: '渠道要量',
     headline: '经销商在锁货，走量订单更密。',
     briefing: '本季市场：渠道要量。需求偏高，交不齐单会被追责。',
-    eventIds: ['bigOrder', 'rushOrder', 'channelHold'],
+    eventIds: ['bigOrder', 'rushOrder', 'channelHold', 'arDelay', 'customerBreak'],
   },
   {
     id: 'chip',
@@ -52,7 +52,7 @@ export const CLIMATES: ClimateDef[] = [
     name: '价格战',
     headline: '同行在清库存，标价承压。',
     briefing: '本季市场：价格战。售价容易被压，毛利变薄。',
-    eventIds: ['dump', 'quality'],
+    eventIds: ['dump', 'quality', 'stockAge', 'dampStock'],
   },
 ];
 

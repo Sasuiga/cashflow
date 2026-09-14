@@ -46,7 +46,7 @@ export function scoreOf(state: GameState): { total: number; title: string; lines
       detail:
         state.endKind === 'bankrupt'
           ? '破产不计'
-          : `存货按市价一半计入，每 40 万 1 分，现 ${net}万`,
+          : `原材料按账面净值一半计入，每 40 万 1 分，现 ${net}万`,
       points: netPoints,
     },
     ...boardLines,

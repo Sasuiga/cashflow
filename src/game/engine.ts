@@ -4,16 +4,25 @@ import {
   CAP_PER_WORKER,
   CARDS,
   EVENTS,
-  FACTORY_BOOK,
   FACTORY_COST,
+  FACTORY_LIFE_MONTHS,
   FACTORY_UPKEEP,
   HAND_LIMIT,
   HIRE_COST,
+  INCOME_TAX_RATE,
   INTEREST_RATE,
   LOAN_PER_MACHINE,
+  STATUTORY_RESERVE_CAP,
+  STATUTORY_RESERVE_RATE,
+  AR_TERM_MONTHS,
+  AR_WRITEOFF_PAST_DUE,
+  CREDIT_SALE_RATE,
+  arCollectionRate,
+  arCreditLossRate,
+  inventoryWriteDownRate,
   MACHINE_BASE_CAP,
-  MACHINE_BOOK,
   MACHINE_COST,
+  MACHINE_LIFE_MONTHS,
   MATERIALS,
   MATERIAL_IDS,
   PRODUCTS,
@@ -47,13 +56,17 @@ import type {
   GameAction,
   GameState,
   MaterialId,
+  Materials,
   Modifiers,
   MonthBooks,
   MonthLedger,
   ProductId,
+  ReceivableLot,
   Role,
+  SettlementLine,
   SettlementReport,
   Staff,
+  StockLayer,
 } from './types';
 
 function clone<T>(value: T): T {
@@ -79,6 +92,10 @@ function emptyModifiers(): Modifiers {
     priceBonus: 0,
     nextBuyDiscount: 0,
     secondProduct: false,
+    collectionBonus: 0,
+    creditSaleRate: 0,
+    arTermExtra: 0,
+    stockAgeBias: 0,
   };
 }
 
@@ -185,6 +202,41 @@ export function bomCost(state: GameState, id: ProductId): number {
   return roundPrice(cost);
 }
 
+export function bomBookCost(state: GameState, id: ProductId): number {
+  const bom = productById(id).bom;
+  let cost = 0;
+  for (const key of MATERIAL_IDS) {
+    const need = bom[key] ?? 0;
+    if (need <= 0) continue;
+    const qty = state.materials[key] ?? 0;
+    const unit = qty > 0 ? avgMaterialCost(state, key) : (state.materialPrices[key] ?? 0);
+    cost += need * unit;
+  }
+  return roundMoney(cost);
+}
+
+export function operatingProfitOf(ledger: MonthLedger): number {
+  return roundMoney(
+    ledger.revenue -
+      ledger.cogs -
+      ledger.taxes -
+      ledger.selling -
+      ledger.admin -
+      (ledger.rd ?? 0) -
+      ledger.finance -
+      (ledger.creditImpairment ?? 0) -
+      (ledger.assetImpairment ?? 0),
+  );
+}
+
+export function profitBeforeTaxOf(ledger: MonthLedger): number {
+  return roundMoney(operatingProfitOf(ledger) + ledger.extraIncome - ledger.extraExpense);
+}
+
+export function netProfitOf(ledger: MonthLedger): number {
+  return roundMoney(profitBeforeTaxOf(ledger) - (ledger.incomeTax ?? 0));
+}
+
 export function maxProduce(state: GameState, id: ProductId): number {
   const bom = productById(id).bom;
   let limit = capacityOf(state);
@@ -217,28 +269,86 @@ export function monthOutlook(state: GameState): string {
 }
 
 export function materialValue(state: GameState): number {
-  return MATERIAL_IDS.reduce((sum, id) => sum + state.materials[id] * state.materialPrices[id], 0);
+  return MATERIAL_IDS.reduce((sum, id) => sum + (state.materialCost?.[id] ?? 0), 0);
 }
 
 export function finishedValue(state: GameState): number {
-  return (Object.keys(state.finished) as ProductId[]).reduce((sum, id) => {
-    return sum + (state.finished[id] ?? 0) * sellPriceOf(state, id) * 0.6;
-  }, 0);
+  return (Object.keys(state.finished) as ProductId[]).reduce((sum, id) => sum + (state.finishedCost?.[id] ?? 0), 0);
+}
+
+export function wipValue(state: GameState): number {
+  return state.wip ?? 0;
+}
+
+export function inventoryValue(state: GameState): number {
+  return roundMoney(Math.max(0, materialValue(state) + wipValue(state) + finishedValue(state) - (state.inventoryProvision ?? 0)));
+}
+
+export function receivablesGross(state: GameState): number {
+  return roundMoney((state.receivables ?? []).reduce((sum, lot) => sum + lot.amount, 0));
+}
+
+export function receivablesNet(state: GameState): number {
+  return roundMoney(Math.max(0, receivablesGross(state) - (state.badDebtProvision ?? 0)));
+}
+
+export function inventoryProvisionOf(state: GameState): number {
+  return state.inventoryProvision ?? 0;
+}
+
+export function fixedAssetCostOf(state: GameState): number {
+  return roundMoney((state.machineGross ?? 0) + (state.factoryGross ?? 0));
+}
+
+export function accumDepOf(state: GameState): number {
+  return roundMoney((state.accumDepMachines ?? 0) + (state.accumDepFactories ?? 0));
 }
 
 export function bookAssets(state: GameState): number {
-  return state.machines * MACHINE_BOOK + state.factories * FACTORY_BOOK;
+  return roundMoney(fixedAssetCostOf(state) - accumDepOf(state));
 }
 
 export function netAssetsOf(state: GameState): number {
   return roundMoney(
-    state.cash + materialValue(state) + finishedValue(state) + bookAssets(state) - state.debt - state.wagesPayable,
+    state.cash +
+      receivablesNet(state) +
+      inventoryValue(state) +
+      bookAssets(state) -
+      state.debt -
+      state.wagesPayable -
+      (state.taxPayable ?? 0),
   );
 }
 
+export function equityAccounts(state: GameState): { paidIn: number; surplus: number; retained: number; total: number } {
+  const paidIn = state.paidInCapital ?? 0;
+  const surplus = state.surplusReserve ?? 0;
+  const total = netAssetsOf(state);
+  return {
+    paidIn,
+    surplus,
+    retained: roundMoney(total - paidIn - surplus),
+    total,
+  };
+}
+
 export function scoreNetAssets(state: GameState): number {
+  const matGross = materialValue(state);
+  const fgGross = finishedValue(state);
+  const invGross = roundMoney(matGross + fgGross);
+  const prov = state.inventoryProvision ?? 0;
+  const matProv = invGross > 0 ? roundMoney(prov * (matGross / invGross)) : 0;
+  const fgProv = roundMoney(prov - matProv);
   return roundMoney(
-    state.cash + materialValue(state) * 0.5 + finishedValue(state) + bookAssets(state) - state.debt - state.wagesPayable,
+    state.cash +
+      receivablesNet(state) +
+      Math.max(0, matGross - matProv) * 0.5 +
+      wipValue(state) +
+      Math.max(0, fgGross - fgProv) +
+      bookAssets(state) -
+      state.debt -
+      state.wagesPayable -
+      (state.taxPayable ?? 0),
   );
 }
 
@@ -278,6 +388,10 @@ export function emptyLedger(): MonthLedger {
     finance: 0,
     extraIncome: 0,
     extraExpense: 0,
+    rd: 0,
+    creditImpairment: 0,
+    assetImpairment: 0,
+    incomeTax: 0,
     cfSales: 0,
     cfBuy: 0,
     cfEmployees: 0,
@@ -296,25 +410,58 @@ export function emptyBooks(): MonthBooks {
     month: 0,
     title: '开业',
     cash: 0,
+    materials: 0,
+    wip: 0,
+    finished: 0,
     inventory: 0,
+    inventoryProvision: 0,
+    receivables: 0,
+    badDebtProvision: 0,
+    receivablesNet: 0,
+    fixedAssetCost: 0,
+    accumDep: 0,
     fixedAssets: 0,
     borrowings: 0,
     wagesPayable: 0,
+    taxPayable: 0,
+    paidInCapital: 0,
+    surplusReserve: 0,
+    retainedEarnings: 0,
     equity: 0,
     ledger: emptyLedger(),
   };
 }
 
 export function snapshotBooks(state: GameState, title: string): MonthBooks {
+  const equity = equityAccounts(state);
+  const materials = materialValue(state);
+  const wip = wipValue(state);
+  const finished = finishedValue(state);
+  const inventoryProvision = state.inventoryProvision ?? 0;
+  const receivables = receivablesGross(state);
+  const badDebtProvision = state.badDebtProvision ?? 0;
   return {
     month: state.month,
     title,
     cash: state.cash,
-    inventory: roundMoney(materialValue(state) + finishedValue(state)),
+    materials,
+    wip,
+    finished,
+    inventory: roundMoney(materials + wip + finished),
+    inventoryProvision,
+    receivables,
+    badDebtProvision,
+    receivablesNet: roundMoney(Math.max(0, receivables - badDebtProvision)),
+    fixedAssetCost: fixedAssetCostOf(state),
+    accumDep: accumDepOf(state),
     fixedAssets: bookAssets(state),
     borrowings: state.debt,
     wagesPayable: state.wagesPayable,
-    equity: netAssetsOf(state),
+    taxPayable: state.taxPayable ?? 0,
+    paidInCapital: equity.paidIn,
+    surplusReserve: equity.surplus,
+    retainedEarnings: equity.retained,
+    equity: equity.total,
     ledger: clone(state.ledger),
   };
 }
@@ -322,7 +469,7 @@ export function snapshotBooks(state: GameState, title: string): MonthBooks {
 function pay(
   state: GameState,
   amount: number,
-  kind: 'buy' | 'wage' | 'selling' | 'admin' | 'tax' | 'extra' | 'capex' | 'repay' | 'finance',
+  kind: 'buy' | 'wage' | 'selling' | 'admin' | 'tax' | 'incomeTax' | 'extra' | 'capex' | 'repay' | 'finance' | 'opOut',
 ): void {
   const n = roundMoney(amount);
   if (n <= 0) return;
@@ -344,6 +491,12 @@ function pay(
     state.ledger.taxes = roundMoney(state.ledger.taxes + n);
     state.ledger.cfTaxes = roundMoney(state.ledger.cfTaxes + n);
   }
+  if (kind === 'incomeTax') {
+    state.ledger.cfTaxes = roundMoney(state.ledger.cfTaxes + n);
+  }
+  if (kind === 'opOut') {
+    state.ledger.cfOtherOpOut = roundMoney(state.ledger.cfOtherOpOut + n);
+  }
   if (kind === 'extra') {
     state.ledger.extraExpense = roundMoney(state.ledger.extraExpense + n);
     state.ledger.cfOtherOpOut = roundMoney(state.ledger.cfOtherOpOut + n);
@@ -356,18 +509,31 @@ function pay(
   }
 }
 
-function accrueWages(state: GameState, amount: number): void {
+function accrueRoleWages(state: GameState, role: Role, amount: number): void {
   const n = roundMoney(amount);
   if (n <= 0) return;
+  if (!state.wagesAccruedByRole) state.wagesAccruedByRole = emptyWageAccrual();
   state.wagesPayable = roundMoney(state.wagesPayable + n);
   state.wagesAccruedThisMonth = roundMoney(state.wagesAccruedThisMonth + n);
-  state.ledger.admin = roundMoney(state.ledger.admin + n);
+  state.wagesAccruedByRole[role] = roundMoney((state.wagesAccruedByRole[role] ?? 0) + n);
+  if (role === 'production') {
+    state.wip = roundMoney((state.wip ?? 0) + n);
+  } else if (role === 'sales') {
+    state.ledger.selling = roundMoney((state.ledger.selling ?? 0) + n);
+  } else if (role === 'rd') {
+    state.ledger.rd = roundMoney((state.ledger.rd ?? 0) + n);
+  } else {
+    state.ledger.admin = roundMoney(state.ledger.admin + n);
+  }
 }
 
 function syncMonthWages(state: GameState): number {
-  const need = roundMoney(monthlySalary(state.staff));
-  accrueWages(state, roundMoney(need - state.wagesAccruedThisMonth));
-  return need;
+  if (!state.wagesAccruedByRole) state.wagesAccruedByRole = emptyWageAccrual();
+  (['production', 'management', 'sales', 'rd'] as Role[]).forEach((role) => {
+    const need = roundMoney(state.staff[role] * SALARY[role]);
+    accrueRoleWages(state, role, roundMoney(need - (state.wagesAccruedByRole[role] ?? 0)));
+  });
+  return roundMoney(monthlySalary(state.staff));
 }
 
 function payAccruedWages(state: GameState, amount: number): void {
@@ -501,6 +667,299 @@ function beginQuarter(state: GameState, quarter: 1 | 2 | 3 | 4): void {
   state.phase = 'board';
 }
 
+function emptyWageAccrual(): Record<Role, number> {
+  return { production: 0, management: 0, sales: 0, rd: 0 };
+}
+
+function openingMaterialCost(materials: Materials): Materials {
+  const cost = { a: 0, b: 0, c: 0, d: 0 };
+  for (const item of MATERIALS) {
+    cost[item.id] = roundMoney(materials[item.id] * item.basePrice);
+  }
+  return cost;
+}
+
+function emptyMaterialLayers(): Record<MaterialId, StockLayer[]> {
+  return { a: [], b: [], c: [], d: [] };
+}
+
+function openingMaterialLayers(materials: Materials): Record<MaterialId, StockLayer[]> {
+  const layers = emptyMaterialLayers();
+  for (const item of MATERIALS) {
+    const qty = materials[item.id];
+    if (qty > 0) {
+      layers[item.id] = [{ qty, cost: roundMoney(qty * item.basePrice), receivedMonth: 1 }];
+    }
+  }
+  return layers;
+}
+
+function compactLayers(layers: StockLayer[]): StockLayer[] {
+  const merged: StockLayer[] = [];
+  for (const layer of layers) {
+    if (layer.qty <= 0 || layer.cost <= 0) continue;
+    const last = merged[merged.length - 1];
+    if (last && last.receivedMonth === layer.receivedMonth) {
+      last.qty += layer.qty;
+      last.cost = roundMoney(last.cost + layer.cost);
+    } else {
+      merged.push({ ...layer });
+    }
+  }
+  return merged;
+}
+
+function takeFromLayers(layers: StockLayer[], qty: number): { qty: number; cost: number; layers: StockLayer[] } {
+  let need = qty;
+  let cost = 0;
+  const next: StockLayer[] = [];
+  for (const layer of layers) {
+    if (need <= 0) {
+      next.push(layer);
+      continue;
+    }
+    const take = Math.min(layer.qty, need);
+    const takeCost = layer.qty > 0 ? roundMoney(layer.cost * (take / layer.qty)) : 0;
+    cost = roundMoney(cost + takeCost);
+    need -= take;
+    const remainQty = layer.qty - take;
+    if (remainQty > 0) next.push({ ...layer, qty: remainQty, cost: roundMoney(layer.cost - takeCost) });
+  }
+  return { qty: roundMoney(qty - need), cost: roundMoney(cost), layers: compactLayers(next) };
+}
+
+function addLayer(layers: StockLayer[] | undefined, qty: number, cost: number, month: number): StockLayer[] {
+  if (qty <= 0 || cost <= 0) return compactLayers(layers ?? []);
+  return compactLayers([...(layers ?? []), { qty, cost: roundMoney(cost), receivedMonth: month }]);
+}
+
+function syncMaterialBooks(state: GameState): void {
+  if (!state.materialLayers) state.materialLayers = emptyMaterialLayers();
+  for (const id of MATERIAL_IDS) {
+    const layers = state.materialLayers[id] ?? [];
+    state.materials[id] = layers.reduce((sum, layer) => sum + layer.qty, 0);
+    state.materialCost[id] = roundMoney(layers.reduce((sum, layer) => sum + layer.cost, 0));
+  }
+}
+
+function syncFinishedBooks(state: GameState): void {
+  if (!state.finishedLayers) state.finishedLayers = {};
+  const finished: Partial<Record<ProductId, number>> = {};
+  const finishedCost: Partial<Record<ProductId, number>> = {};
+  (Object.keys(state.finishedLayers) as ProductId[]).forEach((id) => {
+    const layers = compactLayers(state.finishedLayers[id] ?? []);
+    state.finishedLayers[id] = layers;
+    const qty = layers.reduce((sum, layer) => sum + layer.qty, 0);
+    const cost = roundMoney(layers.reduce((sum, layer) => sum + layer.cost, 0));
+    if (qty > 0) {
+      finished[id] = qty;
+      finishedCost[id] = cost;
+    }
+  });
+  state.finished = finished;
+  state.finishedCost = finishedCost;
+}
+
+function layerAge(layer: StockLayer, month: number, bias = 0): number {
+  return Math.max(0, month - layer.receivedMonth + bias);
+}
+
+export function materialMaxAge(state: GameState, id: MaterialId): number {
+  const layers = state.materialLayers?.[id] ?? [];
+  if (!layers.length) return 0;
+  return Math.max(...layers.map((layer) => layerAge(layer, state.month, state.modifiers?.stockAgeBias ?? 0)));
+}
+
+export function finishedMaxAge(state: GameState, id: ProductId): number {
+  const layers = state.finishedLayers?.[id] ?? [];
+  if (!layers.length) return 0;
+  return Math.max(...layers.map((layer) => layerAge(layer, state.month, state.modifiers?.stockAgeBias ?? 0)));
+}
+
+export function materialProvisionOf(state: GameState, id: MaterialId): number {
+  const bias = state.modifiers?.stockAgeBias ?? 0;
+  return roundMoney(
+    (state.materialLayers?.[id] ?? []).reduce(
+      (sum, layer) => sum + layer.cost * inventoryWriteDownRate(layerAge(layer, state.month, bias)),
+      0,
+    ),
+  );
+}
+
+export function finishedProvisionOf(state: GameState, id: ProductId): number {
+  const bias = state.modifiers?.stockAgeBias ?? 0;
+  return roundMoney(
+    (state.finishedLayers?.[id] ?? []).reduce(
+      (sum, layer) => sum + layer.cost * inventoryWriteDownRate(layerAge(layer, state.month, bias)),
+      0,
+    ),
+  );
+}
+
+function targetInventoryProvision(state: GameState): number {
+  let total = 0;
+  for (const id of MATERIAL_IDS) total = roundMoney(total + materialProvisionOf(state, id));
+  (Object.keys(state.finishedLayers ?? {}) as ProductId[]).forEach((id) => {
+    total = roundMoney(total + finishedProvisionOf(state, id));
+  });
+  return total;
+}
+
+function remeasureInventoryProvision(state: GameState): number {
+  const target = targetInventoryProvision(state);
+  const delta = roundMoney(target - (state.inventoryProvision ?? 0));
+  state.inventoryProvision = target;
+  if (delta !== 0) state.ledger.assetImpairment = roundMoney((state.ledger.assetImpairment ?? 0) + delta);
+  return delta;
+}
+
+function creditSaleRateOf(state: GameState): number {
+  if ((state.modifiers?.creditSaleRate ?? 0) > 0) return Math.min(1, state.modifiers.creditSaleRate);
+  return CREDIT_SALE_RATE;
+}
+
+function arTermOf(state: GameState): number {
+  return AR_TERM_MONTHS + (state.modifiers?.arTermExtra ?? 0);
+}
+
+function overdueAmount(state: GameState): number {
+  return roundMoney(
+    (state.receivables ?? []).reduce((sum, lot) => (state.month - lot.dueMonth >= 1 ? sum + lot.amount : sum), 0),
+  );
+}
+
+export function arOverdueOf(state: GameState): number {
+  return overdueAmount(state);
+}
+
+function targetBadDebtProvision(state: GameState): number {
+  return roundMoney(
+    (state.receivables ?? []).reduce((sum, lot) => {
+      const past = state.month - lot.dueMonth;
+      return sum + lot.amount * arCreditLossRate(past);
+    }, 0),
+  );
+}
+
+function remeasureBadDebt(state: GameState): number {
+  const target = Math.min(targetBadDebtProvision(state), receivablesGross(state));
+  const delta = roundMoney(target - (state.badDebtProvision ?? 0));
+  state.badDebtProvision = target;
+  if (delta !== 0) state.ledger.creditImpairment = roundMoney((state.ledger.creditImpairment ?? 0) + delta);
+  return delta;
+}
+
+function collectReceivables(state: GameState, bonus = 0, dueAndOverdueOnly = true): number {
+  if (!state.receivables) state.receivables = [];
+  let collected = 0;
+  const kept: ReceivableLot[] = [];
+  for (const lot of state.receivables) {
+    const past = state.month - lot.dueMonth;
+    if (dueAndOverdueOnly && past < 0) {
+      kept.push(lot);
+      continue;
+    }
+    const rate = Math.min(1, Math.max(0, arCollectionRate(past) + bonus));
+    const take = roundMoney(lot.amount * rate);
+    if (take > 0) {
+      state.cash = roundMoney(state.cash + take);
+      state.ledger.cfSales = roundMoney(state.ledger.cfSales + take);
+      lot.amount = roundMoney(lot.amount - take);
+      collected = roundMoney(collected + take);
+      notePeakCash(state);
+    }
+    if (lot.amount > 0.05) kept.push(lot);
+  }
+  state.receivables = kept;
+  return collected;
+}
+
+function writeOffAgedReceivables(state: GameState): number {
+  if (!state.receivables) state.receivables = [];
+  let written = 0;
+  const kept: ReceivableLot[] = [];
+  for (const lot of state.receivables) {
+    const past = state.month - lot.dueMonth;
+    if (past >= AR_WRITEOFF_PAST_DUE) {
+      written = roundMoney(written + lot.amount);
+      state.ledger.creditImpairment = roundMoney((state.ledger.creditImpairment ?? 0) + lot.amount);
+    } else {
+      kept.push(lot);
+    }
+  }
+  state.receivables = kept;
+  return written;
+}
+
+function recognizeSale(state: GameState, revenue: number): { cash: number; credit: number } {
+  const rate = creditSaleRateOf(state);
+  const credit = roundMoney(revenue * rate);
+  const cash = roundMoney(revenue - credit);
+  state.ledger.revenue = roundMoney(state.ledger.revenue + revenue);
+  if (cash > 0) {
+    state.cash = roundMoney(state.cash + cash);
+    state.ledger.cfSales = roundMoney(state.ledger.cfSales + cash);
+    notePeakCash(state);
+  }
+  if (credit > 0) {
+    if (!state.receivables) state.receivables = [];
+    state.receivables.push({
+      amount: credit,
+      originMonth: state.month,
+      dueMonth: state.month + arTermOf(state),
+    });
+  }
+  return { cash, credit };
+}
+
+function ensureImpairmentState(state: GameState): void {
+  if (!state.materialLayers) {
+    state.materialLayers = emptyMaterialLayers();
+    for (const id of MATERIAL_IDS) {
+      const qty = state.materials[id] ?? 0;
+      const cost = state.materialCost?.[id] ?? 0;
+      if (qty > 0) state.materialLayers[id] = [{ qty, cost, receivedMonth: state.month }];
+    }
+  }
+  if (!state.finishedLayers) {
+    state.finishedLayers = {};
+    (Object.keys(state.finished ?? {}) as ProductId[]).forEach((id) => {
+      const qty = state.finished[id] ?? 0;
+      const cost = state.finishedCost?.[id] ?? 0;
+      if (qty > 0) state.finishedLayers[id] = [{ qty, cost, receivedMonth: state.month }];
+    });
+  }
+  if (!state.receivables) state.receivables = [];
+  if (typeof state.inventoryProvision !== 'number') state.inventoryProvision = 0;
+  if (typeof state.badDebtProvision !== 'number') state.badDebtProvision = 0;
+  if (!state.modifiers) state.modifiers = emptyModifiers();
+  if (typeof state.modifiers.collectionBonus !== 'number') state.modifiers.collectionBonus = 0;
+  if (typeof state.modifiers.creditSaleRate !== 'number') state.modifiers.creditSaleRate = 0;
+  if (typeof state.modifiers.arTermExtra !== 'number') state.modifiers.arTermExtra = 0;
+  if (typeof state.modifiers.stockAgeBias !== 'number') state.modifiers.stockAgeBias = 0;
+}
+
+function avgMaterialCost(state: GameState, id: MaterialId): number {
+  const qty = state.materials[id] ?? 0;
+  if (qty <= 0) return 0;
+  return (state.materialCost[id] ?? 0) / qty;
+}
+
+function takeMaterialCost(state: GameState, id: MaterialId, qty: number): { qty: number; cost: number } {
+  ensureImpairmentState(state);
+  const taken = takeFromLayers(state.materialLayers[id] ?? [], qty);
+  state.materialLayers[id] = taken.layers;
+  syncMaterialBooks(state);
+  noteStockout(state);
+  return { qty: taken.qty, cost: taken.cost };
+}
+
+function writeOffInventoryLoss(state: GameState, cost: number): void {
+  const n = roundMoney(cost);
+  if (n <= 0) return;
+  state.ledger.extraExpense = roundMoney((state.ledger.extraExpense ?? 0) + n);
+}
+
 function spendAp(state: GameState, n = 1): boolean {
   if (state.ap < n) return false;
   state.ap -= n;
@@ -578,11 +1037,10 @@ function pickEvent(state: GameState): string {
 }
 
 function takeMaterial(state: GameState, id: MaterialId, qty: number): number {
-  const have = state.materials[id] ?? 0;
-  const taken = Math.min(qty, have);
-  state.materials[id] = have - taken;
-  noteStockout(state);
-  return taken;
+  const lost = takeMaterialCost(state, id, qty);
+  writeOffInventoryLoss(state, lost.cost);
+  remeasureInventoryProvision(state);
+  return lost.qty;
 }
 
 function prepareMonth(state: GameState, firstMonth: boolean): void {
@@ -595,7 +1053,10 @@ function prepareMonth(state: GameState, firstMonth: boolean): void {
   state.ledger = emptyLedger();
   state.deptActs = emptyDeptActs();
   state.wagesAccruedThisMonth = 0;
+  state.wagesAccruedByRole = emptyWageAccrual();
   state.ledger.openingCash = state.cash;
+  state.depreciableMachineGross = state.machineGross ?? 0;
+  state.depreciableFactoryGross = state.factoryGross ?? 0;
   state.cardsUnlocked = cardsUnlockedNow(state);
   state.maxAp = maxApFor(state.staff);
   state.ap = state.maxAp;
@@ -605,13 +1066,100 @@ function prepareMonth(state: GameState, firstMonth: boolean): void {
   state.phase = 'briefing';
 }
 
-function consumeBom(state: GameState, id: ProductId, count: number): void {
+function consumeBom(state: GameState, id: ProductId, count: number): number {
   const bom = productById(id).bom;
+  let cost = 0;
   for (const key of MATERIAL_IDS) {
     const need = (bom[key] ?? 0) * count;
-    state.materials[key] -= need;
+    if (need <= 0) continue;
+    const lost = takeMaterialCost(state, key, need);
+    cost = roundMoney(cost + lost.cost);
   }
-  noteStockout(state);
+  state.wip = roundMoney((state.wip ?? 0) + cost);
+  return cost;
+}
+
+function accrueDepreciation(state: GameState): number {
+  const machineNbv = Math.max(0, (state.machineGross ?? 0) - (state.accumDepMachines ?? 0));
+  const factoryNbv = Math.max(0, (state.factoryGross ?? 0) - (state.accumDepFactories ?? 0));
+  const machineDep = roundMoney(Math.min((state.depreciableMachineGross ?? 0) / MACHINE_LIFE_MONTHS, machineNbv));
+  const factoryDep = roundMoney(Math.min((state.depreciableFactoryGross ?? 0) / FACTORY_LIFE_MONTHS, factoryNbv));
+  state.accumDepMachines = roundMoney((state.accumDepMachines ?? 0) + machineDep);
+  state.accumDepFactories = roundMoney((state.accumDepFactories ?? 0) + factoryDep);
+  return roundMoney(machineDep + factoryDep);
+}
+
+function chargeAdmin(state: GameState, amount: number): void {
+  const n = roundMoney(amount);
+  if (n <= 0) return;
+  state.ledger.admin = roundMoney(state.ledger.admin + n);
+}
+
+function sellFinished(
+  state: GameState,
+  productId: ProductId,
+  produced: number,
+): { sold: number; leftover: number; cogs: number } {
+  ensureImpairmentState(state);
+  if (produced > 0) {
+    const addedCost = state.wip ?? 0;
+    state.wip = 0;
+    state.finishedLayers[productId] = addLayer(state.finishedLayers[productId], produced, addedCost, state.month);
+  }
+  syncFinishedBooks(state);
+  const stockQty = state.finished[productId] ?? 0;
+  const sold = Math.min(stockQty, demandOf(state, productId));
+  const taken = takeFromLayers(state.finishedLayers[productId] ?? [], sold);
+  state.finishedLayers[productId] = taken.layers;
+  syncFinishedBooks(state);
+  state.ledger.cogs = roundMoney(state.ledger.cogs + taken.cost);
+  return { sold: taken.qty, leftover: state.finished[productId] ?? 0, cogs: taken.cost };
+}
+
+function settleIncomeTax(state: GameState): number {
+  const tax = profitBeforeTaxOf(state.ledger) > 0 ? roundMoney(profitBeforeTaxOf(state.ledger) * INCOME_TAX_RATE) : 0;
+  state.ledger.incomeTax = tax;
+  const due = roundMoney(tax + (state.taxPayable ?? 0));
+  const paid = roundMoney(Math.min(due, Math.max(0, state.cash)));
+  if (paid > 0) pay(state, paid, 'incomeTax');
+  state.taxPayable = roundMoney(due - paid);
+  return paid;
+}
+
+function appropriateStatutoryReserve(state: GameState, netProfit: number): number {
+  const current = equityAccounts(state);
+  const oldRetained = roundMoney(current.retained - netProfit);
+  const afterLoss = roundMoney(netProfit + Math.min(0, oldRetained));
+  const raw = roundMoney(Math.max(0, afterLoss) * STATUTORY_RESERVE_RATE);
+  const room = roundMoney(Math.max(0, (state.paidInCapital ?? 0) * STATUTORY_RESERVE_CAP - (state.surplusReserve ?? 0)));
+  const add = roundMoney(Math.min(raw, room));
+  state.surplusReserve = roundMoney((state.surplusReserve ?? 0) + add);
+  return add;
+}
+
+function pnlSettlementLines(ledger: MonthLedger, reserve: number): SettlementLine[] {
+  const lines: SettlementLine[] = [];
+  const push = (label: string, value: number, tone?: 'good' | 'bad' | 'mute', always = false) => {
+    if (!always && Math.abs(value) < 1e-6) return;
+    lines.push({ label, value, tone });
+  };
+  push('营业收入', ledger.revenue, 'good');
+  push('减：营业成本', -ledger.cogs, 'bad');
+  push('减：税金及附加', -ledger.taxes, 'bad');
+  push('减：销售费用', -ledger.selling, 'bad');
+  push('减：管理费用', -ledger.admin, 'bad');
+  push('减：研发费用', -(ledger.rd ?? 0), 'bad');
+  push('减：财务费用', -ledger.finance, 'bad');
+  push('减：信用减值损失', -(ledger.creditImpairment ?? 0), (ledger.creditImpairment ?? 0) >= 0 ? 'bad' : 'good');
+  push('减：资产减值损失', -(ledger.assetImpairment ?? 0), (ledger.assetImpairment ?? 0) >= 0 ? 'bad' : 'good');
+  push('营业利润', operatingProfitOf(ledger), operatingProfitOf(ledger) >= 0 ? 'good' : 'bad', true);
+  push('加：营业外收入', ledger.extraIncome, 'good');
+  push('减：营业外支出', -ledger.extraExpense, 'bad');
+  push('利润总额', profitBeforeTaxOf(ledger), profitBeforeTaxOf(ledger) >= 0 ? 'good' : 'bad', true);
+  push('减：所得税费用', -(ledger.incomeTax ?? 0), 'bad');
+  push('净利润', netProfitOf(ledger), netProfitOf(ledger) >= 0 ? 'good' : 'bad', true);
+  push('提取法定盈余公积', -reserve, 'mute');
+  return lines;
 }
 
 function applyRd(state: GameState): string | null {
@@ -677,6 +1225,35 @@ function playCardEffect(state: GameState, defId: string): string {
     case 'bridge':
       receive(state, 5, 'borrow');
       break;
+    case 'clearance': {
+      ensureImpairmentState(state);
+      const gross = finishedValue(state);
+      if (gross <= 0) return '库里没有成品可清。';
+      const cash = roundMoney(gross * 0.7);
+      state.ledger.revenue = roundMoney(state.ledger.revenue + cash);
+      state.cash = roundMoney(state.cash + cash);
+      state.ledger.cfSales = roundMoney(state.ledger.cfSales + cash);
+      state.ledger.cogs = roundMoney(state.ledger.cogs + gross);
+      state.finishedLayers = {};
+      syncFinishedBooks(state);
+      remeasureInventoryProvision(state);
+      notePeakCash(state);
+      noteDept(state, 'store', `折价清库，成品按七折变现 ${money(cash)}`);
+      return `成品账面 ${money(gross)} 按七折变现 ${money(cash)}，库龄清掉。`;
+    }
+    case 'collect': {
+      ensureImpairmentState(state);
+      const collected = collectReceivables(state, 1, true);
+      remeasureBadDebt(state);
+      if (collected <= 0) return '没有到期或逾期的应收账款可催。';
+      noteDept(state, 'finance', `催收到账 ${money(collected)}`);
+      return `催收到账 ${money(collected)}。`;
+    }
+    case 'creditPush':
+      state.modifiers.extraDemand += 12;
+      state.modifiers.creditSaleRate = 1;
+      state.modifiers.arTermExtra = Math.max(state.modifiers.arTermExtra, 1);
+      break;
     default:
       break;
   }
@@ -716,13 +1293,20 @@ function applyEvent(state: GameState): void {
         bits.push('产线本就无人，本月产能再削 4');
       }
       break;
-    case 'quality':
+    case 'quality': {
       pay(state, 4, 'extra');
+      ensureImpairmentState(state);
+      const finishedLoss = finishedValue(state);
+      writeOffInventoryLoss(state, finishedLoss);
       state.finished = {};
+      state.finishedCost = {};
+      state.finishedLayers = {};
+      remeasureInventoryProvision(state);
       state.modifiers.extraDemand -= 8;
       bits.push('罚款 4 万已划走');
       bits.push('成品库存清零，本月需求 -8');
       break;
+    }
     case 'dump':
       state.modifiers.priceBonus -= 0.15;
       state.modifiers.extraDemand -= 8;
@@ -800,6 +1384,82 @@ function applyEvent(state: GameState): void {
       receive(state, 3, 'extra');
       bits.push('出口退税 3 万到账');
       break;
+    case 'stockAge': {
+      ensureImpairmentState(state);
+      const bump = (layers: StockLayer[]) =>
+        layers.map((layer) => ({ ...layer, receivedMonth: layer.receivedMonth - 1 }));
+      for (const id of MATERIAL_IDS) state.materialLayers[id] = bump(state.materialLayers[id] ?? []);
+      (Object.keys(state.finishedLayers) as ProductId[]).forEach((id) => {
+        state.finishedLayers[id] = bump(state.finishedLayers[id] ?? []);
+      });
+      const delta = remeasureInventoryProvision(state);
+      bits.push(delta > 0 ? `库龄 +1 个月，补提存货跌价 ${money(delta)}` : '库龄 +1 个月，本月尚无需补提跌价');
+      break;
+    }
+    case 'dampStock': {
+      ensureImpairmentState(state);
+      let touched = false;
+      for (const id of MATERIAL_IDS) {
+        state.materialLayers[id] = (state.materialLayers[id] ?? []).map((layer) => {
+          if (layerAge(layer, state.month) < 1) return layer;
+          touched = true;
+          return { ...layer, receivedMonth: layer.receivedMonth - 2 };
+        });
+      }
+      const delta = remeasureInventoryProvision(state);
+      bits.push(
+        touched
+          ? `受潮原料库龄加快，存货跌价 ${delta > 0 ? money(delta) : '暂无新增'}`
+          : '库龄均不足一个月，受潮尚未构成跌价',
+      );
+      break;
+    }
+    case 'arDelay': {
+      ensureImpairmentState(state);
+      if (!state.receivables.length) {
+        bits.push('账上暂无应收账款可推迟');
+        break;
+      }
+      state.receivables = state.receivables.map((lot) => ({ ...lot, dueMonth: lot.dueMonth + 1 }));
+      const delta = remeasureBadDebt(state);
+      bits.push(`全部应收到期日推迟 1 个月${delta ? `，信用减值 ${money(delta)}` : ''}`);
+      break;
+    }
+    case 'customerBreak': {
+      ensureImpairmentState(state);
+      if (!state.receivables.length) {
+        bits.push('账上暂无应收账款可核销');
+        break;
+      }
+      const overdue = state.receivables.filter((lot) => state.month - lot.dueMonth >= 1);
+      const pool = overdue.length ? overdue : state.receivables;
+      const target = [...pool].sort((a, b) => b.amount - a.amount)[0]!;
+      const write = overdue.length ? target.amount : roundMoney(target.amount * 0.5);
+      target.amount = roundMoney(target.amount - write);
+      state.ledger.creditImpairment = roundMoney((state.ledger.creditImpairment ?? 0) + write);
+      state.receivables = state.receivables.filter((lot) => lot.amount > 0.05);
+      remeasureBadDebt(state);
+      bits.push(`核销应收账款 ${money(write)}`);
+      break;
+    }
+    case 'arRecover': {
+      ensureImpairmentState(state);
+      const due = state.receivables.filter((lot) => state.month - lot.dueMonth >= 0);
+      if (!due.length) {
+        bits.push('没有已到期应收可收回');
+        break;
+      }
+      const target = [...due].sort((a, b) => b.amount - a.amount)[0]!;
+      const take = target.amount;
+      state.cash = roundMoney(state.cash + take);
+      state.ledger.cfSales = roundMoney(state.ledger.cfSales + take);
+      target.amount = 0;
+      state.receivables = state.receivables.filter((lot) => lot.amount > 0.05);
+      remeasureBadDebt(state);
+      notePeakCash(state);
+      bits.push(`陈欠收回 ${money(take)}`);
+      break;
+    }
     default:
       bits.push(event.impact);
       break;
@@ -813,20 +1473,39 @@ function applyEvent(state: GameState): void {
 }
 
 export function createInitialState(): GameState {
-  return {
+  const materials = { a: 16, b: 8, c: 2, d: 0 };
+  const state: GameState = {
     phase: 'title',
     month: 1,
     cash: 24,
     debt: 0,
     wagesPayable: 0,
     wagesAccruedThisMonth: 0,
+    wagesAccruedByRole: emptyWageAccrual(),
+    taxPayable: 0,
+    paidInCapital: 0,
+    surplusReserve: 0,
+    machineGross: MACHINE_COST,
+    factoryGross: FACTORY_COST,
+    accumDepMachines: 0,
+    accumDepFactories: 0,
+    depreciableMachineGross: MACHINE_COST,
+    depreciableFactoryGross: FACTORY_COST,
+    materialCost: openingMaterialCost(materials),
+    finishedCost: {},
+    materialLayers: openingMaterialLayers(materials),
+    finishedLayers: {},
+    inventoryProvision: 0,
+    receivables: [],
+    badDebtProvision: 0,
+    wip: 0,
     ap: BASE_AP,
     maxAp: BASE_AP,
     factories: 1,
     slots: SLOTS_PER_FACTORY,
     machines: 1,
     staff: { production: 2, management: 1, sales: 1, rd: 0 },
-    materials: { a: 16, b: 8, c: 2, d: 0 },
+    materials,
     finished: {},
     materialPrices: { a: 0.4, b: 0.4, c: 1, d: 2 },
     productPrices: { basic: 1.5, standard: 4, premium: 6 },
@@ -868,11 +1547,14 @@ export function createInitialState(): GameState {
     quarterStats: emptyQuarterStats(4, 0),
     usedClimateIds: [],
   };
+  state.paidInCapital = netAssetsOf(state);
+  return state;
 }
 
 function startGame(prev: GameState): GameState {
   const state = createInitialState();
   state.uidSeq = prev.uidSeq;
+  state.ledger.openingCash = state.cash;
   state.openBooks = snapshotBooks(state, '开业');
   beginQuarter(state, 1);
   pushLog(state, '第一季度董事会召开。');
@@ -885,6 +1567,20 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
   const state = clone(prev);
   if (typeof state.wagesPayable !== 'number' || Number.isNaN(state.wagesPayable)) state.wagesPayable = 0;
   if (typeof state.wagesAccruedThisMonth !== 'number' || Number.isNaN(state.wagesAccruedThisMonth)) state.wagesAccruedThisMonth = 0;
+  if (!state.wagesAccruedByRole) state.wagesAccruedByRole = emptyWageAccrual();
+  if (typeof state.taxPayable !== 'number' || Number.isNaN(state.taxPayable)) state.taxPayable = 0;
+  if (typeof state.surplusReserve !== 'number' || Number.isNaN(state.surplusReserve)) state.surplusReserve = 0;
+  if (typeof state.machineGross !== 'number') state.machineGross = state.machines * MACHINE_COST;
+  if (typeof state.factoryGross !== 'number') state.factoryGross = state.factories * FACTORY_COST;
+  if (typeof state.accumDepMachines !== 'number') state.accumDepMachines = 0;
+  if (typeof state.accumDepFactories !== 'number') state.accumDepFactories = 0;
+  if (typeof state.depreciableMachineGross !== 'number') state.depreciableMachineGross = state.machineGross;
+  if (typeof state.depreciableFactoryGross !== 'number') state.depreciableFactoryGross = state.factoryGross;
+  if (!state.materialCost) state.materialCost = openingMaterialCost(state.materials);
+  if (!state.finishedCost) state.finishedCost = {};
+  if (typeof state.wip !== 'number') state.wip = 0;
+  ensureImpairmentState(state);
+  if (typeof state.paidInCapital !== 'number') state.paidInCapital = netAssetsOf(state);
   if (typeof state.cardsBoughtThisMonth !== 'number' || Number.isNaN(state.cardsBoughtThisMonth)) state.cardsBoughtThisMonth = 0;
   if (!Array.isArray(state.milestones)) state.milestones = [];
   if (typeof state.eventNote !== 'string' && state.eventNote !== null) state.eventNote = null;
@@ -960,6 +1656,7 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
       }
       pay(state, MACHINE_COST, 'capex');
       state.machines += 1;
+      state.machineGross = roundMoney((state.machineGross ?? 0) + MACHINE_COST);
       noteDept(state, 'infra', `购入设备 1台，花费 ${money(MACHINE_COST)}，产线现为 ${state.machines} 台`);
       pushLog(state, `新设备到位。产线 ${state.machines} 台，抵押融资上限 ${money(loanLimit(state.machines))}。`);
       return state;
@@ -977,6 +1674,7 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
       }
       pay(state, FACTORY_COST, 'capex');
       state.factories += 1;
+      state.factoryGross = roundMoney((state.factoryGross ?? 0) + FACTORY_COST);
       state.slots += SLOTS_PER_FACTORY;
       noteDept(state, 'infra', `扩建厂区 1座，花费 ${money(FACTORY_COST)}，机位现为 ${state.slots}`);
       pushLog(state, `新厂区开工。机位 ${state.slots}，月维护上调。`);
@@ -996,7 +1694,7 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
       pay(state, HIRE_COST, 'admin');
       state.staff[action.role] += 1;
       state.maxAp = maxApFor(state.staff);
-      accrueWages(state, SALARY[action.role]);
+      accrueRoleWages(state, action.role, SALARY[action.role]);
       noteDept(
         state,
         'hr',
@@ -1031,7 +1729,13 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
         return state;
       }
       pay(state, cost, 'buy');
-      state.materials[action.material] += action.qty;
+      state.materialLayers[action.material] = addLayer(
+        state.materialLayers[action.material],
+        action.qty,
+        cost,
+        state.month,
+      );
+      syncMaterialBooks(state);
       const off = Math.round(state.modifiers.nextBuyDiscount * 100);
       const buyNote = off > 0
         ? `采购${materialName(action.material)} ${action.qty}件，花费 ${money(cost)}（${100 - off}折）`
@@ -1207,28 +1911,38 @@ export function reduce(prev: GameState, action: GameAction): GameState {
 
 function settleMonth(state: GameState): GameState {
   const productId = state.selectedProduct!;
+  const salaries = syncMonthWages(state);
   const produced = maxProduce(state, productId);
-  consumeBom(state, productId, produced);
-  const stock = (state.finished[productId] ?? 0) + produced;
-  const sold = Math.min(stock, demandOf(state, productId));
-  const leftover = stock - sold;
-  state.finished[productId] = leftover;
+  if (produced > 0) consumeBom(state, productId, produced);
+
+  const depreciation = accrueDepreciation(state);
+  const upkeep = roundMoney(state.factories * FACTORY_UPKEEP);
+  if (produced > 0) {
+    state.wip = roundMoney((state.wip ?? 0) + depreciation + upkeep);
+    pay(state, upkeep, 'opOut');
+  } else {
+    chargeAdmin(state, roundMoney((state.wip ?? 0) + depreciation));
+    state.wip = 0;
+    pay(state, upkeep, 'admin');
+  }
+
+  const { sold, leftover, cogs } = sellFinished(state, productId, produced);
   if (state.quarterStats) {
     state.quarterStats.sold += sold;
     if (productId !== 'basic') state.quarterStats.nonBasic = true;
     if (productId === 'premium' || productId === 'special') state.quarterStats.premiumOrSpecial = true;
   }
   const revenue = roundMoney(sold * sellPriceOf(state, productId));
-  const cogs = roundMoney(bomCost(state, productId) * produced);
-  state.ledger.cogs = roundMoney(state.ledger.cogs + cogs);
-  receive(state, revenue, 'sales');
+  const cfSalesBefore = state.ledger.cfSales;
+  const sale = recognizeSale(state, revenue);
+  collectReceivables(state, state.modifiers.collectionBonus ?? 0, true);
+  writeOffAgedReceivables(state);
+  remeasureInventoryProvision(state);
+  remeasureBadDebt(state);
 
-  const salaries = syncMonthWages(state);
   const wagesPaid = roundMoney(state.wagesPayable - salaries);
   payAccruedWages(state, wagesPaid);
-  const upkeep = roundMoney(state.factories * FACTORY_UPKEEP);
   const interest = monthlyInterest(state.debt);
-  pay(state, upkeep, 'admin');
   pay(state, interest, 'finance');
   if (state.quarterStats && revenue >= salaries + upkeep) {
     state.quarterStats.coveringMonth = true;
@@ -1251,6 +1965,9 @@ function settleMonth(state: GameState): GameState {
   const rdNote = applyRd(state);
   if (rdNote) pushLog(state, rdNote);
 
+  const taxPaid = settleIncomeTax(state);
+  const netProfit = netProfitOf(state.ledger);
+  const reserve = appropriateStatutoryReserve(state, netProfit);
   const net = netAssetsOf(state);
   const report: SettlementReport = {
     month: state.month,
@@ -1264,26 +1981,21 @@ function settleMonth(state: GameState): GameState {
     upkeep,
     interest,
     penalty,
-    netCash: roundMoney(revenue - wagesPaid - upkeep - interest - penalty),
+    netCash: roundMoney(state.ledger.cfSales - cfSalesBefore - wagesPaid - upkeep - interest - penalty - taxPaid),
     cash: state.cash,
     debt: state.debt,
     netAssets: net,
     rdNote,
-    lines: [
-      { label: '营业收入', value: revenue, tone: 'good' },
-      { label: '营业成本', value: -cogs, tone: 'bad' },
-      { label: '计提职工薪酬', value: -salaries, tone: 'bad' },
-      { label: '厂区维护', value: -upkeep, tone: 'bad' },
-      { label: '财务费用', value: -interest, tone: interest ? 'bad' : 'mute' },
-      ...(wagesPaid ? [{ label: '支付上月职工薪酬', value: -wagesPaid, tone: 'bad' as const }] : []),
-      ...(penalty ? [{ label: '营业外支出', value: -penalty, tone: 'bad' as const }] : []),
-    ],
+    lines: pnlSettlementLines(state.ledger, reserve),
   };
 
   state.prevReport = state.lastReport;
   state.lastReport = report;
   state.closedBooks = [...state.closedBooks, snapshotBooks(state, MONTH_NAMES[state.month - 1] ?? `${state.month}月`)];
-  pushLog(state, `${state.month} 月结算：售出 ${sold} 件${productName(productId)}，净现金流 ${money(report.netCash)}。`);
+  pushLog(
+    state,
+    `${state.month} 月结算：售出 ${sold} 件${productName(productId)}，现销 ${money(sale.cash)}，赊销 ${money(sale.credit)}，账面成本 ${money(cogs)}，净利润 ${money(netProfit)}。`,
+  );
 
   if (net < 0) {
     state.endKind = 'bankrupt';

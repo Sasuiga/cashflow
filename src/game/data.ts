@@ -4,13 +4,19 @@ export const TOTAL_MONTHS = 12;
 export const HAND_LIMIT = 5;
 export const BASE_AP = 3;
 export const MACHINE_COST = 10;
-export const MACHINE_BOOK = 6;
+export const MACHINE_LIFE_MONTHS = 12;
 export const MACHINE_BASE_CAP = 6;
 export const WORKERS_PER_MACHINE = 4;
 export const CAP_PER_WORKER = 4;
 export const CAP_OVERFLOW = 1;
 export const FACTORY_COST = 20;
-export const FACTORY_BOOK = 8;
+export const FACTORY_LIFE_MONTHS = 24;
+export const INCOME_TAX_RATE = 0.25;
+export const STATUTORY_RESERVE_RATE = 0.1;
+export const STATUTORY_RESERVE_CAP = 0.5;
+export const CREDIT_SALE_RATE = 0.35;
+export const AR_TERM_MONTHS = 1;
+export const AR_WRITEOFF_PAST_DUE = 3;
 export const SLOTS_PER_FACTORY = 3;
 export const FACTORY_UPKEEP = 1;
 export const LOAN_PER_MACHINE = 5;
@@ -23,6 +29,30 @@ export const SALARY: Record<Role, number> = {
   rd: 1.5,
 };
 export const RD_THRESHOLD = 2;
+
+export function inventoryWriteDownRate(ageMonths: number): number {
+  if (ageMonths >= 6) return 0.7;
+  if (ageMonths >= 4) return 0.4;
+  if (ageMonths >= 3) return 0.25;
+  if (ageMonths >= 2) return 0.1;
+  return 0;
+}
+
+export function arCollectionRate(monthsPastDue: number): number {
+  if (monthsPastDue < 0) return 0;
+  if (monthsPastDue === 0) return 0.65;
+  if (monthsPastDue === 1) return 0.4;
+  if (monthsPastDue === 2) return 0.2;
+  return 0;
+}
+
+export function arCreditLossRate(monthsPastDue: number): number {
+  if (monthsPastDue < 0) return 0.05;
+  if (monthsPastDue === 0) return 0.1;
+  if (monthsPastDue === 1) return 0.2;
+  if (monthsPastDue === 2) return 0.5;
+  return 1;
+}
 
 export const MATERIALS: MaterialDef[] = [
   { id: 'a', name: '钢材', short: 'A', basePrice: 0.4 },
@@ -148,6 +178,30 @@ export const CARDS: CardDef[] = [
     cost: 0.5,
     blurb: '立刻到账 ¥5万，同时增加等额负债。',
     playText: '现金到账，账上也多了一笔债。',
+  },
+  {
+    id: 'clearance',
+    name: '折价清库',
+    suit: 'production',
+    cost: 1,
+    blurb: '成品库存按账面成本七折变现，清掉库龄。',
+    playText: '成品按七折出清，现金回笼，库龄归零。',
+  },
+  {
+    id: 'collect',
+    name: '催收专班',
+    suit: 'sales',
+    cost: 1,
+    blurb: '到期及逾期应收账款本月全部收回。',
+    playText: '催收组上门对账，到期和逾期账款一次收回。',
+  },
+  {
+    id: 'creditPush',
+    name: '赊销铺货',
+    suit: 'sales',
+    cost: 1,
+    blurb: '本月需求 +12，货款全部赊销，账期多一个月。',
+    playText: '渠道愿接货，但货款全挂应收，账期拉长。',
   },
 ];
 
@@ -275,6 +329,51 @@ export const EVENTS: EventDef[] = [
     monthHint: '政策',
     body: '一笔小额退税进了基本户。能缓一口气，但撑不起整月的产销。',
     impact: '现金 +3 万。',
+    tone: 'good',
+    weight: 1,
+  },
+  {
+    id: 'stockAge',
+    title: '库龄专项审计',
+    monthHint: '存货',
+    body: '事务所把呆滞料单贴到了墙上。库龄被往后推一档，跌价准备要按更老的口径提。',
+    impact: '全部存货库龄 +1 个月，按新库龄补提存货跌价。',
+    tone: 'bad',
+    weight: 2,
+  },
+  {
+    id: 'dampStock',
+    title: '原料受潮结块',
+    monthHint: '存货',
+    body: '雨季仓库渗水。在库超过一个月的原料可变现净值明显下降，当月要加提跌价。',
+    impact: '库龄不少于 1 个月的原材料库龄加快 2 个月，按新库龄补提存货跌价。',
+    tone: 'bad',
+    weight: 2,
+  },
+  {
+    id: 'arDelay',
+    title: '经销商压账',
+    monthHint: '回款',
+    body: '两家经销商同步把承兑往后推。货已经出了，现金却要再等一个月。',
+    impact: '全部应收账款到期日推迟 1 个月。',
+    tone: 'bad',
+    weight: 2,
+  },
+  {
+    id: 'customerBreak',
+    title: '客户失联跑路',
+    monthHint: '信用',
+    body: '最大一笔逾期客户联系不上。律师函发出去了，账上那笔应收要按核销处理。',
+    impact: '核销金额最大的一笔逾期应收；若无逾期则核销最早一笔应收的一半。',
+    tone: 'bad',
+    weight: 2,
+  },
+  {
+    id: 'arRecover',
+    title: '陈欠清收回笼',
+    monthHint: '回款',
+    body: '法务把一笔拖了很久的货款追回来了。现金进账，坏账准备跟着转回。',
+    impact: '收回金额最大的一笔已到期应收。',
     tone: 'good',
     weight: 1,
   },

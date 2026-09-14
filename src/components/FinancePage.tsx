@@ -1,13 +1,7 @@
-import { booksForView } from '../game/engine';
+import { booksForView, netProfitOf, operatingProfitOf, profitBeforeTaxOf } from '../game/engine';
 import { amount, roundMoney, signedAmount } from '../game/format';
 import type { MonthBooks, MonthLedger } from '../game/types';
 import type { GameState } from '../game/types';
-
-function profitOf(ledger: MonthLedger): number {
-  return roundMoney(
-    ledger.revenue - ledger.cogs - ledger.taxes - ledger.selling - ledger.admin - ledger.finance + ledger.extraIncome - ledger.extraExpense,
-  );
-}
 
 function operateCf(ledger: MonthLedger): number {
   return roundMoney(
@@ -114,30 +108,62 @@ function maybe(label: string, prev: number, curr: number, extra?: Partial<Line>)
   return { label, prev, curr, ...extra };
 }
 
+function inventoryNet(books: MonthBooks): number {
+  return roundMoney((books.inventory ?? 0) - (books.inventoryProvision ?? 0));
+}
+
+function arNet(books: MonthBooks): number {
+  return books.receivablesNet ?? roundMoney((books.receivables ?? 0) - (books.badDebtProvision ?? 0));
+}
+
 function balanceLines(prev: MonthBooks, curr: MonthBooks): Array<Line | { section: string }> {
-  const assets = [
-    maybe('货币资金', prev.cash, curr.cash),
-    maybe('存货', prev.inventory, curr.inventory),
-    maybe('固定资产', prev.fixedAssets, curr.fixedAssets),
-  ].filter(Boolean) as Line[];
-  const assetTotal = {
-    label: '资产合计',
-    prev: roundMoney(prev.cash + prev.inventory + prev.fixedAssets),
-    curr: roundMoney(curr.cash + curr.inventory + curr.fixedAssets),
-    total: true,
-  };
   const prevPay = prev.wagesPayable ?? 0;
   const currPay = curr.wagesPayable ?? 0;
+  const prevTax = prev.taxPayable ?? 0;
+  const currTax = curr.taxPayable ?? 0;
+  const assets = [
+    { label: '货币资金', prev: prev.cash, curr: curr.cash },
+    ...([
+      maybe('应收账款', prev.receivables ?? 0, curr.receivables ?? 0),
+      maybe('减：坏账准备', prev.badDebtProvision ?? 0, curr.badDebtProvision ?? 0, { invert: true }),
+      occurred(prev.receivables ?? 0, curr.receivables ?? 0)
+        ? { label: '应收账款账面价值', prev: arNet(prev), curr: arNet(curr), total: true }
+        : null,
+    ].filter(Boolean) as Line[]),
+    { label: '存货', prev: prev.inventory, curr: curr.inventory },
+    ...([
+      maybe('其中：原材料', prev.materials ?? 0, curr.materials ?? 0),
+      maybe('其中：在产品', prev.wip ?? 0, curr.wip ?? 0),
+      maybe('其中：库存商品', prev.finished ?? 0, curr.finished ?? 0),
+      maybe('减：存货跌价准备', prev.inventoryProvision ?? 0, curr.inventoryProvision ?? 0, { invert: true }),
+    ].filter(Boolean) as Line[]),
+    { label: '存货账面价值', prev: inventoryNet(prev), curr: inventoryNet(curr), total: true },
+    { label: '固定资产原价', prev: prev.fixedAssetCost ?? prev.fixedAssets, curr: curr.fixedAssetCost ?? curr.fixedAssets },
+    { label: '减：累计折旧', prev: prev.accumDep ?? 0, curr: curr.accumDep ?? 0, invert: true },
+    { label: '固定资产账面价值', prev: prev.fixedAssets, curr: curr.fixedAssets, total: true },
+  ];
+  const assetTotal = {
+    label: '资产合计',
+    prev: roundMoney(prev.cash + arNet(prev) + inventoryNet(prev) + prev.fixedAssets),
+    curr: roundMoney(curr.cash + arNet(curr) + inventoryNet(curr) + curr.fixedAssets),
+    total: true,
+  };
   const debts = [
     maybe('短期借款', prev.borrowings, curr.borrowings, { invert: true }),
     maybe('应付职工薪酬', prevPay, currPay, { invert: true }),
+    maybe('应交税费', prevTax, currTax, { invert: true }),
   ].filter(Boolean) as Line[];
-  const prevLiab = roundMoney(prev.borrowings + prevPay);
-  const currLiab = roundMoney(curr.borrowings + currPay);
+  const prevLiab = roundMoney(prev.borrowings + prevPay + prevTax);
+  const currLiab = roundMoney(curr.borrowings + currPay + currTax);
   const debtTotal = occurred(prevLiab, currLiab)
     ? { label: '负债合计', prev: prevLiab, curr: currLiab, invert: true, total: true }
     : null;
-  const equity = { label: '未分配利润', prev: prev.equity, curr: curr.equity, total: true };
+  const equity = [
+    { label: '实收资本', prev: prev.paidInCapital ?? 0, curr: curr.paidInCapital ?? 0 },
+    { label: '盈余公积', prev: prev.surplusReserve ?? 0, curr: curr.surplusReserve ?? 0 },
+    { label: '未分配利润', prev: prev.retainedEarnings ?? prev.equity, curr: curr.retainedEarnings ?? curr.equity },
+    { label: '所有者权益合计', prev: prev.equity, curr: curr.equity, total: true },
+  ];
   const both = {
     label: '负债和所有者权益合计',
     prev: roundMoney(prevLiab + prev.equity),
@@ -152,7 +178,7 @@ function balanceLines(prev: MonthBooks, curr: MonthBooks): Array<Line | { sectio
       ? [{ section: '负债' }, ...debts.map((line) => ({ ...line, indent: true })), ...(debtTotal ? [debtTotal] : [])]
       : []),
     { section: '所有者权益' },
-    { ...equity, indent: true },
+    ...equity.map((line) => ({ ...line, indent: true })),
     both,
   ];
 }
@@ -164,12 +190,33 @@ function incomeLines(prev: MonthLedger, curr: MonthLedger): Array<Line | { secti
     maybe('减：税金及附加', prev.taxes, curr.taxes, { invert: true }),
     maybe('减：销售费用', prev.selling, curr.selling, { invert: true }),
     maybe('减：管理费用', prev.admin, curr.admin, { invert: true }),
+    maybe('减：研发费用', prev.rd ?? 0, curr.rd ?? 0, { invert: true }),
     maybe('减：财务费用', prev.finance, curr.finance, { invert: true }),
+    maybe('减：信用减值损失', prev.creditImpairment ?? 0, curr.creditImpairment ?? 0, { invert: true }),
+    maybe('减：资产减值损失', prev.assetImpairment ?? 0, curr.assetImpairment ?? 0, { invert: true }),
+  ].filter(Boolean) as Line[];
+  const extras = [
     maybe('加：营业外收入', prev.extraIncome, curr.extraIncome),
     maybe('减：营业外支出', prev.extraExpense, curr.extraExpense, { invert: true }),
   ].filter(Boolean) as Line[];
-  if (!rows.length && !occurred(profitOf(prev), profitOf(curr))) return [];
-  return [...rows, { label: '净利润', prev: profitOf(prev), curr: profitOf(curr), total: true }];
+  const prevOp = operatingProfitOf(prev);
+  const currOp = operatingProfitOf(curr);
+  const prevPbt = profitBeforeTaxOf(prev);
+  const currPbt = profitBeforeTaxOf(curr);
+  const prevNp = netProfitOf(prev);
+  const currNp = netProfitOf(curr);
+  if (!rows.length && !extras.length && !occurred(prevOp, currOp, prevPbt, currPbt, prevNp, currNp, prev.incomeTax ?? 0, curr.incomeTax ?? 0)) {
+    return [];
+  }
+  const taxLine = maybe('减：所得税费用', prev.incomeTax ?? 0, curr.incomeTax ?? 0, { invert: true });
+  return [
+    ...rows,
+    { label: '营业利润', prev: prevOp, curr: currOp, total: true },
+    ...extras,
+    { label: '利润总额', prev: prevPbt, curr: currPbt, total: true },
+    ...(taxLine ? [taxLine] : []),
+    { label: '净利润', prev: prevNp, curr: currNp, total: true },
+  ];
 }
 
 function cashFlowLines(prev: MonthLedger, curr: MonthLedger): Array<Line | { section: string }> {
@@ -235,7 +282,7 @@ export function FinancePage({ state }: { state: GameState }) {
     <div className="page-stack">
       <Statement
         title="资产负债表"
-        hint="本月与上期对比。存货按市价估算，固定资产按账面价值。"
+        hint="按企业会计准则列示。存货按成本与可变现净值孰低，应收账款按摊余成本并计提坏账准备。价款按不含增值税简化。"
         prevLabel="上期"
         currLabel="本月"
         lines={balanceLines(prev, curr)}

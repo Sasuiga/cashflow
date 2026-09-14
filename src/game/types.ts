@@ -112,12 +112,28 @@ export interface EventDef {
   weight?: number;
 }
 
+export interface StockLayer {
+  qty: number;
+  cost: number;
+  receivedMonth: number;
+}
+
+export interface ReceivableLot {
+  amount: number;
+  originMonth: number;
+  dueMonth: number;
+}
+
 export interface Modifiers {
   extraCapacity: number;
   extraDemand: number;
   priceBonus: number;
   nextBuyDiscount: number;
   secondProduct: boolean;
+  collectionBonus: number;
+  creditSaleRate: number;
+  arTermExtra: number;
+  stockAgeBias: number;
 }
 
 export interface SettlementLine {
@@ -156,6 +172,10 @@ export interface MonthLedger {
   finance: number;
   extraIncome: number;
   extraExpense: number;
+  rd: number;
+  creditImpairment: number;
+  assetImpairment: number;
+  incomeTax: number;
   cfSales: number;
   cfBuy: number;
   cfEmployees: number;
@@ -172,10 +192,23 @@ export interface MonthBooks {
   title: string;
   month: number;
   cash: number;
+  materials: number;
+  wip: number;
+  finished: number;
   inventory: number;
+  inventoryProvision: number;
+  receivables: number;
+  badDebtProvision: number;
+  receivablesNet: number;
+  fixedAssetCost: number;
+  accumDep: number;
   fixedAssets: number;
   borrowings: number;
   wagesPayable: number;
+  taxPayable: number;
+  paidInCapital: number;
+  surplusReserve: number;
+  retainedEarnings: number;
   equity: number;
   ledger: MonthLedger;
 }
@@ -187,6 +220,24 @@ export interface GameState {
   debt: number;
   wagesPayable: number;
   wagesAccruedThisMonth: number;
+  wagesAccruedByRole: Record<Role, number>;
+  taxPayable: number;
+  paidInCapital: number;
+  surplusReserve: number;
+  machineGross: number;
+  factoryGross: number;
+  accumDepMachines: number;
+  accumDepFactories: number;
+  depreciableMachineGross: number;
+  depreciableFactoryGross: number;
+  materialCost: Materials;
+  finishedCost: Partial<Record<ProductId, number>>;
+  materialLayers: Record<MaterialId, StockLayer[]>;
+  finishedLayers: Partial<Record<ProductId, StockLayer[]>>;
+  inventoryProvision: number;
+  receivables: ReceivableLot[];
+  badDebtProvision: number;
+  wip: number;
   ap: number;
   maxAp: number;
   factories: number;
