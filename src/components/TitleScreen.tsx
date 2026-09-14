@@ -13,7 +13,7 @@ export function TitleScreen({ onStart }: { onStart: () => void }) {
         <div className="rule-grid">
           <article className="rule">
             <b>一月一事</b>
-            <p>每回合是一个月。先看原料与市价，再应对随机事件，然后花行动点做决策。</p>
+            <p>每回合是一个月。先看行情，再承受本月落地的事件，然后花行动点消化冲击。</p>
           </article>
           <article className="rule">
             <b>四条基本盘</b>
@@ -21,7 +21,7 @@ export function TitleScreen({ onStart }: { onStart: () => void }) {
           </article>
           <article className="rule">
             <b>破产或年报</b>
-            <p>结算后净资产为负即破产；撑过十二月，按净资产评级。卡片在团队壮大或进入三月后解锁。</p>
+            <p>结算后净资产为负即破产。活过十二月后，按生存、净资产、里程碑、奖项和成就计分。</p>
           </article>
         </div>
         <button className="btn" onClick={onStart}>

@@ -24,7 +24,7 @@ function play(): GameState {
       continue;
     }
     if (state.phase === 'event') {
-      state = reduce(state, { type: 'RESOLVE_EVENT', choice: i % 2 });
+      state = reduce(state, { type: 'ACK_EVENT' });
       continue;
     }
     if (state.phase === 'actions') {

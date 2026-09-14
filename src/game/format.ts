@@ -32,7 +32,7 @@ export const ROLE_HINT: Record<Role, string> = {
 export const ROLE_DETAIL: Record<Role, string[]> = {
   production: [
     '入职后立刻到岗，本月即可计入产能。',
-    '每名生产工基础贡献产能 5；每台设备最多安置 4 人，超出部分产能较低。',
+    '每名生产工基础贡献产能 4；每台设备最多安置 4 人，超出部分产能较低。',
     '生产人员越多，翻开的决策卡越容易出生产花色。',
   ],
   management: [

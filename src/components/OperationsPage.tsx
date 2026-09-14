@@ -14,6 +14,7 @@ import {
   SALARY,
   WORKERS_PER_MACHINE,
   cardById,
+  eventById,
   productById,
 } from '../game/data';
 import {
@@ -24,6 +25,7 @@ import {
   maxProduce,
   monthlySalary,
   netAssetsOf,
+  nextCardBuyAp,
   sellPriceOf,
   totalStaff,
 } from '../game/engine';
@@ -133,12 +135,21 @@ export function OperationsPage({
   const cardWeightTotal = cardWeights.reduce((sum, item) => sum + item.weight, 0);
 
   const toggle = (id: DeptId) => setOpen((prev) => ({ ...prev, [id]: !prev[id] }));
+  const monthEvent = state.eventId ? eventById(state.eventId) : null;
 
   return (
     <div className="ops">
       <p className="ops-lead">
         每个部门先看现状，再决定要不要做事。带「耗 1 AP」的按钮会花掉行动点；销售部的产销安排不耗行动点。
       </p>
+      {monthEvent && state.eventNote && (
+        <aside className={`event-banner tone-${monthEvent.tone}`}>
+          <b>
+            本月事件 · {monthEvent.title}
+          </b>
+          <p>{state.eventNote}</p>
+        </aside>
+      )}
 
       <div className="dept-grid">
         <Dept title="总经理室" intro="翻牌、买牌、打牌，用决策卡影响当月经营。" done={deptDone(state, 'ceo')} open={open.ceo} onToggle={() => toggle('ceo')} wide>
@@ -186,7 +197,7 @@ export function OperationsPage({
               !state.cardsUnlocked
                 ? '决策卡尚未解锁。到了三月，或编制满 6 人后，这里才能翻牌。'
                 : acting
-                  ? '翻牌、买牌不耗行动点。只有打出手牌耗 1 AP。'
+                  ? '翻牌不耗 AP。本月第一张买牌免 AP，之后每多买一张多耗 1 AP。打牌耗 1 AP。'
                   : '现在只能看已有的牌。打牌要等行动阶段。'
             }
           >
@@ -201,14 +212,21 @@ export function OperationsPage({
                   <div className="cards" style={{ marginTop: 12 }}>
                     {state.shop.map((card, index) => {
                       const def = cardById(card.defId);
+                      const buyAp = nextCardBuyAp(state);
+                      const buyApLabel = buyAp > 0 ? `耗 ${buyAp} AP` : '本月首张免 AP';
                       return (
                         <article key={card.uid} className="card" style={{ ['--tilt' as string]: `${index - 1}deg` }}>
                           <div className="suit">{ROLE_LABEL[def.suit]}</div>
                           <h4>{def.name}</h4>
                           <p>{def.blurb}</p>
-                          <div className="cost">{money(def.cost)} · 买牌不耗 AP</div>
-                          <button className="btn small" style={{ marginTop: 10 }} onClick={() => dispatch({ type: 'BUY_CARD', index })}>
-                            买入「{def.name}」 · 不耗 AP · 花费 {money(def.cost)}
+                          <div className="cost">{money(def.cost)} · {buyApLabel}</div>
+                          <button
+                            className="btn small"
+                            style={{ marginTop: 10 }}
+                            disabled={state.cash < def.cost || buyAp > state.ap}
+                            onClick={() => dispatch({ type: 'BUY_CARD', index })}
+                          >
+                            买入「{def.name}」 · {buyApLabel} · 花费 {money(def.cost)}
                           </button>
                         </article>
                       );

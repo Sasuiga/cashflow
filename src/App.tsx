@@ -20,7 +20,7 @@ export function App() {
             <BriefingModal state={state} onConfirm={() => dispatch({ type: 'CONFIRM_BRIEFING' })} />
           )}
           {state.phase === 'event' && (
-            <EventModal state={state} onChoose={(choice) => dispatch({ type: 'RESOLVE_EVENT', choice })} />
+            <EventModal state={state} onAck={() => dispatch({ type: 'ACK_EVENT' })} />
           )}
           {state.phase === 'report' && (
             <ReportModal

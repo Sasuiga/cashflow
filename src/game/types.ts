@@ -66,11 +66,7 @@ export interface CardInstance {
   defId: string;
 }
 
-export interface EventChoice {
-  label: string;
-  cost: string;
-  hint: string;
-}
+export type EventTone = 'good' | 'bad' | 'mixed';
 
 export interface PendingDeal {
   productId: ProductId;
@@ -85,7 +81,9 @@ export interface EventDef {
   title: string;
   monthHint: string;
   body: string;
-  choices: EventChoice[];
+  impact: string;
+  tone: EventTone;
+  weight?: number;
 }
 
 export interface Modifiers {
@@ -181,9 +179,11 @@ export interface GameState {
   cardsUnlocked: boolean;
   shop: CardInstance[];
   shopDrawn: boolean;
+  cardsBoughtThisMonth: number;
   hand: CardInstance[];
   modifiers: Modifiers;
   eventId: string | null;
+  eventNote: string | null;
   usedEventIds: string[];
   selectedProduct: ProductId | null;
   lastReport: SettlementReport | null;
@@ -197,13 +197,14 @@ export interface GameState {
   openBooks: MonthBooks;
   closedBooks: MonthBooks[];
   achievements: string[];
+  milestones: string[];
   everDebt: boolean;
 }
 
 export type GameAction =
   | { type: 'START_GAME' }
   | { type: 'CONFIRM_BRIEFING' }
-  | { type: 'RESOLVE_EVENT'; choice: number }
+  | { type: 'ACK_EVENT' }
   | { type: 'BUY_MACHINE' }
   | { type: 'EXPAND_FACTORY' }
   | { type: 'HIRE'; role: Role }

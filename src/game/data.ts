@@ -5,17 +5,17 @@ export const HAND_LIMIT = 5;
 export const BASE_AP = 3;
 export const MACHINE_COST = 10;
 export const MACHINE_BOOK = 6;
-export const MACHINE_BASE_CAP = 10;
+export const MACHINE_BASE_CAP = 6;
 export const WORKERS_PER_MACHINE = 4;
-export const CAP_PER_WORKER = 5;
-export const CAP_OVERFLOW = 2;
+export const CAP_PER_WORKER = 4;
+export const CAP_OVERFLOW = 1;
 export const FACTORY_COST = 20;
-export const FACTORY_BOOK = 10;
+export const FACTORY_BOOK = 8;
 export const SLOTS_PER_FACTORY = 3;
-export const FACTORY_UPKEEP = 0.5;
-export const LOAN_PER_MACHINE = 8;
-export const INTEREST_RATE = 0.05;
-export const HIRE_COST = 1;
+export const FACTORY_UPKEEP = 1;
+export const LOAN_PER_MACHINE = 5;
+export const INTEREST_RATE = 0.1;
+export const HIRE_COST = 2;
 export const SALARY: Record<Role, number> = {
   production: 0.5,
   management: 1,
@@ -25,7 +25,7 @@ export const SALARY: Record<Role, number> = {
 export const RD_THRESHOLD = 2;
 
 export const MATERIALS: MaterialDef[] = [
-  { id: 'a', name: '钢材', short: 'A', basePrice: 0.2 },
+  { id: 'a', name: '钢材', short: 'A', basePrice: 0.4 },
   { id: 'b', name: '塑料', short: 'B', basePrice: 0.4 },
   { id: 'c', name: '芯片', short: 'C', basePrice: 1 },
   { id: 'd', name: '特种合金', short: 'D', basePrice: 2 },
@@ -37,8 +37,8 @@ export const PRODUCTS: ProductDef[] = [
     name: '基础款',
     tier: '低端',
     bom: { a: 2, b: 1 },
-    basePrice: 2,
-    baseDemand: 50,
+    basePrice: 1.5,
+    baseDemand: 20,
     blurb: '走量产品。BOM 简单，需求稳定，适合开局回血。',
   },
   {
@@ -47,7 +47,7 @@ export const PRODUCTS: ProductDef[] = [
     tier: '普通',
     bom: { a: 1, b: 2, c: 1 },
     basePrice: 4,
-    baseDemand: 25,
+    baseDemand: 10,
     blurb: '利润更厚，但吃芯片。需求随销售扩张。',
   },
   {
@@ -56,7 +56,7 @@ export const PRODUCTS: ProductDef[] = [
     tier: '高端',
     bom: { b: 1, c: 2 },
     basePrice: 6,
-    baseDemand: 10,
+    baseDemand: 5,
     blurb: '高单价、低需求。芯片行情好时是收割窗口。',
   },
   {
@@ -65,7 +65,7 @@ export const PRODUCTS: ProductDef[] = [
     tier: '研发',
     bom: { a: 1, b: 1 },
     basePrice: 1.5,
-    baseDemand: 40,
+    baseDemand: 20,
     blurb: '研发成果：更省料的走量结构，适合产能过剩时。',
   },
   {
@@ -74,7 +74,7 @@ export const PRODUCTS: ProductDef[] = [
     tier: '研发',
     bom: { b: 1, d: 1 },
     basePrice: 5,
-    baseDemand: 15,
+    baseDemand: 8,
     blurb: '解锁特种合金后的高毛利产品。',
   },
 ];
@@ -153,136 +153,130 @@ export const CARDS: CardDef[] = [
 
 export const EVENTS: EventDef[] = [
   {
-    id: 'lockPrice',
-    title: '钢厂锁价函',
-    monthHint: '原料窗口',
-    body: '钢材供应商愿意按现价锁一个月。锁得越深，订金越贵；不锁就得吃现货波动。',
-    choices: [
-      { label: '长约锁价', cost: '¥5万', hint: '钢材报价下调 20%' },
-      { label: '预付锁一个月', cost: '¥2万', hint: '钢材报价下调 10%' },
-      { label: '继续观望', cost: '不花钱', hint: '钢材报价立刻上调 20%' },
-    ],
+    id: 'steelSpike',
+    title: '钢厂临时限售',
+    monthHint: '原料',
+    body: '北方钢厂联合限售。现货被抬上去，你们名下的到货配额也被砍了一刀。补库存会更贵，也可以改排少用钢的产品。',
+    impact: '钢材报价上调 50%，库存钢材被划走 6 件。',
+    tone: 'bad',
+    weight: 3,
   },
   {
     id: 'bigOrder',
-    title: '连锁超市询盘',
-    monthHint: '需求冲击',
-    body: '一家连锁超市要基础款补货。接得越多、需求越大，交不出货的违约金也越重。',
-    choices: [
-      { label: '接下全量', cost: '违约风险 ¥5万', hint: '本月需求 +20；基础款销量须达 15' },
-      { label: '接下半单', cost: '违约风险 ¥2万', hint: '本月需求 +10；基础款销量须达 10' },
-      { label: '礼貌拒绝', cost: '不花钱', hint: '需求不变，渠道关系维持原样' },
-    ],
+    title: '连锁超市加单',
+    monthHint: '订单',
+    body: '合同已经盖章，不是询盘。基础款必须在本月交齐，交不出就按合同扣违约金。产线、原料和人都得往这张单上靠。',
+    impact: '基础款需求 +8；本月须售出基础款 12 件，否则违约金 6 万。',
+    tone: 'mixed',
+    weight: 2,
   },
   {
     id: 'resign',
-    title: '骨干递交辞呈',
+    title: '骨干被挖走',
     monthHint: '人事',
-    body: '一名熟练生产工被对岸工厂挖走。钱可以留人，也可以换来短时产能，放人则立刻掉编制。',
-    choices: [
-      { label: '加薪并提拔', cost: '¥5万', hint: '生产人员保留，本月产能 +10' },
-      { label: '加薪挽留', cost: '¥2万', hint: '生产人员保留，无额外加成' },
-      { label: '放人离开', cost: '不花钱', hint: '失去 1 名生产人员，现金 +¥1万' },
-    ],
-  },
-  {
-    id: 'banker',
-    title: '客户经理上门',
-    monthHint: '融资',
-    body: '银行愿意突破设备抵押上限做短贷。借得越多手头越松，利息和负债也越沉。',
-    choices: [
-      { label: '加杠杆短贷', cost: '负债 +¥10万', hint: '现金 +¥10万，本月采购八折' },
-      { label: '接受常规短贷', cost: '负债 +¥5万', hint: '现金 +¥5万' },
-      { label: '维持稳健', cost: '不花钱', hint: '不新增负债，账目不变' },
-    ],
+    body: '对岸开出了你们跟不上的价。人今早没来打卡，产线立刻缺一档。要补编制，只能走招聘。',
+    impact: '失去 1 名生产人员；若编制已空，本月产能再削 4。',
+    tone: 'bad',
+    weight: 3,
   },
   {
     id: 'quality',
-    title: '抽检通知',
+    title: '抽检不合格',
     monthHint: '合规',
-    body: '市监局要来抽检成品。投入越多越稳，省下来的钱都可能变成罚款。',
-    choices: [
-      { label: '全检过关', cost: '¥4万', hint: '稳过抽检，本月售价 +10%' },
-      { label: '抽样补检', cost: '¥2万', hint: '稳过抽检，没有额外收益' },
-      { label: '赌抽不到', cost: '不花钱', hint: '50% 无事；50% 罚款 ¥8万，且本月需求 -10' },
-    ],
+    body: '市监局抽中了库存成品。罚款当场划走，渠道也把订单砍了一截。本月只能靠新产出回血。',
+    impact: '罚款 4 万，成品库存清零，本月需求 -8。',
+    tone: 'bad',
+    weight: 3,
   },
   {
     id: 'dump',
-    title: '竞品低价倾销',
+    title: '竞品清仓库',
     monthHint: '价格战',
-    body: '隔壁厂在清库存。你可以花钱守品牌，也可以降价抢量，或者硬扛丢货架。',
-    choices: [
-      { label: '品牌对冲', cost: '¥3万', hint: '本月售价 +10%，需求不掉' },
-      { label: '跟进降价', cost: '毛利受损', hint: '本月售价 -10%，需求 +10' },
-      { label: '守价不跟', cost: '不花钱', hint: '本月需求 -10' },
-    ],
-  },
-  {
-    id: 'subsidy',
-    title: '园区技改补贴',
-    monthHint: '政策',
-    body: '经开区有一笔补贴名额。配套出资拿得最多，只领现金券最省事。',
-    choices: [
-      { label: '配套拿全额', cost: '先付 ¥3万', hint: '到账 ¥10万，本月产能 +10' },
-      { label: '标准申报', cost: '不另出资', hint: '到账 ¥5万' },
-      { label: '只领现金券', cost: '不花钱', hint: '到账 ¥2万' },
-    ],
+    body: '隔壁厂按成本价甩货。货架还在，但标价和订单量都被压下去了。要保住毛利，得换产品或打决策卡。',
+    impact: '本月售价 -15%，需求 -8。',
+    tone: 'bad',
+    weight: 3,
   },
   {
     id: 'blackout',
-    title: '限电通知',
+    title: '工业错峰限电',
     monthHint: '产能',
-    body: '本周工业用电错峰。发电机能保排期，上备用电站还能多赶一批，硬扛就得停半拍。',
-    choices: [
-      { label: '上备用电站', cost: '¥5万', hint: '产能不受影响，额外 +5' },
-      { label: '租发电机', cost: '¥3万', hint: '产能不受影响' },
-      { label: '接受限产', cost: '不花钱', hint: '本月产能 -12' },
-    ],
-  },
-  {
-    id: 'influencer',
-    title: '探厂直播邀约',
-    monthHint: '品牌',
-    body: '一位产业博主要来拍产线。接待规格越高，短期需求和溢价越明显。',
-    choices: [
-      { label: '全程接待投放', cost: '¥4万', hint: '本月需求 +20，售价 +10%' },
-      { label: '标准接待', cost: '¥2万', hint: '本月需求 +10，售价 +10%' },
-      { label: '婉拒拍摄', cost: '不花钱', hint: '行情不受影响' },
-    ],
+    body: '供电所通知本周错峰。产线必须停半班，没有备用电可买。本月能出的货比计划少一截。',
+    impact: '本月产能 -8。',
+    tone: 'bad',
+    weight: 3,
   },
   {
     id: 'tax',
-    title: '税务约谈',
-    monthHint: '现金流',
-    body: '金税系统标红了进项波动。把账做干净最贵，补税次之，拖着就有被追缴的风险。',
-    choices: [
-      { label: '顾问清账', cost: '¥5万', hint: '平安过关，下一次采购八折' },
-      { label: '直接补税', cost: '¥3万', hint: '平安过关，无额外收益' },
-      { label: '先拖一拖', cost: '不花钱', hint: '50% 再被追缴 ¥6万；50% 侥幸过关' },
-    ],
+    title: '进项转出补税',
+    monthHint: '税务',
+    body: '金税标红的进项被要求转出。税局直接从基本户扣款，没有申诉窗口。手头立刻紧一档。',
+    impact: '补税 5 万，现金当场划走。',
+    tone: 'bad',
+    weight: 3,
+  },
+  {
+    id: 'chipSqueeze',
+    title: '芯片交期拉长',
+    monthHint: '原料',
+    body: '分销商把现货和配额一起收紧。标准款、旗舰款的料更贵，库里那点芯片也少了一片。',
+    impact: '芯片报价上调 50%，库存芯片 -1。',
+    tone: 'bad',
+    weight: 3,
+  },
+  {
+    id: 'machineDown',
+    title: '关键设备停机',
+    monthHint: '基建',
+    body: '主轴过热，一条线本月修不好。抢修预付已经划走，产能按少一台设备算。要补量只能加人、打牌或改排。',
+    impact: '预付抢修 2 万，本月产能按少一台设备计算。',
+    tone: 'bad',
+    weight: 3,
+  },
+  {
+    id: 'channelHold',
+    title: '渠道压款退货',
+    monthHint: '回款',
+    body: '两家经销商同步压款，并退回一部分意向单。账上先被划走一笔准备金，本月能卖掉的件数也少了。',
+    impact: '划走准备金 3 万，本月需求 -6。',
+    tone: 'bad',
+    weight: 3,
+  },
+  {
+    id: 'bankCall',
+    title: '银行抽贷审查',
+    monthHint: '融资',
+    body: '客户经理带着审查名单上门。有负债就先扣回一截；没负债也要交评估费。想继续周转，得自己去财务部重新借。',
+    impact: '有负债则强制收回 4 万；无负债则评估费 3 万。',
+    tone: 'bad',
+    weight: 2,
+  },
+  {
+    id: 'rushOrder',
+    title: '经销商压货',
+    monthHint: '旺季',
+    body: '渠道把锁货函直接传真过来。量是给了，单价被砍了一刀。交不齐同样按违约处理。',
+    impact: '需求 +14，售价 -10%；本月须售出基础款 12 件，否则违约金 5 万。',
+    tone: 'mixed',
+    weight: 2,
   },
   {
     id: 'poach',
-    title: '研发被挖角',
+    title: '实验室被挖空',
     monthHint: '研发',
-    body: '猎头盯上了实验室。加码能留下人并推进进度，发奖金只换进度，放人则掉编制。',
-    choices: [
-      { label: '加码留人扩编', cost: '¥5万', hint: '研发人员 +1，研发进度 +1' },
-      { label: '发项目奖', cost: '¥2万', hint: '研发进度 +1' },
-      { label: '放人离开', cost: '不花钱', hint: '若已有研发人员，失去 1 名' },
-    ],
+    body: '猎头把实验室的人挖走了。有研发编制就立刻缺人；没人值守的话，工艺也跟着松一档。',
+    impact: '失去 1 名研发；若无人在岗，研发进度回退，本月产能 -3。',
+    tone: 'bad',
+    weight: 2,
   },
   {
-    id: 'yearEnd',
-    title: '渠道压货',
-    monthHint: '旺季',
-    body: '经销商希望提前锁货。让利越多，货铺得越开，单价也压得越低。',
-    choices: [
-      { label: '让利铺货', cost: '售价 -10%', hint: '本月需求 +20' },
-      { label: '部分接单', cost: '售价 -5%', hint: '本月需求 +10' },
-      { label: '按单生产', cost: '不花钱', hint: '需求与售价均不变' },
-    ],
+    id: 'rebate',
+    title: '出口退税到账',
+    monthHint: '政策',
+    body: '一笔小额退税进了基本户。能缓一口气，但撑不起整月的产销，别把它当成转机。',
+    impact: '现金 +3 万。',
+    tone: 'good',
+    weight: 1,
   },
 ];
 

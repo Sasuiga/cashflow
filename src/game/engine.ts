@@ -28,12 +28,14 @@ import {
   productById,
 } from './data';
 import { ACHIEVEMENTS } from './achievements';
+import { MILESTONES } from './score';
 import { MONTH_NAMES, ROLE_LABEL, materialName, money, productName, roundMoney } from './format';
 import type {
   CardInstance,
   DeptId,
   GameAction,
   GameState,
+  MaterialId,
   Modifiers,
   MonthBooks,
   MonthLedger,
@@ -336,12 +338,22 @@ export function checkAchievements(state: GameState): void {
   if (state.everDebt && state.debt <= 0) unlockAchievement(state, 'debtFree');
   if (state.month >= 6) unlockAchievement(state, 'survive6');
   if (state.lastReport?.productName === '旗舰款') unlockAchievement(state, 'premium');
+  for (const mile of MILESTONES) {
+    if (!state.milestones.includes(mile.id) && mile.reached(state)) {
+      state.milestones = [...state.milestones, mile.id];
+      pushLog(state, `里程碑：${mile.name}（+${mile.points} 分）。`);
+    }
+  }
 }
 
 function spendAp(state: GameState, n = 1): boolean {
   if (state.ap < n) return false;
   state.ap -= n;
   return true;
+}
+
+export function nextCardBuyAp(state: GameState): number {
+  return state.cardsBoughtThisMonth ?? 0;
 }
 
 function nextUid(state: GameState): string {
@@ -392,13 +404,22 @@ function rollMarket(state: GameState, firstMonth: boolean): void {
 function pickEvent(state: GameState): string {
   const unused = EVENTS.filter((event) => !state.usedEventIds.includes(event.id));
   const pool = unused.length > 0 ? unused : EVENTS;
-  return pick(pool).id;
+  const weighted = pool.flatMap((event) => Array.from({ length: event.weight ?? 1 }, () => event.id));
+  return pick(weighted);
+}
+
+function takeMaterial(state: GameState, id: MaterialId, qty: number): number {
+  const have = state.materials[id] ?? 0;
+  const taken = Math.min(qty, have);
+  state.materials[id] = have - taken;
+  return taken;
 }
 
 function prepareMonth(state: GameState, firstMonth: boolean): void {
   state.modifiers = emptyModifiers();
   state.shop = [];
   state.shopDrawn = false;
+  state.cardsBoughtThisMonth = 0;
   state.selectedProduct = null;
   state.pendingDeal = null;
   state.ledger = emptyLedger();
@@ -410,6 +431,7 @@ function prepareMonth(state: GameState, firstMonth: boolean): void {
   state.ap = state.maxAp;
   rollMarket(state, firstMonth);
   state.eventId = pickEvent(state);
+  state.eventNote = null;
   state.phase = 'briefing';
 }
 
@@ -490,167 +512,139 @@ function playCardEffect(state: GameState, defId: string): string {
   return cardById(defId).playText;
 }
 
-function applyEvent(state: GameState, choice: number): void {
+function applyEvent(state: GameState): void {
   const event = eventById(state.eventId!);
-  const pickChoice = event.choices[choice] ?? event.choices[0]!;
+  const bits: string[] = [];
 
   switch (event.id) {
-    case 'lockPrice':
-      if (choice === 0) {
-        pay(state, 5, 'admin');
-        state.materialPrices.a = roundPrice(state.materialPrices.a * 0.8);
-      } else if (choice === 1) {
-        pay(state, 2, 'admin');
-        state.materialPrices.a = roundPrice(state.materialPrices.a * 0.9);
-      } else {
-        state.materialPrices.a = roundPrice(state.materialPrices.a * 1.2);
-      }
+    case 'steelSpike': {
+      state.materialPrices.a = roundPrice(state.materialPrices.a * 1.5);
+      const lost = takeMaterial(state, 'a', 6);
+      bits.push(`钢材报价上调 50%，现为 ${money(state.materialPrices.a)}/件`);
+      if (lost > 0) bits.push(`到货配额被砍，钢材库存 -${lost}`);
       break;
+    }
     case 'bigOrder':
-      if (choice === 0) {
-        state.modifiers.extraDemand += 20;
-        state.pendingDeal = {
-          productId: 'basic',
-          minSold: 15,
-          penalty: 5,
-          okLog: '超市全量订单按量交付。',
-          failLog: '超市全量订单未能交付，违约金已扣。',
-        };
-      } else if (choice === 1) {
-        state.modifiers.extraDemand += 10;
-        state.pendingDeal = {
-          productId: 'basic',
-          minSold: 10,
-          penalty: 2,
-          okLog: '超市半单按量交付。',
-          failLog: '超市半单未能交付，违约金已扣。',
-        };
-      }
+      state.modifiers.extraDemand += 8;
+      state.pendingDeal = {
+        productId: 'basic',
+        minSold: 12,
+        penalty: 6,
+        okLog: '超市加单已按量交付。',
+        failLog: '超市加单未能交齐，违约金 6 万已扣。',
+      };
+      bits.push('基础款需求 +8');
+      bits.push('本月须售出基础款 12 件，否则违约金 6 万');
       break;
     case 'resign':
-      if (choice === 0) {
-        pay(state, 5, 'wage');
-        state.modifiers.extraCapacity += 10;
-      } else if (choice === 1) {
-        pay(state, 2, 'wage');
-      } else if (state.staff.production > 0) {
+      if (state.staff.production > 0) {
         state.staff.production -= 1;
-        receive(state, 1, 'extra');
-      }
-      break;
-    case 'banker':
-      if (choice === 0) {
-        receive(state, 10, 'borrow');
-        state.modifiers.nextBuyDiscount = Math.max(state.modifiers.nextBuyDiscount, 0.2);
-      } else if (choice === 1) {
-        receive(state, 5, 'borrow');
+        bits.push('生产人员 -1，编制立刻空出一档');
+      } else {
+        state.modifiers.extraCapacity -= 4;
+        bits.push('产线本就无人，本月产能再削 4');
       }
       break;
     case 'quality':
-      if (choice === 0) {
-        pay(state, 4, 'admin');
-        state.modifiers.priceBonus += 0.1;
-      } else if (choice === 1) {
-        pay(state, 2, 'admin');
-      } else if (Math.random() < 0.5) {
-        pay(state, 8, 'extra');
-        state.modifiers.extraDemand -= 10;
-        pushLog(state, '抽检抽中不合格批次，罚款到账，渠道也缩了。');
-      } else {
-        pushLog(state, '抽检没抽到你们。运气也是经营的一部分。');
-      }
+      pay(state, 4, 'extra');
+      state.finished = {};
+      state.modifiers.extraDemand -= 8;
+      bits.push('罚款 4 万已划走');
+      bits.push('成品库存清零，本月需求 -8');
       break;
     case 'dump':
-      if (choice === 0) {
-        pay(state, 3, 'selling');
-        state.modifiers.priceBonus += 0.1;
-      } else if (choice === 1) {
-        state.modifiers.priceBonus -= 0.1;
-        state.modifiers.extraDemand += 10;
-      } else {
-        state.modifiers.extraDemand -= 10;
-      }
-      break;
-    case 'subsidy':
-      if (choice === 0) {
-        pay(state, 3, 'admin');
-        receive(state, 10, 'extra');
-        state.modifiers.extraCapacity += 10;
-      } else if (choice === 1) {
-        receive(state, 5, 'extra');
-      } else {
-        receive(state, 2, 'extra');
-      }
+      state.modifiers.priceBonus -= 0.15;
+      state.modifiers.extraDemand -= 8;
+      bits.push('本月售价 -15%，需求 -8');
       break;
     case 'blackout':
-      if (choice === 0) {
-        pay(state, 5, 'admin');
-        state.modifiers.extraCapacity += 5;
-      } else if (choice === 1) {
-        pay(state, 3, 'admin');
-      } else {
-        state.modifiers.extraCapacity -= 10;
-      }
-      break;
-    case 'influencer':
-      if (choice === 0) {
-        pay(state, 4, 'selling');
-        state.modifiers.extraDemand += 20;
-        state.modifiers.priceBonus += 0.1;
-      } else if (choice === 1) {
-        pay(state, 2, 'selling');
-        state.modifiers.extraDemand += 10;
-        state.modifiers.priceBonus += 0.1;
-      }
+      state.modifiers.extraCapacity -= 8;
+      bits.push('错峰限电，本月产能 -8');
       break;
     case 'tax':
-      if (choice === 0) {
-        pay(state, 5, 'admin');
-        state.modifiers.nextBuyDiscount = Math.max(state.modifiers.nextBuyDiscount, 0.2);
-      } else if (choice === 1) {
-        pay(state, 3, 'tax');
-      } else if (Math.random() < 0.5) {
-        pay(state, 6, 'tax');
-        pushLog(state, '税务回头追缴，现金被划走一笔。');
+      pay(state, 5, 'tax');
+      bits.push('进项转出补税 5 万，现金已划走');
+      break;
+    case 'chipSqueeze': {
+      state.materialPrices.c = roundPrice(state.materialPrices.c * 1.5);
+      const lost = takeMaterial(state, 'c', 1);
+      bits.push(`芯片报价上调 50%，现为 ${money(state.materialPrices.c)}/件`);
+      if (lost > 0) bits.push('配额被收，库存芯片 -1');
+      break;
+    }
+    case 'machineDown':
+      pay(state, 2, 'admin');
+      state.modifiers.extraCapacity -= MACHINE_BASE_CAP;
+      bits.push(`抢修预付 2 万，本月产能 -${MACHINE_BASE_CAP}（少一台设备）`);
+      break;
+    case 'channelHold':
+      pay(state, 3, 'extra');
+      state.modifiers.extraDemand -= 6;
+      bits.push('渠道准备金 3 万已划走，本月需求 -6');
+      break;
+    case 'bankCall':
+      if (state.debt > 0) {
+        const amount = Math.min(4, state.debt, Math.max(0, state.cash));
+        if (amount > 0) {
+          pay(state, amount, 'repay');
+          state.debt = roundMoney(state.debt - amount);
+          bits.push(`银行抽贷，强制收回 ${money(amount)}`);
+        }
+        if (state.debt > 0 && state.cash <= 0) {
+          bits.push('账上现金不够扣回全部抽贷，剩余负债仍在');
+        }
       } else {
-        pushLog(state, '约谈没有继续升级。');
+        pay(state, 3, 'admin');
+        bits.push('授信审查评估费 3 万已划走');
       }
+      break;
+    case 'rushOrder':
+      state.modifiers.extraDemand += 14;
+      state.modifiers.priceBonus -= 0.1;
+      state.pendingDeal = {
+        productId: 'basic',
+        minSold: 12,
+        penalty: 5,
+        okLog: '经销商压货已按量交付。',
+        failLog: '经销商压货未能交齐，违约金 5 万已扣。',
+      };
+      bits.push('需求 +14，售价 -10%');
+      bits.push('本月须售出基础款 12 件，否则违约金 5 万');
       break;
     case 'poach':
-      if (choice === 0) {
-        pay(state, 5, 'wage');
-        state.staff.rd += 1;
-        state.rdProgress += 1;
-      } else if (choice === 1) {
-        pay(state, 2, 'admin');
-        state.rdProgress += 1;
-      } else if (state.staff.rd > 0) {
+      if (state.staff.rd > 0) {
         state.staff.rd -= 1;
+        bits.push('研发人员 -1');
+      } else {
+        if (state.rdProgress > 0) {
+          state.rdProgress -= 1;
+          bits.push('实验室空转，研发进度 -1');
+        }
+        state.modifiers.extraCapacity -= 3;
+        bits.push('工艺无人盯线，本月产能 -3');
       }
       break;
-    case 'yearEnd':
-      if (choice === 0) {
-        state.modifiers.extraDemand += 20;
-        state.modifiers.priceBonus -= 0.1;
-      } else if (choice === 1) {
-        state.modifiers.extraDemand += 10;
-        state.modifiers.priceBonus -= 0.05;
-      }
+    case 'rebate':
+      receive(state, 3, 'extra');
+      bits.push('出口退税 3 万到账');
       break;
     default:
+      bits.push(event.impact);
       break;
   }
 
   state.usedEventIds = [...state.usedEventIds, event.id].slice(-EVENTS.length);
   state.maxAp = maxApFor(state.staff);
-  pushLog(state, `事件「${event.title}」：${pickChoice.label}。`);
+  const note = bits.join('。') + '。';
+  state.eventNote = note;
+  pushLog(state, `事件「${event.title}」已落地：${note}`);
 }
 
 export function createInitialState(): GameState {
   return {
     phase: 'title',
     month: 1,
-    cash: 40,
+    cash: 24,
     debt: 0,
     wagesPayable: 0,
     wagesAccruedThisMonth: 0,
@@ -660,11 +654,11 @@ export function createInitialState(): GameState {
     slots: SLOTS_PER_FACTORY,
     machines: 1,
     staff: { production: 2, management: 1, sales: 1, rd: 0 },
-    materials: { a: 40, b: 20, c: 5, d: 0 },
+    materials: { a: 16, b: 8, c: 2, d: 0 },
     finished: {},
-    materialPrices: { a: 0.2, b: 0.4, c: 1, d: 2 },
-    productPrices: { basic: 2, standard: 4, premium: 6 },
-    demand: { basic: 50, standard: 25, premium: 10 },
+    materialPrices: { a: 0.4, b: 0.4, c: 1, d: 2 },
+    productPrices: { basic: 1.5, standard: 4, premium: 6 },
+    demand: { basic: 20, standard: 10, premium: 5 },
     unlockedProducts: ['basic', 'standard', 'premium'],
     materialDUnlocked: false,
     rdProgress: 0,
@@ -672,9 +666,11 @@ export function createInitialState(): GameState {
     cardsUnlocked: false,
     shop: [],
     shopDrawn: false,
+    cardsBoughtThisMonth: 0,
     hand: [],
     modifiers: emptyModifiers(),
     eventId: null,
+    eventNote: null,
     usedEventIds: [],
     selectedProduct: null,
     lastReport: null,
@@ -688,6 +684,7 @@ export function createInitialState(): GameState {
     openBooks: emptyBooks(),
     closedBooks: [],
     achievements: [],
+    milestones: [],
     everDebt: false,
   };
 }
@@ -698,7 +695,7 @@ function startGame(prev: GameState): GameState {
   prepareMonth(state, true);
   state.openBooks = snapshotBooks(state, '开业');
   syncMonthWages(state);
-  pushLog(state, '第一份行业月报已放在桌上。先看行情，再应对事件。');
+  pushLog(state, '第一份行业月报已放在桌上。先看行情，再看本月落地的事件。');
   checkAchievements(state);
   return state;
 }
@@ -708,16 +705,20 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
   const state = clone(prev);
   if (typeof state.wagesPayable !== 'number' || Number.isNaN(state.wagesPayable)) state.wagesPayable = 0;
   if (typeof state.wagesAccruedThisMonth !== 'number' || Number.isNaN(state.wagesAccruedThisMonth)) state.wagesAccruedThisMonth = 0;
+  if (typeof state.cardsBoughtThisMonth !== 'number' || Number.isNaN(state.cardsBoughtThisMonth)) state.cardsBoughtThisMonth = 0;
+  if (!Array.isArray(state.milestones)) state.milestones = [];
+  if (typeof state.eventNote !== 'string' && state.eventNote !== null) state.eventNote = null;
 
   switch (action.type) {
     case 'CONFIRM_BRIEFING':
       if (state.phase !== 'briefing') return prev;
+      applyEvent(state);
       state.phase = 'event';
+      syncMonthWages(state);
       return state;
 
-    case 'RESOLVE_EVENT': {
+    case 'ACK_EVENT': {
       if (state.phase !== 'event' || !state.eventId) return prev;
-      applyEvent(state, action.choice);
       state.phase = 'actions';
       state.ap = maxApFor(state.staff);
       state.maxAp = state.ap;
@@ -888,11 +889,28 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
         pushLog(state, '买不起这张卡。');
         return state;
       }
+      const apCost = state.cardsBoughtThisMonth;
+      if (apCost > 0 && !spendAp(state, apCost)) {
+        pushLog(state, `再买一张要耗 ${apCost} AP。`);
+        return state;
+      }
       pay(state, cost, 'admin');
       state.hand.push(card);
       state.shop.splice(action.index, 1);
-      noteDept(state, 'ceo', `买入「${cardById(card.defId).name}」，花费 ${money(cost)}`);
-      pushLog(state, `购入「${cardById(card.defId).name}」。`);
+      state.cardsBoughtThisMonth += 1;
+      noteDept(
+        state,
+        'ceo',
+        apCost > 0
+          ? `买入「${cardById(card.defId).name}」，花费 ${money(cost)}，耗 ${apCost} AP`
+          : `买入「${cardById(card.defId).name}」，花费 ${money(cost)}，本月首张免 AP`,
+      );
+      pushLog(
+        state,
+        apCost > 0
+          ? `购入「${cardById(card.defId).name}」，耗 ${apCost} AP。`
+          : `购入「${cardById(card.defId).name}」，本月首张免 AP。`,
+      );
       return state;
     }
 

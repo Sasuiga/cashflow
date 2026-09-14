@@ -77,30 +77,31 @@ export function BriefingModal({ state, onConfirm }: { state: GameState; onConfir
 
 export function EventModal({
   state,
-  onChoose,
+  onAck,
 }: {
   state: GameState;
-  onChoose: (choice: number) => void;
+  onAck: () => void;
 }) {
   if (!state.eventId) return null;
   const event = eventById(state.eventId);
   return (
     <div className="overlay">
       <div className="modal">
-        <p className="kicker" style={{ color: '#8a7040' }}>
-          随机事件 · {event.monthHint}
+        <p className="kicker" style={{ color: event.tone === 'good' ? '#3d6b52' : event.tone === 'mixed' ? '#8a7040' : '#8a3d2f' }}>
+          本月事件 · {event.monthHint} · 已落地
         </p>
         <h2>{event.title}</h2>
         <p className="lead">{event.body}</p>
-        {event.choices.map((choice, index) => (
-          <button className="choice" key={choice.label} onClick={() => onChoose(index)}>
-            <span className="choice-top">
-              <b>{choice.label}</b>
-              <em>{choice.cost}</em>
-            </span>
-            <span>{choice.hint}</span>
+        <div className={`event-impact tone-${event.tone}`}>
+          <b>已经发生</b>
+          <p>{state.eventNote ?? event.impact}</p>
+        </div>
+        <p className="lead event-hint">没有应对选项。用本月行动去补库存、借款、加人、换产品或打牌。</p>
+        <div className="footer-actions">
+          <button className="btn" onClick={onAck}>
+            已知悉，开始经营
           </button>
-        ))}
+        </div>
       </div>
     </div>
   );
