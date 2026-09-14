@@ -26,36 +26,43 @@ import {
   netAssetsOf,
   sellPriceOf,
 } from '../game/engine';
-import { ROLE_HINT, ROLE_LABEL, bomLabel, money, qty } from '../game/format';
-import type { GameAction, GameState, MaterialId, Role } from '../game/types';
+import { ROLE_HINT, ROLE_LABEL, bomLabel, materialName, money, qty } from '../game/format';
+import type { DeptId, GameAction, GameState, MaterialId, Role } from '../game/types';
 
 const ROLES: Role[] = ['production', 'management', 'sales', 'rd'];
 const QTY = [10, 20, 40];
 const LOAN = [2, 4, 8];
-const DEPTS = ['ceo', 'finance', 'hr', 'infra', 'store', 'rd', 'sales'] as const;
-type DeptId = (typeof DEPTS)[number];
+
+function deptDone(state: GameState, id: DeptId): string {
+  const lines = state.deptActs[id] ?? [];
+  return lines.length > 0 ? lines.join('；') : '本月尚未行动。';
+}
 
 function Dept({
   title,
-  duty,
+  intro,
+  done,
   open,
   onToggle,
   wide,
   children,
 }: {
   title: string;
-  duty: string;
+  intro: string;
+  done: string;
   open: boolean;
   onToggle: () => void;
   wide?: boolean;
   children: ReactNode;
 }) {
+  const idle = done === '本月尚未行动。';
   return (
     <section className={wide ? 'dept wide' : 'dept'}>
       <button type="button" className="dept-head" onClick={onToggle} aria-expanded={open}>
         <div>
           <h3>{title}</h3>
-          <p>{duty}</p>
+          <p className="dept-intro">{intro}</p>
+          <p className={idle ? 'dept-done idle' : 'dept-done'}>{done}</p>
         </div>
         <span>{open ? '收起' : '展开'}</span>
       </button>
@@ -90,14 +97,17 @@ export function OperationsPage({
   state: GameState;
   dispatch: (action: GameAction) => void;
 }) {
-  const [open, setOpen] = useState<Record<DeptId, boolean>>({
-    ceo: true,
-    hr: true,
-    infra: true,
-    store: true,
-    sales: true,
-    rd: true,
-    finance: true,
+  const [open, setOpen] = useState<Record<DeptId, boolean>>(() => {
+    const phone = window.matchMedia('(max-width: 720px)').matches;
+    return {
+      ceo: !phone,
+      hr: !phone,
+      infra: !phone,
+      store: !phone,
+      sales: !phone,
+      rd: !phone,
+      finance: !phone,
+    };
   });
   const [material, setMaterial] = useState<MaterialId>('a');
   const [buyQty, setBuyQty] = useState(20);
@@ -129,7 +139,7 @@ export function OperationsPage({
       </p>
 
       <div className="dept-grid">
-        <Dept title="总经理室" duty="翻牌、买牌、看手牌。只有打牌耗 1 AP。" open={open.ceo} onToggle={() => toggle('ceo')} wide>
+        <Dept title="总经理室" intro="翻牌、买牌、打牌，用决策卡影响当月经营。" done={deptDone(state, 'ceo')} open={open.ceo} onToggle={() => toggle('ceo')} wide>
           <Facts>
             <div className="row">
               <span>剩余行动点</span>
@@ -145,7 +155,8 @@ export function OperationsPage({
                   : '未解锁（三月或编制满 6 人）'}
               </span>
             </div>
-            <table className="sheet dark" style={{ marginTop: 12 }}>
+            <div className="sheet-wrap" style={{ marginTop: 12 }}>
+            <table className="sheet dark">
               <thead>
                 <tr>
                   <th>人员结构</th>
@@ -163,6 +174,7 @@ export function OperationsPage({
                 ))}
               </tbody>
             </table>
+            </div>
             <p className="hint" style={{ marginTop: 10 }}>
               某类员工越多，翻开的决策卡越容易出对应花色。加人请去人事部。
             </p>
@@ -194,7 +206,7 @@ export function OperationsPage({
                           <p>{def.blurb}</p>
                           <div className="cost">{money(def.cost)} · 买牌不耗 AP</div>
                           <button className="btn small" style={{ marginTop: 10 }} onClick={() => dispatch({ type: 'BUY_CARD', index })}>
-                            选购入袋
+                            买入「{def.name}」 · 不耗 AP · 花费 {money(def.cost)}
                           </button>
                         </article>
                       );
@@ -214,7 +226,7 @@ export function OperationsPage({
                       <p>{def.blurb}</p>
                       {acting ? (
                         <button className="btn small" disabled={!canAct} style={{ marginTop: 10 }} onClick={() => dispatch({ type: 'PLAY_CARD', uid: card.uid })}>
-                          打出 · 耗 1 AP
+                          打出「{def.name}」 · 耗 1 AP
                         </button>
                       ) : (
                         <div className="cost">行动阶段才能打出</div>
@@ -230,7 +242,7 @@ export function OperationsPage({
           </Actions>
         </Dept>
 
-        <Dept title="财务部" duty="先看现金和授信，再决定借款或还款。各耗 1 AP。" open={open.finance} onToggle={() => toggle('finance')} wide>
+        <Dept title="财务部" intro="借款、还款，调度现金与负债。" done={deptDone(state, 'finance')} open={open.finance} onToggle={() => toggle('finance')} wide>
           <Facts>
             <div className="row">
               <span>货币资金</span>
@@ -265,16 +277,16 @@ export function OperationsPage({
             </div>
             <div className="qty-row" style={{ marginTop: 8 }}>
               <button className="btn small" disabled={!canAct} onClick={() => dispatch({ type: 'BORROW', amount: Math.min(loanAmt, room) })}>
-                借款 · 耗 1 AP · {money(Math.min(loanAmt, room))}
+                借入 {money(Math.min(loanAmt, room))} · 耗 1 AP
               </button>
               <button className="btn small ghost" disabled={!canAct} onClick={() => dispatch({ type: 'REPAY', amount: loanAmt })}>
-                还款 · 耗 1 AP · {money(loanAmt)}
+                偿还 {money(loanAmt)} · 耗 1 AP
               </button>
             </div>
           </Actions>
         </Dept>
 
-        <Dept title="人事部" duty="先看编制和工资，再决定招谁。招聘耗 1 AP。" open={open.hr} onToggle={() => toggle('hr')}>
+        <Dept title="人事部" intro="招聘四类员工，编制影响产能、行动点和卡类。" done={deptDone(state, 'hr')} open={open.hr} onToggle={() => toggle('hr')}>
           <Facts>
             {ROLES.map((role) => (
               <div className="row" key={role}>
@@ -292,17 +304,17 @@ export function OperationsPage({
             </div>
           </Facts>
           <Actions note={acting ? '每人入职立刻生效，并支付招聘费。' : '人事令要等事件结束后才能发。'}>
-            <div className="qty-row">
+            <div className="qty-row stacked">
               {ROLES.map((role) => (
                 <button key={role} className="chip" disabled={!canAct} onClick={() => dispatch({ type: 'HIRE', role })}>
-                  招{ROLE_LABEL[role]} · 耗 1 AP · {money(HIRE_COST)}
+                  招聘{ROLE_LABEL[role]} 1人 · 耗 1 AP · 花费 {money(HIRE_COST)}
                 </button>
               ))}
             </div>
           </Actions>
         </Dept>
 
-        <Dept title="基建部" duty="先看厂区和产能，再决定买设备或扩厂。各耗 1 AP。" open={open.infra} onToggle={() => toggle('infra')}>
+        <Dept title="基建部" intro="购买设备、扩建厂区，扩大产能。" done={deptDone(state, 'infra')} open={open.infra} onToggle={() => toggle('infra')}>
           <Facts>
             <div className="row">
               <span>厂区 / 机位</span>
@@ -324,19 +336,20 @@ export function OperationsPage({
           <Actions note={acting ? '机位满了要先扩厂。' : '基建令要等事件结束后才能发。'}>
             <div className="action-grid">
               <button className="action" disabled={!canAct} onClick={() => dispatch({ type: 'BUY_MACHINE' })}>
-                <b>购买设备 · 耗 1 AP · {money(MACHINE_COST)}</b>
-                <small>每台基础产能 10，最多安置 4 名生产工。</small>
+                <b>购买设备 1台 · 耗 1 AP · 花费 {money(MACHINE_COST)}</b>
+                <small>基础产能 +{MACHINE_BASE_CAP}，最多安置 {WORKERS_PER_MACHINE} 名生产工。</small>
               </button>
               <button className="action" disabled={!canAct} onClick={() => dispatch({ type: 'EXPAND_FACTORY' })}>
-                <b>扩建厂区 · 耗 1 AP · {money(FACTORY_COST)}</b>
-                <small>新厂区提供 3 个机位，并增加月维护。</small>
+                <b>扩建厂区 1座 · 耗 1 AP · 花费 {money(FACTORY_COST)}</b>
+                <small>机位 +3，月维护 +{money(FACTORY_UPKEEP)}。</small>
               </button>
             </div>
           </Actions>
         </Dept>
 
-        <Dept title="采购部" duty="先看库存和报价，再下采购单。采购耗 1 AP。" open={open.store} onToggle={() => toggle('store')}>
+        <Dept title="采购部" intro="按报价采购原料入库。" done={deptDone(state, 'store')} open={open.store} onToggle={() => toggle('store')}>
           <Facts title="库房现状">
+            <div className="sheet-wrap">
             <table className="sheet dark">
               <thead>
                 <tr>
@@ -357,6 +370,7 @@ export function OperationsPage({
                 ))}
               </tbody>
             </table>
+            </div>
             {products.some((item) => (state.finished[item.id] ?? 0) > 0) && (
               <div style={{ marginTop: 10 }}>
                 {products
@@ -389,13 +403,13 @@ export function OperationsPage({
             </div>
             <div className="footer-actions" style={{ justifyContent: 'flex-start' }}>
               <button className="btn small" disabled={!canAct} onClick={() => dispatch({ type: 'BUY_MATERIAL', material, qty: buyQty })}>
-                采购 {buyQty} 件 · 耗 1 AP · {money(buyCost)}
+                采购{materialName(material)} {buyQty}件 · 耗 1 AP · 花费 {money(buyCost)}
               </button>
             </div>
           </Actions>
         </Dept>
 
-        <Dept title="研发中心" duty="先看已有 BOM 和人手，再看项目进度。进度来自研发人员。" open={open.rd} onToggle={() => toggle('rd')}>
+        <Dept title="研发中心" intro="靠研发人员推进项目，解锁新产品与特种料。" done={deptDone(state, 'rd')} open={open.rd} onToggle={() => toggle('rd')}>
           <Facts>
             <div className="row">
               <span>研发人员</span>
@@ -421,7 +435,8 @@ export function OperationsPage({
                     ? '下一档将开特种合金线。'
                     : '量产项目已经做完，团队在做工艺微调。'}
             </p>
-            <table className="sheet dark" style={{ marginTop: 12 }}>
+            <div className="sheet-wrap" style={{ marginTop: 12 }}>
+            <table className="sheet dark">
               <thead>
                 <tr>
                   <th>已有产品</th>
@@ -441,11 +456,12 @@ export function OperationsPage({
                 ))}
               </tbody>
             </table>
+            </div>
           </Facts>
           <Actions note="研发中心本身不耗行动点。加人请去人事部，打研发卡请去总经理室。" />
         </Dept>
 
-        <Dept title="销售部" duty="先看市价和需求，再安排本月唯一产品。排产不耗 AP。" open={open.sales} onToggle={() => toggle('sales')}>
+        <Dept title="销售部" intro="查看行情，安排本月唯一产品产销。" done={deptDone(state, 'sales')} open={open.sales} onToggle={() => toggle('sales')}>
           <Facts>
             <div className="row">
               <span>销售人员</span>
@@ -453,6 +469,7 @@ export function OperationsPage({
                 {state.staff.sales} 人 · {ROLE_HINT.sales}
               </span>
             </div>
+            <div className="sheet-wrap">
             <table className="sheet dark">
               <thead>
                 <tr>
@@ -475,6 +492,7 @@ export function OperationsPage({
                 ))}
               </tbody>
             </table>
+            </div>
           </Facts>
           <Actions
             note={
@@ -516,7 +534,7 @@ export function OperationsPage({
                 </div>
                 <div className="footer-actions">
                   <button className="btn" disabled={!state.selectedProduct} onClick={() => dispatch({ type: 'SETTLE' })}>
-                    确认并结算本月 · 不耗 AP
+                    确认排产「{state.selectedProduct ? productById(state.selectedProduct).name : ''}」并结算 · 不耗 AP
                   </button>
                 </div>
               </>

@@ -28,9 +28,10 @@ import {
   productById,
 } from './data';
 import { ACHIEVEMENTS } from './achievements';
-import { MONTH_NAMES, ROLE_LABEL, money, productName, roundMoney } from './format';
+import { MONTH_NAMES, ROLE_LABEL, materialName, money, productName, roundMoney } from './format';
 import type {
   CardInstance,
+  DeptId,
   GameAction,
   GameState,
   Modifiers,
@@ -154,6 +155,14 @@ function cardsUnlockedNow(state: GameState): boolean {
 
 function pushLog(state: GameState, line: string): void {
   state.log = [line, ...state.log].slice(0, 40);
+}
+
+function emptyDeptActs(): Record<DeptId, string[]> {
+  return { ceo: [], finance: [], hr: [], infra: [], store: [], rd: [], sales: [] };
+}
+
+function noteDept(state: GameState, dept: DeptId, text: string): void {
+  state.deptActs[dept] = [...state.deptActs[dept], text];
 }
 
 export function emptyLedger(): MonthLedger {
@@ -367,6 +376,7 @@ function prepareMonth(state: GameState, firstMonth: boolean): void {
   state.selectedProduct = null;
   state.pendingDeal = null;
   state.ledger = emptyLedger();
+  state.deptActs = emptyDeptActs();
   state.ledger.openingCash = state.cash;
   state.cardsUnlocked = cardsUnlockedNow(state);
   state.maxAp = maxApFor(state.staff);
@@ -641,6 +651,7 @@ export function createInitialState(): GameState {
     lastReport: null,
     prevReport: null,
     log: ['北港制造开业。账上有启动资金，库里有第一批料。'],
+    deptActs: emptyDeptActs(),
     endKind: null,
     uidSeq: 0,
     pendingDeal: null,
@@ -702,6 +713,7 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
       }
       pay(state, MACHINE_COST, 'capex');
       state.machines += 1;
+      noteDept(state, 'infra', `购入设备 1台，花费 ${money(MACHINE_COST)}，产线现为 ${state.machines} 台`);
       pushLog(state, `新设备到位。产线 ${state.machines} 台，抵押融资上限 ${money(loanLimit(state.machines))}。`);
       return state;
     }
@@ -719,6 +731,7 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
       pay(state, FACTORY_COST, 'capex');
       state.factories += 1;
       state.slots += SLOTS_PER_FACTORY;
+      noteDept(state, 'infra', `扩建厂区 1座，花费 ${money(FACTORY_COST)}，机位现为 ${state.slots}`);
       pushLog(state, `新厂区开工。机位 ${state.slots}，月维护上调。`);
       return state;
     }
@@ -736,6 +749,7 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
       pay(state, HIRE_COST, 'wage');
       state.staff[action.role] += 1;
       state.maxAp = maxApFor(state.staff);
+      noteDept(state, 'hr', `招聘${ROLE_LABEL[action.role]} 1人，花费 ${money(HIRE_COST)}，现有 ${state.staff[action.role]} 人`);
       pushLog(state, `新同事入职：${ROLE_LABEL[action.role]}。编制 ${totalStaff(state.staff)} 人。`);
       if (cardsUnlockedNow(state) && !state.cardsUnlocked) {
         state.cardsUnlocked = true;
@@ -763,11 +777,16 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
       }
       pay(state, cost, 'buy');
       state.materials[action.material] += action.qty;
+      const off = Math.round(state.modifiers.nextBuyDiscount * 100);
+      const buyNote = off > 0
+        ? `采购${materialName(action.material)} ${action.qty}件，花费 ${money(cost)}（${100 - off}折）`
+        : `采购${materialName(action.material)} ${action.qty}件，花费 ${money(cost)}`;
+      noteDept(state, 'store', buyNote);
       if (state.modifiers.nextBuyDiscount > 0) {
-        pushLog(state, `集采折扣已使用（${Math.round(state.modifiers.nextBuyDiscount * 100)}% off）。`);
+        pushLog(state, `集采折扣已使用（${off}% off）。`);
         state.modifiers.nextBuyDiscount = 0;
       }
-      pushLog(state, `入库 ${action.qty} 件原料，花费 ${money(cost)}。`);
+      pushLog(state, `${buyNote}。`);
       return state;
     }
 
@@ -784,6 +803,7 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
         return state;
       }
       receive(state, amount, 'borrow');
+      noteDept(state, 'finance', `借入 ${money(amount)}，负债现为 ${money(state.debt)}`);
       pushLog(state, `放款 ${money(amount)}。负债 ${money(state.debt)} / 上限 ${money(loanLimit(state.machines))}。`);
       return state;
     }
@@ -801,6 +821,7 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
       }
       pay(state, amount, 'repay');
       state.debt = roundMoney(state.debt - amount);
+      noteDept(state, 'finance', `偿还 ${money(amount)}，负债现为 ${money(state.debt)}`);
       pushLog(state, `还款 ${money(amount)}。剩余负债 ${money(state.debt)}。`);
       return state;
     }
@@ -809,6 +830,7 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
       if (state.phase !== 'actions' || !state.cardsUnlocked || state.shopDrawn) return prev;
       state.shop = [rollCard(state), rollCard(state), rollCard(state)];
       state.shopDrawn = true;
+      noteDept(state, 'ceo', '翻开本月卡铺');
       pushLog(state, '三张决策卡翻开。员工结构越偏哪一类，哪一类牌越常出现。');
       return state;
     }
@@ -828,6 +850,7 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
       pay(state, cost, 'admin');
       state.hand.push(card);
       state.shop.splice(action.index, 1);
+      noteDept(state, 'ceo', `买入「${cardById(card.defId).name}」，花费 ${money(cost)}`);
       pushLog(state, `购入「${cardById(card.defId).name}」。`);
       return state;
     }
@@ -841,7 +864,9 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
         return state;
       }
       const [card] = state.hand.splice(index, 1);
+      const def = cardById(card!.defId);
       const text = playCardEffect(state, card!.defId);
+      noteDept(state, 'ceo', `打出「${def.name}」：${def.playText}`);
       pushLog(state, text);
       return state;
     }
@@ -852,12 +877,18 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
       if (!state.selectedProduct) {
         state.selectedProduct = state.unlockedProducts.find((id) => maxProduce(state, id) > 0) ?? state.unlockedProducts[0] ?? null;
       }
+      noteDept(state, 'sales', '转入排产');
+      if (state.selectedProduct) {
+        noteDept(state, 'sales', `选定${productName(state.selectedProduct)}`);
+      }
       return state;
 
     case 'SELECT_PRODUCT':
       if (state.phase !== 'produce') return prev;
       if (!state.unlockedProducts.includes(action.id)) return prev;
       state.selectedProduct = action.id;
+      state.deptActs.sales = state.deptActs.sales.filter((line) => !line.startsWith('选定'));
+      noteDept(state, 'sales', `选定${productName(action.id)}`);
       return state;
 
     case 'SETTLE':

@@ -1,5 +1,5 @@
 import { booksForView } from '../game/engine';
-import { money, roundMoney, signedMoney } from '../game/format';
+import { amount, roundMoney, signedAmount } from '../game/format';
 import type { MonthBooks, MonthLedger } from '../game/types';
 import type { GameState } from '../game/types';
 
@@ -35,12 +35,12 @@ function Delta({ current, previous, invert = false }: { current: number; previou
   const delta = roundMoney(current - previous);
   const good = invert ? delta < 0 : delta > 0;
   const bad = invert ? delta > 0 : delta < 0;
-  return <span className={good ? 'good' : bad ? 'bad' : 'muted'}>{signedMoney(delta)}</span>;
+  return <span className={good ? 'good' : bad ? 'bad' : 'muted'}>{signedAmount(delta)}</span>;
 }
 
 function Cell({ value, empty = '—' }: { value: number | null; empty?: string }) {
   if (value === null) return <span className="muted">{empty}</span>;
-  return <>{money(value)}</>;
+  return <>{amount(value)}</>;
 }
 
 interface Line {
@@ -70,12 +70,13 @@ function Statement({
       <h3>{title}</h3>
       <p className="hint">{hint}</p>
       {lines.length === 0 ? null : (
+      <div className="sheet-wrap">
       <table className="sheet dark">
         <thead>
           <tr>
             <th>科目</th>
-            <th className="num">{prevLabel}</th>
             <th className="num">{currLabel}</th>
+            <th className="num">{prevLabel}</th>
             <th className="num">变动</th>
           </tr>
         </thead>
@@ -89,10 +90,10 @@ function Statement({
               <tr key={line.label} className={line.total ? 'sheet-total' : undefined}>
                 <td className={line.indent ? 'indent' : undefined}>{line.label}</td>
                 <td className="num">
-                  <Cell value={line.prev} />
+                  <Cell value={line.curr} />
                 </td>
                 <td className="num">
-                  <Cell value={line.curr} />
+                  <Cell value={line.prev} />
                 </td>
                 <td className="num">
                   <Delta current={line.curr} previous={line.prev} invert={line.invert} />
@@ -102,6 +103,7 @@ function Statement({
           )}
         </tbody>
       </table>
+      </div>
       )}
     </section>
   );
@@ -220,17 +222,15 @@ function cashFlowLines(prev: MonthLedger, curr: MonthLedger): Array<Line | { sec
 
 export function FinancePage({ state }: { state: GameState }) {
   const { prev, curr, currClosed } = booksForView(state);
-  const prevLabel = prev.title;
-  const currLabel = currClosed ? curr.title : '本月';
   const income = incomeLines(prev.ledger, curr.ledger);
 
   return (
     <div className="page-stack">
       <Statement
         title="资产负债表"
-        hint={`${prevLabel} 与 ${currLabel} 对比。存货按市价估算，固定资产按账面价值。`}
-        prevLabel={prevLabel}
-        currLabel={currLabel}
+        hint="本月与上期对比。存货按市价估算，固定资产按账面价值。"
+        prevLabel="上期"
+        currLabel="本月"
         lines={balanceLines(prev, curr)}
       />
       <Statement
@@ -242,15 +242,15 @@ export function FinancePage({ state }: { state: GameState }) {
               : '本月尚未结算，只列目前已经发生的损益。'
             : '本期尚无损益发生。'
         }
-        prevLabel={prevLabel}
-        currLabel={currLabel}
+        prevLabel="上期"
+        currLabel="本月"
         lines={income}
       />
       <Statement
         title="现金流量表"
         hint={currClosed ? `${curr.title} 已结。未发生的科目不列。` : '本月尚未结算，只列目前已经发生的现金流。'}
-        prevLabel={prevLabel}
-        currLabel={currLabel}
+        prevLabel="上期"
+        currLabel="本月"
         lines={cashFlowLines(prev.ledger, curr.ledger)}
       />
     </div>

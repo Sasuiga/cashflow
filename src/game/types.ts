@@ -8,6 +8,7 @@ export type Phase =
   | 'ended';
 
 export type Role = 'production' | 'management' | 'sales' | 'rd';
+export type DeptId = 'ceo' | 'finance' | 'hr' | 'infra' | 'store' | 'rd' | 'sales';
 export type MaterialId = 'a' | 'b' | 'c' | 'd';
 export type ProductId = 'basic' | 'standard' | 'premium' | 'economy' | 'special';
 export type CardSuit = Role;
@@ -184,6 +185,7 @@ export interface GameState {
   lastReport: SettlementReport | null;
   prevReport: SettlementReport | null;
   log: string[];
+  deptActs: Record<DeptId, string[]>;
   endKind: EndKind | null;
   uidSeq: number;
   pendingDeal: PendingDeal | null;

@@ -10,6 +10,7 @@ export function BriefingModal({ state, onConfirm }: { state: GameState; onConfir
       <div className="modal">
         <h2>{MONTH_NAMES[state.month - 1]} · 行业月报</h2>
         <p className="sheet-caption">原料报价</p>
+        <div className="sheet-wrap">
         <table className="sheet">
           <thead>
             <tr>
@@ -34,7 +35,9 @@ export function BriefingModal({ state, onConfirm }: { state: GameState; onConfir
             })}
           </tbody>
         </table>
+        </div>
         <p className="sheet-caption">成品市价</p>
+        <div className="sheet-wrap">
         <table className="sheet">
           <thead>
             <tr>
@@ -61,6 +64,7 @@ export function BriefingModal({ state, onConfirm }: { state: GameState; onConfir
             })}
           </tbody>
         </table>
+        </div>
         <div className="footer-actions">
           <button className="btn" onClick={onConfirm}>
             收下月报

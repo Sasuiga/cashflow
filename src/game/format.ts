@@ -33,18 +33,30 @@ export function roundMoney(value: number): number {
   return Math.round(value * 10) / 10;
 }
 
+export function amount(value: number): string {
+  const n = roundMoney(value);
+  const abs = Math.abs(n);
+  const sign = n < 0 ? '-' : '';
+  if (Math.abs(abs * 10 - Math.round(abs) * 10) < 1e-6) return `${sign}${Math.round(abs)}万`;
+  return `${sign}${abs.toFixed(1)}万`;
+}
+
 export function money(value: number): string {
-  const amount = roundMoney(value);
-  const abs = Math.abs(amount);
-  const sign = amount < 0 ? '-' : '';
-  if (Math.abs(abs * 10 - Math.round(abs) * 10) < 1e-6) return `${sign}¥${Math.round(abs)}万`;
-  return `${sign}¥${abs.toFixed(1)}万`;
+  const n = roundMoney(value);
+  const sign = n < 0 ? '-' : '';
+  return `${sign}¥${amount(Math.abs(n))}`;
 }
 
 export function signedMoney(value: number): string {
   if (value > 0) return `+${money(value)}`;
   if (value < 0) return money(value);
   return money(0);
+}
+
+export function signedAmount(value: number): string {
+  if (value > 0) return `+${amount(value)}`;
+  if (value < 0) return amount(value);
+  return amount(0);
 }
 
 export function qty(n: number): string {
