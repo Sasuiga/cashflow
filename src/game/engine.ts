@@ -936,10 +936,17 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
       if (!state.selectedProduct) {
         state.selectedProduct = state.unlockedProducts.find((id) => maxProduce(state, id) > 0) ?? state.unlockedProducts[0] ?? null;
       }
+      state.deptActs.sales = state.deptActs.sales.filter((line) => !line.startsWith('转入排产') && !line.startsWith('选定'));
       noteDept(state, 'sales', '转入排产');
       if (state.selectedProduct) {
         noteDept(state, 'sales', `选定${productName(state.selectedProduct)}`);
       }
+      return state;
+
+    case 'BACK_TO_ACTIONS':
+      if (state.phase !== 'produce') return prev;
+      state.phase = 'actions';
+      state.deptActs.sales = state.deptActs.sales.filter((line) => !line.startsWith('转入排产'));
       return state;
 
     case 'SELECT_PRODUCT':

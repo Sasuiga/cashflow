@@ -140,7 +140,7 @@ export function OperationsPage({
   return (
     <div className="ops">
       <p className="ops-lead">
-        每个部门先看现状，再决定要不要做事。带「耗 1 AP」的按钮会花掉行动点；销售部的产销安排不耗行动点。
+        每个部门先看现状，再决定要不要做事。带「耗 1 AP」的按钮会花掉行动点；生产与销售部的产销安排不耗行动点。
       </p>
       {monthEvent && state.eventNote && (
         <aside className={`event-banner tone-${monthEvent.tone}`}>
@@ -497,7 +497,7 @@ export function OperationsPage({
           <Actions note="研发中心本身不耗行动点。加人请去人事部，打研发卡请去总经理室。" />
         </Dept>
 
-        <Dept title="销售部" intro="查看行情，安排本月唯一产品产销。" done={deptDone(state, 'sales')} open={open.sales} onToggle={() => toggle('sales')}>
+        <Dept title="生产与销售部" intro="查看行情，安排本月唯一产品产销。" done={deptDone(state, 'sales')} open={open.sales} onToggle={() => toggle('sales')}>
           <Facts>
             <div className="row">
               <span>销售人员</span>
@@ -569,6 +569,9 @@ export function OperationsPage({
                   })}
                 </div>
                 <div className="footer-actions">
+                  <button className="btn small ghost" onClick={() => dispatch({ type: 'BACK_TO_ACTIONS' })}>
+                    取消排产，返回经营
+                  </button>
                   <button className="btn" disabled={!state.selectedProduct} onClick={() => dispatch({ type: 'SETTLE' })}>
                     确认排产「{state.selectedProduct ? productById(state.selectedProduct).name : ''}」并结算 · 不耗 AP
                   </button>

@@ -17,6 +17,7 @@ function bestProduct(state: GameState): ProductId {
 
 function play(): GameState {
   let state = reduce(createInitialState(), { type: 'START_GAME' });
+  let bounced = false;
   for (let i = 0; i < 120; i += 1) {
     if (state.phase === 'ended') return state;
     if (state.phase === 'briefing') {
@@ -47,6 +48,14 @@ function play(): GameState {
       continue;
     }
     if (state.phase === 'produce') {
+      if (!bounced) {
+        // 验证新增的取消排产路径：排产 → 返回经营 → 再进入排产
+        state = reduce(state, { type: 'BACK_TO_ACTIONS' });
+        if (state.phase !== 'actions') throw new Error('BACK_TO_ACTIONS did not return to actions');
+        state = reduce(state, { type: 'GO_PRODUCE' });
+        if (state.phase !== 'produce') throw new Error('GO_PRODUCE did not re-enter produce');
+        bounced = true;
+      }
       state = reduce(state, { type: 'SELECT_PRODUCT', id: bestProduct(state) });
       state = reduce(state, { type: 'SETTLE' });
       continue;

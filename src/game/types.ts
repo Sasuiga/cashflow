@@ -215,6 +215,7 @@ export type GameAction =
   | { type: 'BUY_CARD'; index: number }
   | { type: 'PLAY_CARD'; uid: string }
   | { type: 'GO_PRODUCE' }
+  | { type: 'BACK_TO_ACTIONS' }
   | { type: 'SELECT_PRODUCT'; id: ProductId }
   | { type: 'SETTLE' }
   | { type: 'NEXT_MONTH' }
