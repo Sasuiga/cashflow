@@ -1,4 +1,12 @@
-export type Phase = 'title' | 'board' | 'news' | 'market' | 'operate' | 'report' | 'ended';
+export type Phase =
+  | 'title'
+  | 'board'
+  | 'briefing'
+  | 'event'
+  | 'actions'
+  | 'produce'
+  | 'report'
+  | 'ended';
 
 export type Role = 'production' | 'management' | 'sales' | 'rd';
 export type DeptId = 'ceo' | 'finance' | 'hr' | 'infra' | 'store' | 'rd' | 'sales';
@@ -162,8 +170,6 @@ export interface SettlementReport {
   netAssets: number;
   rdNote: string | null;
   lines: SettlementLine[];
-  defaults: Array<{ productName: string; qty: number; penalty: number }>;
-  story: string[];
 }
 
 export interface MonthLedger {
@@ -298,7 +304,8 @@ export type GameAction =
   | { type: 'START_GAME' }
   | { type: 'TOGGLE_BOARD_GOAL'; id: string }
   | { type: 'CONFIRM_BOARD' }
-  | { type: 'ACK_NEWS'; choice: 'face' | 'mitigate' }
+  | { type: 'CONFIRM_BRIEFING' }
+  | { type: 'ACK_EVENT' }
   | { type: 'BUY_MACHINE' }
   | { type: 'EXPAND_FACTORY' }
   | { type: 'HIRE'; role: Role }
@@ -309,7 +316,8 @@ export type GameAction =
   | { type: 'DRAW_SHOP' }
   | { type: 'BUY_CARD'; index: number }
   | { type: 'PLAY_CARD'; uid: string }
-  | { type: 'LOCK_MARKET' }
+  | { type: 'GO_PRODUCE' }
+  | { type: 'BACK_TO_ACTIONS' }
   | { type: 'TOGGLE_ORDER'; id: string }
   | { type: 'SET_EXTRA_PRODUCE'; productId: ProductId; qty: number }
   | { type: 'SETTLE' }
