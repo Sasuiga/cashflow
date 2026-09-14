@@ -31,7 +31,7 @@ import type { GameAction, GameState, MaterialId, Role } from '../game/types';
 const ROLES: Role[] = ['production', 'management', 'sales', 'rd'];
 const QTY = [10, 20, 40];
 const LOAN = [2, 4, 8];
-const DEPTS = ['ceo', 'hr', 'infra', 'store', 'sales', 'rd', 'finance'] as const;
+const DEPTS = ['ceo', 'finance', 'hr', 'infra', 'store', 'rd', 'sales'] as const;
 type DeptId = (typeof DEPTS)[number];
 
 function Dept({
@@ -63,10 +63,10 @@ function Dept({
   );
 }
 
-function Facts({ children }: { children: ReactNode }) {
+function Facts({ children, title = '现状' }: { children: ReactNode; title?: string }) {
   return (
     <div className="dept-block">
-      <p className="dept-kicker">现状</p>
+      <p className="dept-kicker">{title}</p>
       {children}
     </div>
   );
@@ -211,6 +211,50 @@ export function OperationsPage({
           </Actions>
         </Dept>
 
+        <Dept title="财务部" duty="先看现金和授信，再决定借款或还款。各耗 1 AP。" open={open.finance} onToggle={() => toggle('finance')} wide>
+          <Facts>
+            <div className="row">
+              <span>货币资金</span>
+              <span>{money(state.cash)}</span>
+            </div>
+            <div className="row">
+              <span>短期借款</span>
+              <span>{money(state.debt)}</span>
+            </div>
+            <div className="row">
+              <span>设备抵押额度</span>
+              <span>
+                {money(loanLimit(state.machines))} · 还可借 {money(room)}
+              </span>
+            </div>
+            <div className="row">
+              <span>预计本月利息</span>
+              <span>{state.debt > 0 ? money(state.debt * INTEREST_RATE) : '无'}</span>
+            </div>
+            <div className="row">
+              <span>净资产</span>
+              <span>{money(netAssetsOf(state))}</span>
+            </div>
+          </Facts>
+          <Actions note={acting ? '借款与还款都记入现金流量表筹资活动。' : '资金调度要等事件结束后才能做。'}>
+            <div className="qty-row">
+              {LOAN.map((n) => (
+                <button key={n} className={loanAmt === n ? 'chip on' : 'chip'} onClick={() => setLoanAmt(n)}>
+                  {money(n)}
+                </button>
+              ))}
+            </div>
+            <div className="qty-row" style={{ marginTop: 8 }}>
+              <button className="btn small" disabled={!canAct} onClick={() => dispatch({ type: 'BORROW', amount: Math.min(loanAmt, room) })}>
+                借款 · 耗 1 AP · {money(Math.min(loanAmt, room))}
+              </button>
+              <button className="btn small ghost" disabled={!canAct} onClick={() => dispatch({ type: 'REPAY', amount: loanAmt })}>
+                还款 · 耗 1 AP · {money(loanAmt)}
+              </button>
+            </div>
+          </Actions>
+        </Dept>
+
         <Dept title="人事部" duty="先看编制和工资，再决定招谁。招聘耗 1 AP。" open={open.hr} onToggle={() => toggle('hr')}>
           <Facts>
             {ROLES.map((role) => (
@@ -272,8 +316,8 @@ export function OperationsPage({
           </Actions>
         </Dept>
 
-        <Dept title="采购与库房" duty="先看库存和报价，再下采购单。采购耗 1 AP。" open={open.store} onToggle={() => toggle('store')}>
-          <Facts>
+        <Dept title="采购部" duty="先看库存和报价，再下采购单。采购耗 1 AP。" open={open.store} onToggle={() => toggle('store')}>
+          <Facts title="库房现状">
             <table className="sheet dark">
               <thead>
                 <tr>
@@ -330,6 +374,56 @@ export function OperationsPage({
               </button>
             </div>
           </Actions>
+        </Dept>
+
+        <Dept title="研发中心" duty="先看已有 BOM 和人手，再看项目进度。进度来自研发人员。" open={open.rd} onToggle={() => toggle('rd')}>
+          <Facts>
+            <div className="row">
+              <span>研发人员</span>
+              <span>
+                {state.staff.rd} 人 · 结算时推进 {state.staff.rd} 点
+              </span>
+            </div>
+            <div className="row">
+              <span>当前项目进度</span>
+              <span>
+                {state.rdProgress} / {RD_THRESHOLD}
+              </span>
+            </div>
+            <div className="rd-bar" aria-hidden>
+              <i style={{ width: `${Math.min(100, (state.rdProgress / RD_THRESHOLD) * 100)}%` }} />
+            </div>
+            <p className="hint">
+              {state.staff.rd <= 0
+                ? '实验室无人值守，本月结算不会推进。去人事部招研发。'
+                : nextProduct
+                  ? `下一档：${nextProduct.name}。还需 ${waitPoints} 点，按现有人手约 ${Math.ceil(waitPoints / state.staff.rd)} 个月。`
+                  : nextUnlock?.unlockD
+                    ? '下一档将开特种合金线。'
+                    : '量产项目已经做完，团队在做工艺微调。'}
+            </p>
+            <table className="sheet dark" style={{ marginTop: 12 }}>
+              <thead>
+                <tr>
+                  <th>已有产品</th>
+                  <th>BOM</th>
+                  <th className="num">单件料本</th>
+                </tr>
+              </thead>
+              <tbody>
+                {products.map((item) => (
+                  <tr key={item.id}>
+                    <td>
+                      {item.tier} · {item.name}
+                    </td>
+                    <td>{bomLabel(item.bom)}</td>
+                    <td className="num">{money(bomCost(state, item.id))}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </Facts>
+          <Actions note="研发中心本身不耗行动点。加人请去人事部，打研发卡请去总经理室。" />
         </Dept>
 
         <Dept title="销售部" duty="先看市价和需求，再安排本月唯一产品。排产不耗 AP。" open={open.sales} onToggle={() => toggle('sales')}>
@@ -413,100 +507,6 @@ export function OperationsPage({
                 现在就去排产 · 不耗 AP
               </button>
             )}
-          </Actions>
-        </Dept>
-
-        <Dept title="研发中心" duty="先看已有 BOM 和人手，再看项目进度。进度来自研发人员。" open={open.rd} onToggle={() => toggle('rd')}>
-          <Facts>
-            <div className="row">
-              <span>研发人员</span>
-              <span>
-                {state.staff.rd} 人 · 结算时推进 {state.staff.rd} 点
-              </span>
-            </div>
-            <div className="row">
-              <span>当前项目进度</span>
-              <span>
-                {state.rdProgress} / {RD_THRESHOLD}
-              </span>
-            </div>
-            <div className="rd-bar" aria-hidden>
-              <i style={{ width: `${Math.min(100, (state.rdProgress / RD_THRESHOLD) * 100)}%` }} />
-            </div>
-            <p className="hint">
-              {state.staff.rd <= 0
-                ? '实验室无人值守，本月结算不会推进。去人事部招研发。'
-                : nextProduct
-                  ? `下一档：${nextProduct.name}。还需 ${waitPoints} 点，按现有人手约 ${Math.ceil(waitPoints / state.staff.rd)} 个月。`
-                  : nextUnlock?.unlockD
-                    ? '下一档将开特种合金线。'
-                    : '量产项目已经做完，团队在做工艺微调。'}
-            </p>
-            <table className="sheet dark" style={{ marginTop: 12 }}>
-              <thead>
-                <tr>
-                  <th>已有产品</th>
-                  <th>BOM</th>
-                  <th className="num">单件料本</th>
-                </tr>
-              </thead>
-              <tbody>
-                {products.map((item) => (
-                  <tr key={item.id}>
-                    <td>
-                      {item.tier} · {item.name}
-                    </td>
-                    <td>{bomLabel(item.bom)}</td>
-                    <td className="num">{money(bomCost(state, item.id))}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </Facts>
-          <Actions note="研发中心本身不耗行动点。加人请去人事部，打研发卡请去总经理室。" />
-        </Dept>
-
-        <Dept title="财务部" duty="先看现金和授信，再决定借款或还款。各耗 1 AP。" open={open.finance} onToggle={() => toggle('finance')}>
-          <Facts>
-            <div className="row">
-              <span>货币资金</span>
-              <span>{money(state.cash)}</span>
-            </div>
-            <div className="row">
-              <span>短期借款</span>
-              <span>{money(state.debt)}</span>
-            </div>
-            <div className="row">
-              <span>设备抵押额度</span>
-              <span>
-                {money(loanLimit(state.machines))} · 还可借 {money(room)}
-              </span>
-            </div>
-            <div className="row">
-              <span>预计本月利息</span>
-              <span>{state.debt > 0 ? money(state.debt * INTEREST_RATE) : '无'}</span>
-            </div>
-            <div className="row">
-              <span>净资产</span>
-              <span>{money(netAssetsOf(state))}</span>
-            </div>
-          </Facts>
-          <Actions note={acting ? '借款与还款都记入现金流量表筹资活动。' : '资金调度要等事件结束后才能做。'}>
-            <div className="qty-row">
-              {LOAN.map((n) => (
-                <button key={n} className={loanAmt === n ? 'chip on' : 'chip'} onClick={() => setLoanAmt(n)}>
-                  {money(n)}
-                </button>
-              ))}
-            </div>
-            <div className="qty-row" style={{ marginTop: 8 }}>
-              <button className="btn small" disabled={!canAct} onClick={() => dispatch({ type: 'BORROW', amount: Math.min(loanAmt, room) })}>
-                借款 · 耗 1 AP · {money(Math.min(loanAmt, room))}
-              </button>
-              <button className="btn small ghost" disabled={!canAct} onClick={() => dispatch({ type: 'REPAY', amount: loanAmt })}>
-                还款 · 耗 1 AP · {money(loanAmt)}
-              </button>
-            </div>
           </Actions>
         </Dept>
       </div>
