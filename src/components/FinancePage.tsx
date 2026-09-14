@@ -126,15 +126,22 @@ function balanceLines(prev: MonthBooks, curr: MonthBooks): Array<Line | { sectio
     curr: roundMoney(curr.cash + curr.inventory + curr.fixedAssets),
     total: true,
   };
-  const debts = [maybe('短期借款', prev.borrowings, curr.borrowings, { invert: true })].filter(Boolean) as Line[];
-  const debtTotal = occurred(prev.borrowings, curr.borrowings)
-    ? { label: '负债合计', prev: prev.borrowings, curr: curr.borrowings, invert: true, total: true }
+  const prevPay = prev.wagesPayable ?? 0;
+  const currPay = curr.wagesPayable ?? 0;
+  const debts = [
+    maybe('短期借款', prev.borrowings, curr.borrowings, { invert: true }),
+    maybe('应付职工薪酬', prevPay, currPay, { invert: true }),
+  ].filter(Boolean) as Line[];
+  const prevLiab = roundMoney(prev.borrowings + prevPay);
+  const currLiab = roundMoney(curr.borrowings + currPay);
+  const debtTotal = occurred(prevLiab, currLiab)
+    ? { label: '负债合计', prev: prevLiab, curr: currLiab, invert: true, total: true }
     : null;
   const equity = { label: '未分配利润', prev: prev.equity, curr: curr.equity, total: true };
   const both = {
     label: '负债和所有者权益合计',
-    prev: roundMoney(prev.borrowings + prev.equity),
-    curr: roundMoney(curr.borrowings + curr.equity),
+    prev: roundMoney(prevLiab + prev.equity),
+    curr: roundMoney(currLiab + curr.equity),
     total: true,
   };
   return [

@@ -110,6 +110,7 @@ export interface SettlementReport {
   leftover: number;
   revenue: number;
   salaries: number;
+  wagesPaid: number;
   upkeep: number;
   interest: number;
   penalty: number;
@@ -150,6 +151,7 @@ export interface MonthBooks {
   inventory: number;
   fixedAssets: number;
   borrowings: number;
+  wagesPayable: number;
   equity: number;
   ledger: MonthLedger;
 }
@@ -159,6 +161,8 @@ export interface GameState {
   month: number;
   cash: number;
   debt: number;
+  wagesPayable: number;
+  wagesAccruedThisMonth: number;
   ap: number;
   maxAp: number;
   factories: number;

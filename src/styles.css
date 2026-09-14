@@ -487,6 +487,62 @@ h1,
   color: var(--gold);
 }
 
+.staff-sheet tfoot td {
+  font-weight: 650;
+  color: var(--gold);
+  border-bottom-color: var(--line-strong);
+}
+
+.hire-overlay {
+  z-index: 12;
+}
+
+.hire-points {
+  margin: 0 0 16px;
+  padding-left: 18px;
+}
+
+.hire-points li {
+  margin-bottom: 8px;
+  line-height: 1.5;
+}
+
+.hire-costs {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.hire-costs div {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  grid-template-rows: auto auto;
+  column-gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid #e4d7b4;
+  background: #f7efd8;
+}
+
+.hire-costs em {
+  grid-row: 1 / 3;
+  align-self: center;
+  font-style: normal;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: #8a7040;
+}
+
+.hire-costs strong {
+  font-family: var(--serif);
+  font-size: 18px;
+}
+
+.hire-costs span {
+  font-size: 12px;
+  color: #6d5728;
+  line-height: 1.4;
+}
+
 .rd-bar {
   height: 6px;
   margin: 8px 0 10px;
@@ -1196,5 +1252,13 @@ h1,
 
   .achieve-grid {
     grid-template-columns: 1fr;
+  }
+
+  .hire-overlay {
+    z-index: 12;
+  }
+
+  .hire-costs div {
+    grid-template-columns: 64px 1fr;
   }
 }

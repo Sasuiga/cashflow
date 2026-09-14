@@ -25,8 +25,9 @@ import {
   monthlySalary,
   netAssetsOf,
   sellPriceOf,
+  totalStaff,
 } from '../game/engine';
-import { ROLE_HINT, ROLE_LABEL, bomLabel, materialName, money, qty } from '../game/format';
+import { ROLE_DETAIL, ROLE_HINT, ROLE_LABEL, bomLabel, materialName, money, qty } from '../game/format';
 import type { DeptId, GameAction, GameState, MaterialId, Role } from '../game/types';
 
 const ROLES: Role[] = ['production', 'management', 'sales', 'rd'];
@@ -112,6 +113,7 @@ export function OperationsPage({
   const [material, setMaterial] = useState<MaterialId>('a');
   const [buyQty, setBuyQty] = useState(20);
   const [loanAmt, setLoanAmt] = useState(4);
+  const [hireRole, setHireRole] = useState<Role | null>(null);
 
   const acting = state.phase === 'actions';
   const producing = state.phase === 'produce';
@@ -288,26 +290,42 @@ export function OperationsPage({
 
         <Dept title="人事部" intro="招聘四类员工，编制影响产能、行动点和卡类。" done={deptDone(state, 'hr')} open={open.hr} onToggle={() => toggle('hr')}>
           <Facts>
-            {ROLES.map((role) => (
-              <div className="row" key={role}>
-                <span>
-                  {ROLE_LABEL[role]} · {ROLE_HINT[role]}
-                </span>
-                <span>
-                  {state.staff[role]} 人 · 月薪 {money(SALARY[role])}
-                </span>
-              </div>
-            ))}
-            <div className="row">
-              <span>本月工资合计</span>
-              <span>{money(monthlySalary(state.staff))}</span>
+            <div className="sheet-wrap">
+              <table className="sheet dark staff-sheet">
+                <thead>
+                  <tr>
+                    <th>岗位</th>
+                    <th className="num">人数</th>
+                    <th className="num">月薪</th>
+                    <th className="num">小计</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {ROLES.map((role) => (
+                    <tr key={role}>
+                      <td>{ROLE_LABEL[role]}</td>
+                      <td className="num">{state.staff[role]}</td>
+                      <td className="num">{money(SALARY[role])}</td>
+                      <td className="num">{money(state.staff[role] * SALARY[role])}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr>
+                    <td>合计</td>
+                    <td className="num">{totalStaff(state.staff)} 人</td>
+                    <td />
+                    <td className="num">{money(monthlySalary(state.staff))}</td>
+                  </tr>
+                </tfoot>
+              </table>
             </div>
           </Facts>
-          <Actions note={acting ? '每人入职立刻生效，并支付招聘费。' : '人事令要等事件结束后才能发。'}>
+          <Actions note={acting ? '点岗位先看职责和代价，确认后入职。' : '人事令要等事件结束后才能发。'}>
             <div className="qty-row stacked">
               {ROLES.map((role) => (
-                <button key={role} className="chip" disabled={!canAct} onClick={() => dispatch({ type: 'HIRE', role })}>
-                  招聘{ROLE_LABEL[role]} 1人 · 耗 1 AP · 花费 {money(HIRE_COST)}
+                <button key={role} className="chip" disabled={!canAct} onClick={() => setHireRole(role)}>
+                  招聘{ROLE_LABEL[role]}
                 </button>
               ))}
             </div>
@@ -547,6 +565,56 @@ export function OperationsPage({
           </Actions>
         </Dept>
       </div>
+
+      {hireRole && (
+        <div className="overlay hire-overlay" onClick={() => setHireRole(null)}>
+          <div className="modal hire-modal" onClick={(event) => event.stopPropagation()}>
+            <p className="kicker" style={{ color: '#8a7040' }}>
+              人事令
+            </p>
+            <h2>招聘{ROLE_LABEL[hireRole]} 1 人</h2>
+            <p className="lead">入职后立刻到岗。先看清楚这个岗位做什么，以及要付什么代价。</p>
+            <ul className="hire-points">
+              {ROLE_DETAIL[hireRole].map((line) => (
+                <li key={line}>{line}</li>
+              ))}
+            </ul>
+            <div className="hire-costs">
+              <div>
+                <em>招聘费</em>
+                <strong>{money(HIRE_COST)}</strong>
+                <span>当月现金支付，记入管理费用</span>
+              </div>
+              <div>
+                <em>月薪</em>
+                <strong>{money(SALARY[hireRole])}</strong>
+                <span>本月计入应付职工薪酬，下月结算时支付</span>
+              </div>
+              <div>
+                <em>行动点</em>
+                <strong>1 AP</strong>
+                <span>确认后立即消耗</span>
+              </div>
+            </div>
+            {state.cash < HIRE_COST && <p className="hint">现金不够支付招聘费。</p>}
+            <div className="footer-actions">
+              <button className="btn ghost" onClick={() => setHireRole(null)}>
+                取消
+              </button>
+              <button
+                className="btn"
+                disabled={state.cash < HIRE_COST || !canAct}
+                onClick={() => {
+                  dispatch({ type: 'HIRE', role: hireRole });
+                  setHireRole(null);
+                }}
+              >
+                确认招聘
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

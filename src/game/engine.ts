@@ -137,7 +137,9 @@ export function bookAssets(state: GameState): number {
 }
 
 export function netAssetsOf(state: GameState): number {
-  return roundMoney(state.cash + materialValue(state) + finishedValue(state) + bookAssets(state) - state.debt);
+  return roundMoney(
+    state.cash + materialValue(state) + finishedValue(state) + bookAssets(state) - state.debt - state.wagesPayable,
+  );
 }
 
 export function monthlySalary(staff: Staff): number {
@@ -197,6 +199,7 @@ export function emptyBooks(): MonthBooks {
     inventory: 0,
     fixedAssets: 0,
     borrowings: 0,
+    wagesPayable: 0,
     equity: 0,
     ledger: emptyLedger(),
   };
@@ -210,6 +213,7 @@ export function snapshotBooks(state: GameState, title: string): MonthBooks {
     inventory: roundMoney(materialValue(state) + finishedValue(state)),
     fixedAssets: bookAssets(state),
     borrowings: state.debt,
+    wagesPayable: state.wagesPayable,
     equity: netAssetsOf(state),
     ledger: clone(state.ledger),
   };
@@ -250,6 +254,28 @@ function pay(
     state.ledger.finance = roundMoney(state.ledger.finance + n);
     state.ledger.cfInterest = roundMoney(state.ledger.cfInterest + n);
   }
+}
+
+function accrueWages(state: GameState, amount: number): void {
+  const n = roundMoney(amount);
+  if (n <= 0) return;
+  state.wagesPayable = roundMoney(state.wagesPayable + n);
+  state.wagesAccruedThisMonth = roundMoney(state.wagesAccruedThisMonth + n);
+  state.ledger.admin = roundMoney(state.ledger.admin + n);
+}
+
+function syncMonthWages(state: GameState): number {
+  const need = roundMoney(monthlySalary(state.staff));
+  accrueWages(state, roundMoney(need - state.wagesAccruedThisMonth));
+  return need;
+}
+
+function payAccruedWages(state: GameState, amount: number): void {
+  const n = roundMoney(Math.min(amount, state.wagesPayable));
+  if (n <= 0) return;
+  state.cash = roundMoney(state.cash - n);
+  state.wagesPayable = roundMoney(state.wagesPayable - n);
+  state.ledger.cfEmployees = roundMoney(state.ledger.cfEmployees + n);
 }
 
 function receive(state: GameState, amount: number, kind: 'sales' | 'extra' | 'borrow'): void {
@@ -377,6 +403,7 @@ function prepareMonth(state: GameState, firstMonth: boolean): void {
   state.pendingDeal = null;
   state.ledger = emptyLedger();
   state.deptActs = emptyDeptActs();
+  state.wagesAccruedThisMonth = 0;
   state.ledger.openingCash = state.cash;
   state.cardsUnlocked = cardsUnlockedNow(state);
   state.maxAp = maxApFor(state.staff);
@@ -625,6 +652,8 @@ export function createInitialState(): GameState {
     month: 1,
     cash: 40,
     debt: 0,
+    wagesPayable: 0,
+    wagesAccruedThisMonth: 0,
     ap: BASE_AP,
     maxAp: BASE_AP,
     factories: 1,
@@ -668,6 +697,7 @@ function startGame(prev: GameState): GameState {
   state.uidSeq = prev.uidSeq;
   prepareMonth(state, true);
   state.openBooks = snapshotBooks(state, '开业');
+  syncMonthWages(state);
   pushLog(state, '第一份行业月报已放在桌上。先看行情，再应对事件。');
   checkAchievements(state);
   return state;
@@ -676,6 +706,8 @@ function startGame(prev: GameState): GameState {
 function reduceInner(prev: GameState, action: GameAction): GameState {
 
   const state = clone(prev);
+  if (typeof state.wagesPayable !== 'number' || Number.isNaN(state.wagesPayable)) state.wagesPayable = 0;
+  if (typeof state.wagesAccruedThisMonth !== 'number' || Number.isNaN(state.wagesAccruedThisMonth)) state.wagesAccruedThisMonth = 0;
 
   switch (action.type) {
     case 'CONFIRM_BRIEFING':
@@ -694,6 +726,7 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
         pushLog(state, '决策卡已解锁：本月可免费翻牌，再花钱选购。');
       }
       state.cardsUnlocked = cardsUnlockedNow(state);
+      syncMonthWages(state);
       return state;
     }
 
@@ -739,18 +772,26 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
     case 'HIRE': {
       if (state.phase !== 'actions') return prev;
       if (state.cash < HIRE_COST) {
-        pushLog(state, '招聘保证金不足。');
+        pushLog(state, '招聘费不足。');
         return state;
       }
       if (!spendAp(state)) {
         pushLog(state, '行动点不足。');
         return state;
       }
-      pay(state, HIRE_COST, 'wage');
+      pay(state, HIRE_COST, 'admin');
       state.staff[action.role] += 1;
       state.maxAp = maxApFor(state.staff);
-      noteDept(state, 'hr', `招聘${ROLE_LABEL[action.role]} 1人，花费 ${money(HIRE_COST)}，现有 ${state.staff[action.role]} 人`);
-      pushLog(state, `新同事入职：${ROLE_LABEL[action.role]}。编制 ${totalStaff(state.staff)} 人。`);
+      accrueWages(state, SALARY[action.role]);
+      noteDept(
+        state,
+        'hr',
+        `招聘${ROLE_LABEL[action.role]} 1人。招聘费 ${money(HIRE_COST)} 已付，月薪 ${money(SALARY[action.role])} 计入应付职工薪酬`,
+      );
+      pushLog(
+        state,
+        `新同事入职：${ROLE_LABEL[action.role]}。招聘费 ${money(HIRE_COST)}，月薪 ${money(SALARY[action.role])} 下月发放。编制 ${totalStaff(state.staff)} 人。`,
+      );
       if (cardsUnlockedNow(state) && !state.cardsUnlocked) {
         state.cardsUnlocked = true;
         pushLog(state, '团队够大了，决策卡本月起可用。');
@@ -903,6 +944,7 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
       }
       state.month += 1;
       prepareMonth(state, false);
+      syncMonthWages(state);
       pushLog(state, `${state.month} 月行情已更新。`);
       return state;
 
@@ -930,10 +972,11 @@ function settleMonth(state: GameState): GameState {
   state.ledger.cogs = roundMoney(state.ledger.cogs + cogs);
   receive(state, revenue, 'sales');
 
-  const salaries = monthlySalary(state.staff);
+  const salaries = syncMonthWages(state);
+  const wagesPaid = roundMoney(state.wagesPayable - salaries);
+  payAccruedWages(state, wagesPaid);
   const upkeep = roundMoney(state.factories * FACTORY_UPKEEP);
   const interest = state.debt > 0 ? roundMoney(state.debt * INTEREST_RATE) : 0;
-  pay(state, salaries, 'wage');
   pay(state, upkeep, 'admin');
   pay(state, interest, 'finance');
 
@@ -963,10 +1006,11 @@ function settleMonth(state: GameState): GameState {
     leftover,
     revenue,
     salaries,
+    wagesPaid,
     upkeep,
     interest,
     penalty,
-    netCash: roundMoney(revenue - salaries - upkeep - interest - penalty),
+    netCash: roundMoney(revenue - wagesPaid - upkeep - interest - penalty),
     cash: state.cash,
     debt: state.debt,
     netAssets: net,
@@ -974,8 +1018,10 @@ function settleMonth(state: GameState): GameState {
     lines: [
       { label: '营业收入', value: revenue, tone: 'good' },
       { label: '营业成本', value: -cogs, tone: 'bad' },
-      { label: '管理费用', value: -roundMoney(salaries + upkeep), tone: 'bad' },
+      { label: '计提职工薪酬', value: -salaries, tone: 'bad' },
+      { label: '厂区维护', value: -upkeep, tone: 'bad' },
       { label: '财务费用', value: -interest, tone: interest ? 'bad' : 'mute' },
+      ...(wagesPaid ? [{ label: '支付上月职工薪酬', value: -wagesPaid, tone: 'bad' as const }] : []),
       ...(penalty ? [{ label: '营业外支出', value: -penalty, tone: 'bad' as const }] : []),
     ],
   };

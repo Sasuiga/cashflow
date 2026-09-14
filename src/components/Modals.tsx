@@ -135,10 +135,14 @@ export function ReportModal({ state, onNext }: { state: GameState; onNext: () =>
             <b className={report.netCash >= 0 ? 'good' : 'bad'}>{signedMoney(report.netCash)}</b>
           </div>
           <div>
-            <span>现金 / 负债</span>
+            <span>现金 / 短期借款</span>
             <span>
               {money(report.cash)} / {money(report.debt)}
             </span>
+          </div>
+          <div>
+            <span>应付职工薪酬</span>
+            <span>{money(state.wagesPayable)}</span>
           </div>
           <div>
             <span>净资产</span>
