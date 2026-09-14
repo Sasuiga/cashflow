@@ -17,7 +17,7 @@ export function TitleScreen({ onStart }: { onStart: () => void }) {
           </article>
           <article className="rule">
             <b>四条基本盘</b>
-            <p>扩建产线、招聘四类员工、按 BOM 采购、按设备抵押融资。月中只能排一种产品产销。</p>
+            <p>扩建产线、招聘四类员工、按 BOM 采购、按设备抵押融资。销售部开出订单，整张交得出才接；产能有余可以超产入库。</p>
           </article>
           <article className="rule">
             <b>破产或年报</b>

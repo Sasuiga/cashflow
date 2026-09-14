@@ -60,6 +60,7 @@ import type {
   Modifiers,
   MonthBooks,
   MonthLedger,
+  MonthOrder,
   ProductId,
   ReceivableLot,
   Role,
@@ -107,8 +108,8 @@ export function maxApFor(staff: Staff): number {
   return BASE_AP + Math.floor(staff.management / 2);
 }
 
-function openingDemand(base: number, sales: number): number {
-  return Math.max(5, Math.round((base * (1 + sales * 0.1)) / 5) * 5);
+function orderCountFor(sales: number): number {
+  return clamp(2 + sales, 2, 4);
 }
 
 export function hireEffectLines(state: GameState, role: Role): string[] {
@@ -135,21 +136,10 @@ export function hireEffectLines(state: GameState, role: Role): string[] {
     return [`每 2 名管理人员提供 1 点行动点上限（基础 ${BASE_AP} 点）。`, apLine, card];
   }
   if (role === 'sales') {
-    const from = state.staff.sales;
-    const to = from + 1;
-    const shifts = PRODUCTS.filter((item) => state.unlockedProducts.includes(item.id))
-      .map((item) => {
-        const a = openingDemand(item.baseDemand, from);
-        const b = openingDemand(item.baseDemand, to);
-        return a === b ? null : `${item.name} ${a} → ${b} 件`;
-      })
-      .filter((item): item is string => Boolean(item));
-    const shiftLine = shifts.length
-      ? `本次入职，开盘口径 ${shifts.join('，')}。本月已开订单不重算。`
-      : `本次入职：现有产品开盘口径暂无变化（取整到 5 件）。本月已开订单不重算。`;
+    const have = state.monthOrders?.length ?? 0;
     return [
-      `每名销售使开盘需求相对基准 +10%（取整到 5 件）；新品上市需求 +12%。`,
-      shiftLine,
+      '本月立刻到岗，并带来 1 张市场单。人手越多，单量越大。',
+      `本次入职：订单簿 ${have} → ${have + 1} 张。`,
       card,
     ];
   }
@@ -161,6 +151,16 @@ export function hireEffectLines(state: GameState, role: Role): string[] {
     `本次入职：本月推进 ${from} → ${to} 点。当前进度 ${state.rdProgress}/${RD_THRESHOLD}，距下一档 ${remain} 点。`,
     card,
   ];
+}
+
+export function buyLineCost(state: GameState, material: MaterialId, qty: number): number {
+  if (qty <= 0) return 0;
+  const unit = state.materialPrices[material] ?? 0;
+  return roundPrice(unit * qty * (1 - state.modifiers.nextBuyDiscount));
+}
+
+export function buyCartCost(state: GameState, items: { material: MaterialId; qty: number }[]): number {
+  return roundMoney(items.reduce((sum, line) => sum + buyLineCost(state, line.material, line.qty), 0));
 }
 
 export function loanLimit(machines: number): number {
@@ -183,8 +183,17 @@ export function capacityOf(state: GameState): number {
 }
 
 export function demandOf(state: GameState, id: ProductId): number {
-  const base = state.demand[id] ?? 0;
-  return Math.max(0, Math.round(base + state.modifiers.extraDemand));
+  return Math.max(0, state.demand[id] ?? 0);
+}
+
+export interface ProductionPlan {
+  sell: Partial<Record<ProductId, number>>;
+  produce: Partial<Record<ProductId, number>>;
+  capUsed: number;
+  capTotal: number;
+  materialNeed: Materials;
+  ok: boolean;
+  missing: string[];
 }
 
 export function sellPriceOf(state: GameState, id: ProductId): number {
@@ -237,6 +246,12 @@ export function netProfitOf(ledger: MonthLedger): number {
   return roundMoney(profitBeforeTaxOf(ledger) - (ledger.incomeTax ?? 0));
 }
 
+export function operatingCashOf(ledger: MonthLedger): number {
+  return roundMoney(
+    ledger.cfSales - ledger.cfBuy - ledger.cfEmployees - ledger.cfTaxes + ledger.cfOtherOpIn - ledger.cfOtherOpOut,
+  );
+}
+
 export function maxProduce(state: GameState, id: ProductId): number {
   const bom = productById(id).bom;
   let limit = capacityOf(state);
@@ -247,25 +262,206 @@ export function maxProduce(state: GameState, id: ProductId): number {
   return Math.max(0, limit);
 }
 
-export function monthOutlook(state: GameState): string {
-  const cap = capacityOf(state);
+function emptyMats(): Materials {
+  return { a: 0, b: 0, c: 0, d: 0 };
+}
+
+export function volumeProductOf(state: GameState): ProductId {
+  return state.unlockedProducts.includes('economy') ? 'economy' : (state.unlockedProducts[0] ?? 'basic');
+}
+
+export function productionPlan(
+  state: GameState,
+  acceptedIds: string[] = state.acceptedOrderIds ?? [],
+  extra: Partial<Record<ProductId, number>> = state.extraProduce ?? {},
+): ProductionPlan {
+  const sell: Partial<Record<ProductId, number>> = {};
+  for (const order of state.monthOrders ?? []) {
+    if (!acceptedIds.includes(order.id)) continue;
+    sell[order.productId] = (sell[order.productId] ?? 0) + order.qty;
+  }
+  const produce: Partial<Record<ProductId, number>> = {};
+  const ids = new Set<ProductId>([
+    ...state.unlockedProducts,
+    ...(Object.keys(sell) as ProductId[]),
+    ...(Object.keys(extra) as ProductId[]),
+  ]);
+  let capUsed = 0;
+  const materialNeed = emptyMats();
+  for (const id of ids) {
+    const extraQty = Math.max(0, Math.floor(extra[id] ?? 0));
+    const need = sell[id] ?? 0;
+    const stock = state.finished[id] ?? 0;
+    const qty = extraQty + Math.max(0, need - stock);
+    produce[id] = qty;
+    capUsed += qty;
+    const bom = productById(id).bom;
+    for (const key of MATERIAL_IDS) {
+      materialNeed[key] = roundMoney(materialNeed[key] + (bom[key] ?? 0) * qty);
+    }
+  }
+  const capTotal = capacityOf(state);
+  const missing: string[] = [];
+  if (capUsed > capTotal) missing.push(`产能差 ${capUsed - capTotal}`);
+  for (const key of MATERIAL_IDS) {
+    if (materialNeed[key] > (state.materials[key] ?? 0)) {
+      missing.push(`${materialName(key)}差 ${materialNeed[key] - (state.materials[key] ?? 0)}`);
+    }
+  }
+  return {
+    sell,
+    produce,
+    capUsed,
+    capTotal,
+    materialNeed,
+    ok: missing.length === 0,
+    missing,
+  };
+}
+
+export function canAcceptOrder(state: GameState, orderId: string): boolean {
+  const accepted = state.acceptedOrderIds ?? [];
+  if (accepted.includes(orderId)) return true;
+  return productionPlan(state, [...accepted, orderId], state.extraProduce ?? {}).ok;
+}
+
+export function maxExtraProduce(state: GameState, productId: ProductId): number {
+  const extra = { ...(state.extraProduce ?? {}) };
+  extra[productId] = 0;
+  const plan = productionPlan(state, state.acceptedOrderIds ?? [], extra);
+  const capLeft = Math.max(0, plan.capTotal - plan.capUsed);
+  const bom = productById(productId).bom;
+  let byMat = capLeft;
+  for (const key of MATERIAL_IDS) {
+    const unit = bom[key] ?? 0;
+    if (unit <= 0) continue;
+    const left = Math.max(0, (state.materials[key] ?? 0) - (plan.materialNeed[key] ?? 0));
+    byMat = Math.min(byMat, Math.floor(left / unit));
+  }
+  return Math.max(0, byMat);
+}
+
+function syncDemandFromOrders(state: GameState): void {
+  const demand: Partial<Record<ProductId, number>> = {};
+  for (const order of state.monthOrders ?? []) {
+    demand[order.productId] = (demand[order.productId] ?? 0) + order.qty;
+  }
+  state.demand = demand;
+}
+
+function orderSizePool(productId: ProductId, sales: number, channel: boolean): number[] {
+  if (productId === 'basic' || productId === 'economy') {
+    if (sales >= 2 || channel) return [4, 6, 8];
+    return [4, 6];
+  }
+  if (productId === 'standard') return sales >= 2 || channel ? [2, 4, 6] : [2, 4];
+  return sales >= 2 ? [1, 2, 3] : [1, 2];
+}
+
+function weightedProducts(state: GameState): ProductId[] {
+  const climate = climateById(state.climateId).id;
+  const copies: ProductId[] = [];
+  for (const id of state.unlockedProducts) {
+    let weight = id === 'basic' || id === 'economy' ? 3 : id === 'standard' ? 2 : 1;
+    if (state.staff.sales >= 2 && (id === 'premium' || id === 'special')) weight += 1;
+    if (climate === 'chip' && (id === 'standard' || id === 'premium')) weight = Math.max(1, weight - 1);
+    if (climate === 'channel' && (id === 'basic' || id === 'economy')) weight += 1;
+    for (let i = 0; i < weight; i += 1) copies.push(id);
+  }
+  return copies.length ? copies : ['basic'];
+}
+
+function pushOrder(state: GameState, order: Omit<MonthOrder, 'id'>): MonthOrder {
+  const full: MonthOrder = { ...order, id: nextUid(state) };
+  state.monthOrders = [...(state.monthOrders ?? []), full];
+  return full;
+}
+
+function rollMonthOrders(state: GameState): void {
+  state.monthOrders = [];
+  state.acceptedOrderIds = [];
+  state.extraProduce = {};
+  const climate = climateById(state.climateId);
+  const channel = climate.id === 'channel';
+  let count = orderCountFor(state.staff.sales) + (channel ? 1 : 0);
+  if ((state.modifiers.extraDemand ?? 0) <= -8) count -= 1;
+  if ((state.modifiers.extraDemand ?? 0) >= 8) count += 1;
+  count = clamp(count, 2, 4);
+
   if (state.pendingDeal) {
     const deal = state.pendingDeal;
-    const can = maxProduce(state, deal.productId) + (state.finished[deal.productId] ?? 0);
-    const name = productName(deal.productId);
-    if (can >= deal.minSold) {
-      return `合同要求 ${name} ${deal.minSold} 件，当前可交 ${can} 件。本月可以交单。`;
-    }
-    return `合同要求 ${name} ${deal.minSold} 件，当前可交 ${can} 件。本月可能欠单。`;
+    pushOrder(state, {
+      productId: deal.productId,
+      qty: deal.minSold,
+      kind: 'contract',
+      penalty: deal.penalty,
+      okLog: deal.okLog,
+      failLog: deal.failLog,
+    });
   }
-  const id = state.unlockedProducts.includes('basic') ? 'basic' : state.unlockedProducts[0];
-  if (!id) return `本月产能 ${cap}。`;
-  const demand = demandOf(state, id);
-  const can = maxProduce(state, id);
-  const name = productName(id);
-  if (can <= 0) return `产能 ${cap}，${name} 需求 ${demand}，原料不够，本月可能交不出货。`;
-  if (can < demand) return `产能 ${cap}，${name} 需求 ${demand}，当前可产 ${can}。本月可能欠单。`;
-  return `产能 ${cap}，${name} 需求 ${demand}，当前可产 ${can}。`;
+
+  const volume = volumeProductOf(state);
+  pushOrder(state, { productId: volume, qty: 4, kind: 'market', penalty: 0 });
+
+  const pool = weightedProducts(state);
+  let guard = 0;
+  while ((state.monthOrders?.length ?? 0) < count && guard < 12) {
+    guard += 1;
+    const productId = pick(pool);
+    let qty = pick(orderSizePool(productId, state.staff.sales, channel));
+    if ((state.modifiers.extraDemand ?? 0) <= -6) qty = Math.max(1, qty - 2);
+    if ((state.modifiers.extraDemand ?? 0) >= 8) qty += 2;
+    const dup = (state.monthOrders ?? []).some((item) => item.productId === productId && item.qty === qty && item.kind === 'market');
+    if (dup && guard < 8) continue;
+    pushOrder(state, { productId, qty, kind: 'market', penalty: 0 });
+  }
+  syncDemandFromOrders(state);
+}
+
+function addMarketOrder(state: GameState, productId: ProductId, qty: number): MonthOrder {
+  const order = pushOrder(state, { productId, qty, kind: 'market', penalty: 0 });
+  syncDemandFromOrders(state);
+  return order;
+}
+
+function rollOneMarketOrder(state: GameState): MonthOrder {
+  const channel = climateById(state.climateId).id === 'channel';
+  const pool = weightedProducts(state);
+  let productId = volumeProductOf(state);
+  let qty = 4;
+  for (let guard = 0; guard < 8; guard += 1) {
+    productId = pick(pool);
+    qty = pick(orderSizePool(productId, state.staff.sales, channel));
+    if ((state.modifiers.extraDemand ?? 0) <= -6) qty = Math.max(1, qty - 2);
+    if ((state.modifiers.extraDemand ?? 0) >= 8) qty += 2;
+    const dup = (state.monthOrders ?? []).some(
+      (item) => item.productId === productId && item.qty === qty && item.kind === 'market',
+    );
+    if (!dup) break;
+  }
+  return addMarketOrder(state, productId, qty);
+}
+
+function clampExtraProduce(state: GameState): void {
+  const extra = { ...(state.extraProduce ?? {}) };
+  for (const id of state.unlockedProducts) {
+    const max = maxExtraProduce({ ...state, extraProduce: { ...extra, [id]: 0 } }, id);
+    extra[id] = Math.min(Math.max(0, extra[id] ?? 0), max);
+  }
+  state.extraProduce = extra;
+}
+
+export function monthOutlook(state: GameState): string {
+  const cap = capacityOf(state);
+  const orders = state.monthOrders ?? [];
+  if (!orders.length) return `本月产能 ${cap}。订单尚未开出。`;
+  const accepted = (state.acceptedOrderIds ?? []).length;
+  const plan = productionPlan(state);
+  const contract = orders.find((item) => item.kind === 'contract');
+  if (contract && !(state.acceptedOrderIds ?? []).includes(contract.id)) {
+    return `合同 ${productName(contract.productId)} ${contract.qty} 件未接。已接 ${accepted}/${orders.length} 张，产能 ${plan.capUsed}/${plan.capTotal}。`;
+  }
+  return `订单 ${orders.length} 张，已接 ${accepted} 张。产能 ${plan.capUsed}/${plan.capTotal}。`;
 }
 
 export function materialValue(state: GameState): number {
@@ -603,7 +799,7 @@ export function checkAchievements(state: GameState): void {
   if (state.debt > 0) unlockAchievement(state, 'loan');
   if (state.everDebt && state.debt <= 0) unlockAchievement(state, 'debtFree');
   if (state.month >= 6) unlockAchievement(state, 'survive6');
-  if (state.lastReport?.productName === '旗舰款') unlockAchievement(state, 'premium');
+  if (state.lastReport?.productName.includes('旗舰款')) unlockAchievement(state, 'premium');
 }
 
 function notePeakCash(state: GameState): void {
@@ -813,7 +1009,7 @@ function remeasureInventoryProvision(state: GameState): number {
   return delta;
 }
 
-function creditSaleRateOf(state: GameState): number {
+export function creditSaleRateOf(state: GameState): number {
   if ((state.modifiers?.creditSaleRate ?? 0) > 0) return Math.min(1, state.modifiers.creditSaleRate);
   return CREDIT_SALE_RATE;
 }
@@ -996,10 +1192,8 @@ function rollMarket(state: GameState, firstMonth: boolean): void {
 
   for (const product of PRODUCTS) {
     if (!state.unlockedProducts.includes(product.id)) continue;
-    const salesBoost = 1 + state.staff.sales * 0.1;
     if (firstMonth) {
       state.productPrices[product.id] = product.basePrice;
-      state.demand[product.id] = Math.round((product.baseDemand * salesBoost) / 5) * 5;
       continue;
     }
     let step = pick([-0.2, 0, 0.2]);
@@ -1010,12 +1204,6 @@ function rollMarket(state: GameState, firstMonth: boolean): void {
         roundMoney(product.basePrice * 0.5),
         roundMoney(product.basePrice * 1.5),
       ),
-    );
-    let demandStep = pick([-5, 0, 5]);
-    if (climate.id === 'channel') demandStep += 5;
-    state.demand[product.id] = Math.max(
-      5,
-      Math.round(((state.demand[product.id] ?? product.baseDemand) + demandStep) / 5) * 5,
     );
   }
 }
@@ -1050,6 +1238,9 @@ function prepareMonth(state: GameState, firstMonth: boolean): void {
   state.cardsBoughtThisMonth = 0;
   state.selectedProduct = null;
   state.pendingDeal = null;
+  state.monthOrders = [];
+  state.acceptedOrderIds = [];
+  state.extraProduce = {};
   state.ledger = emptyLedger();
   state.deptActs = emptyDeptActs();
   state.wagesAccruedThisMonth = 0;
@@ -1075,7 +1266,6 @@ function consumeBom(state: GameState, id: ProductId, count: number): number {
     const lost = takeMaterialCost(state, key, need);
     cost = roundMoney(cost + lost.cost);
   }
-  state.wip = roundMoney((state.wip ?? 0) + cost);
   return cost;
 }
 
@@ -1098,17 +1288,11 @@ function chargeAdmin(state: GameState, amount: number): void {
 function sellFinished(
   state: GameState,
   productId: ProductId,
-  produced: number,
+  qty: number,
 ): { sold: number; leftover: number; cogs: number } {
   ensureImpairmentState(state);
-  if (produced > 0) {
-    const addedCost = state.wip ?? 0;
-    state.wip = 0;
-    state.finishedLayers[productId] = addLayer(state.finishedLayers[productId], produced, addedCost, state.month);
-  }
   syncFinishedBooks(state);
-  const stockQty = state.finished[productId] ?? 0;
-  const sold = Math.min(stockQty, demandOf(state, productId));
+  const sold = Math.min(state.finished[productId] ?? 0, Math.max(0, qty));
   const taken = takeFromLayers(state.finishedLayers[productId] ?? [], sold);
   state.finishedLayers[productId] = taken.layers;
   syncFinishedBooks(state);
@@ -1180,7 +1364,7 @@ function applyRd(state: GameState): string | null {
     state.unlockedProducts.push(unlock.product);
     const def = productById(unlock.product);
     state.productPrices[unlock.product] = def.basePrice;
-    state.demand[unlock.product] = Math.round(def.baseDemand * (1 + state.staff.sales * 0.12));
+    state.demand[unlock.product] = state.demand[unlock.product] ?? 0;
   }
   return unlock.note;
 }
@@ -1213,9 +1397,11 @@ function playCardEffect(state: GameState, defId: string): string {
     case 'bulk':
       state.modifiers.nextBuyDiscount = Math.max(state.modifiers.nextBuyDiscount, 0.2);
       break;
-    case 'client':
-      state.modifiers.extraDemand += 15;
-      break;
+    case 'client': {
+      const order = addMarketOrder(state, volumeProductOf(state), 8);
+      noteDept(state, 'sales', `大客户加单：${productName(order.productId)} ${order.qty} 件`);
+      return `渠道加了一张 ${productName(order.productId)} ${order.qty} 件的市场单。`;
+    }
     case 'premiumPush':
       state.modifiers.priceBonus += 0.2;
       break;
@@ -1249,11 +1435,13 @@ function playCardEffect(state: GameState, defId: string): string {
       noteDept(state, 'finance', `催收到账 ${money(collected)}`);
       return `催收到账 ${money(collected)}。`;
     }
-    case 'creditPush':
-      state.modifiers.extraDemand += 12;
+    case 'creditPush': {
       state.modifiers.creditSaleRate = 1;
       state.modifiers.arTermExtra = Math.max(state.modifiers.arTermExtra, 1);
-      break;
+      const order = addMarketOrder(state, volumeProductOf(state), 6);
+      noteDept(state, 'sales', `赊销铺货加单：${productName(order.productId)} ${order.qty} 件`);
+      return `加了一张 ${productName(order.productId)} ${order.qty} 件的单，货款全赊、账期拉长。`;
+    }
     default:
       break;
   }
@@ -1273,7 +1461,6 @@ function applyEvent(state: GameState): void {
       break;
     }
     case 'bigOrder':
-      state.modifiers.extraDemand += 8;
       state.pendingDeal = {
         productId: 'basic',
         minSold: 12,
@@ -1281,8 +1468,7 @@ function applyEvent(state: GameState): void {
         okLog: '超市加单已按量交付。',
         failLog: '超市加单未能交齐，违约金 6 万已扣。',
       };
-      bits.push('基础款需求 +8');
-      bits.push('本月须售出基础款 12 件，否则违约金 6 万');
+      bits.push('合同单：基础款 12 件，交不出违约金 6 万');
       break;
     case 'resign':
       if (state.staff.production > 0) {
@@ -1304,13 +1490,13 @@ function applyEvent(state: GameState): void {
       remeasureInventoryProvision(state);
       state.modifiers.extraDemand -= 8;
       bits.push('罚款 4 万已划走');
-      bits.push('成品库存清零，本月需求 -8');
+      bits.push('成品库存清零，本月订单收紧');
       break;
     }
     case 'dump':
       state.modifiers.priceBonus -= 0.15;
       state.modifiers.extraDemand -= 8;
-      bits.push('本月售价 -15%，需求 -8');
+      bits.push('本月售价 -15%，订单收紧');
       break;
     case 'blackout':
       state.modifiers.extraCapacity -= 8;
@@ -1335,7 +1521,7 @@ function applyEvent(state: GameState): void {
     case 'channelHold':
       pay(state, 3, 'extra');
       state.modifiers.extraDemand -= 6;
-      bits.push('渠道准备金 3 万已划走，本月需求 -6');
+      bits.push('渠道准备金 3 万已划走，本月订单收紧');
       break;
     case 'bankCall':
       if (state.debt > 0) {
@@ -1355,7 +1541,6 @@ function applyEvent(state: GameState): void {
       }
       break;
     case 'rushOrder':
-      state.modifiers.extraDemand += 14;
       state.modifiers.priceBonus -= 0.1;
       state.pendingDeal = {
         productId: 'basic',
@@ -1364,8 +1549,8 @@ function applyEvent(state: GameState): void {
         okLog: '经销商压货已按量交付。',
         failLog: '经销商压货未能交齐，违约金 5 万已扣。',
       };
-      bits.push('需求 +14，售价 -10%');
-      bits.push('本月须售出基础款 12 件，否则违约金 5 万');
+      bits.push('售价 -10%');
+      bits.push('合同单：基础款 12 件，交不出违约金 5 万');
       break;
     case 'poach':
       if (state.staff.rd > 0) {
@@ -1524,6 +1709,9 @@ export function createInitialState(): GameState {
     eventNote: null,
     usedEventIds: [],
     selectedProduct: null,
+    monthOrders: [],
+    acceptedOrderIds: [],
+    extraProduce: {},
     lastReport: null,
     prevReport: null,
     log: ['北港制造开业。账上有启动资金，库里有第一批料。'],
@@ -1562,6 +1750,50 @@ function startGame(prev: GameState): GameState {
   return state;
 }
 
+function purchaseMaterials(state: GameState, items: { material: MaterialId; qty: number }[]): GameState {
+  const lines = items.filter((line) => line.qty > 0);
+  if (lines.length === 0) return state;
+  for (const line of lines) {
+    if (line.material === 'd' && !state.materialDUnlocked) {
+      pushLog(state, '特种合金尚未开线。');
+      return state;
+    }
+  }
+  const total = buyCartCost(state, lines);
+  if (state.cash < total) {
+    pushLog(state, '采购金额超过现金。');
+    return state;
+  }
+  if (!q3ProcurementFree(state.month) && !spendAp(state)) {
+    pushLog(state, '行动点不足。');
+    return state;
+  }
+  const parts: string[] = [];
+  for (const line of lines) {
+    const cost = buyLineCost(state, line.material, line.qty);
+    pay(state, cost, 'buy');
+    state.materialLayers[line.material] = addLayer(
+      state.materialLayers[line.material],
+      line.qty,
+      cost,
+      state.month,
+    );
+    parts.push(`${materialName(line.material)}${line.qty}件 ${money(cost)}`);
+  }
+  syncMaterialBooks(state);
+  const off = Math.round(state.modifiers.nextBuyDiscount * 100);
+  const apNote = q3ProcurementFree(state.month) ? '，本季采购不耗 AP' : '';
+  const discNote = off > 0 ? `（${100 - off}折）` : '';
+  const buyNote = `采购 ${parts.join('，')}，合计 ${money(total)}${discNote}${apNote}`;
+  noteDept(state, 'store', buyNote);
+  if (state.modifiers.nextBuyDiscount > 0) {
+    pushLog(state, `集采折扣已使用（${off}% off）。`);
+    state.modifiers.nextBuyDiscount = 0;
+  }
+  pushLog(state, `${buyNote}。`);
+  return state;
+}
+
 function reduceInner(prev: GameState, action: GameAction): GameState {
 
   const state = clone(prev);
@@ -1589,6 +1821,9 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
   if (!Array.isArray(state.challengeDraft)) state.challengeDraft = [];
   if (!Array.isArray(state.usedClimateIds)) state.usedClimateIds = [];
   if (!state.quarterStats) state.quarterStats = emptyQuarterStats(totalStaff(state.staff), state.debt);
+  if (!Array.isArray(state.monthOrders)) state.monthOrders = [];
+  if (!Array.isArray(state.acceptedOrderIds)) state.acceptedOrderIds = [];
+  if (!state.extraProduce) state.extraProduce = {};
 
   switch (action.type) {
     case 'TOGGLE_BOARD_GOAL': {
@@ -1636,6 +1871,7 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
         pushLog(state, '决策卡已解锁：本月可免费翻牌，再花钱选购。');
       }
       state.cardsUnlocked = cardsUnlockedNow(state);
+      rollMonthOrders(state);
       syncMonthWages(state);
       return state;
     }
@@ -1695,15 +1931,22 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
       state.staff[action.role] += 1;
       state.maxAp = maxApFor(state.staff);
       accrueRoleWages(state, action.role, SALARY[action.role]);
-      noteDept(
-        state,
-        'hr',
-        `招聘${ROLE_LABEL[action.role]} 1人。招聘费 ${money(HIRE_COST)} 已付，月薪 ${money(SALARY[action.role])} 计入应付职工薪酬`,
-      );
-      pushLog(
-        state,
-        `新同事入职：${ROLE_LABEL[action.role]}。招聘费 ${money(HIRE_COST)}，月薪 ${money(SALARY[action.role])} 下月发放。编制 ${totalStaff(state.staff)} 人。`,
-      );
+      const hireDept: Record<Role, DeptId> = {
+        management: 'ceo',
+        sales: 'sales',
+        production: 'infra',
+        rd: 'rd',
+      };
+      let hireNote = `招聘${ROLE_LABEL[action.role]} 1人。招聘费 ${money(HIRE_COST)} 已付，月薪 ${money(SALARY[action.role])} 计入应付职工薪酬`;
+      let hireLog = `新同事入职：${ROLE_LABEL[action.role]}。招聘费 ${money(HIRE_COST)}，月薪 ${money(SALARY[action.role])} 下月发放。编制 ${totalStaff(state.staff)} 人。`;
+      if (action.role === 'sales') {
+        const order = rollOneMarketOrder(state);
+        const brought = `${productName(order.productId)} ${order.qty} 件`;
+        hireNote += `。立刻带来${brought}`;
+        hireLog += `立刻带来${brought}。`;
+      }
+      noteDept(state, hireDept[action.role], hireNote);
+      pushLog(state, hireLog);
       if (cardsUnlockedNow(state) && !state.cardsUnlocked) {
         state.cardsUnlocked = true;
         pushLog(state, '团队够大了，决策卡本月起可用。');
@@ -1713,42 +1956,11 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
 
     case 'BUY_MATERIAL': {
       if (state.phase !== 'actions') return prev;
-      if (action.material === 'd' && !state.materialDUnlocked) {
-        pushLog(state, '特种合金尚未开线。');
-        return state;
-      }
-      const unit = state.materialPrices[action.material];
-      const discount = 1 - state.modifiers.nextBuyDiscount;
-      const cost = roundPrice(unit * action.qty * discount);
-      if (state.cash < cost) {
-        pushLog(state, '采购金额超过现金。');
-        return state;
-      }
-      if (!q3ProcurementFree(state.month) && !spendAp(state)) {
-        pushLog(state, '行动点不足。');
-        return state;
-      }
-      pay(state, cost, 'buy');
-      state.materialLayers[action.material] = addLayer(
-        state.materialLayers[action.material],
-        action.qty,
-        cost,
-        state.month,
-      );
-      syncMaterialBooks(state);
-      const off = Math.round(state.modifiers.nextBuyDiscount * 100);
-      const buyNote = off > 0
-        ? `采购${materialName(action.material)} ${action.qty}件，花费 ${money(cost)}（${100 - off}折）`
-        : q3ProcurementFree(state.month)
-          ? `采购${materialName(action.material)} ${action.qty}件，花费 ${money(cost)}，本季采购不耗 AP`
-          : `采购${materialName(action.material)} ${action.qty}件，花费 ${money(cost)}`;
-      noteDept(state, 'store', buyNote);
-      if (state.modifiers.nextBuyDiscount > 0) {
-        pushLog(state, `集采折扣已使用（${off}% off）。`);
-        state.modifiers.nextBuyDiscount = 0;
-      }
-      pushLog(state, `${buyNote}。`);
-      return state;
+      return purchaseMaterials(state, [{ material: action.material, qty: action.qty }]);
+    }
+    case 'BUY_MATERIALS': {
+      if (state.phase !== 'actions') return prev;
+      return purchaseMaterials(state, action.items);
     }
 
     case 'BORROW': {
@@ -1854,32 +2066,58 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
     case 'GO_PRODUCE':
       if (state.phase !== 'actions') return prev;
       state.phase = 'produce';
-      if (!state.selectedProduct) {
-        state.selectedProduct = state.unlockedProducts.find((id) => maxProduce(state, id) > 0) ?? state.unlockedProducts[0] ?? null;
-      }
-      state.deptActs.sales = state.deptActs.sales.filter((line) => !line.startsWith('转入排产') && !line.startsWith('选定'));
-      noteDept(state, 'sales', '转入排产');
-      if (state.selectedProduct) {
-        noteDept(state, 'sales', `选定${productName(state.selectedProduct)}`);
-      }
+      state.deptActs.infra = state.deptActs.infra.filter((line) => !line.startsWith('转入排产'));
+      noteDept(state, 'infra', '转入排产');
       return state;
 
     case 'BACK_TO_ACTIONS':
       if (state.phase !== 'produce') return prev;
       state.phase = 'actions';
-      state.deptActs.sales = state.deptActs.sales.filter((line) => !line.startsWith('转入排产'));
+      state.deptActs.infra = state.deptActs.infra.filter((line) => !line.startsWith('转入排产'));
       return state;
 
-    case 'SELECT_PRODUCT':
-      if (state.phase !== 'produce') return prev;
-      if (!state.unlockedProducts.includes(action.id)) return prev;
-      state.selectedProduct = action.id;
-      state.deptActs.sales = state.deptActs.sales.filter((line) => !line.startsWith('选定'));
-      noteDept(state, 'sales', `选定${productName(action.id)}`);
+    case 'TOGGLE_ORDER': {
+      if (state.phase !== 'actions' && state.phase !== 'produce') return prev;
+      const order = (state.monthOrders ?? []).find((item) => item.id === action.id);
+      if (!order) return prev;
+      const accepted = state.acceptedOrderIds ?? [];
+      if (accepted.includes(action.id)) {
+        state.acceptedOrderIds = accepted.filter((id) => id !== action.id);
+        clampExtraProduce(state);
+        state.deptActs.sales = state.deptActs.sales.filter((line) => !line.startsWith('接单'));
+        noteDept(state, 'sales', `放下${productName(order.productId)} ${order.qty} 件`);
+        return state;
+      }
+      if (!canAcceptOrder(state, action.id)) {
+        pushLog(state, `接不下 ${productName(order.productId)} ${order.qty} 件：产能或原料不够。`);
+        return state;
+      }
+      state.acceptedOrderIds = [...accepted, action.id];
+      state.deptActs.sales = state.deptActs.sales.filter((line) => !line.startsWith('接单') && !line.startsWith('放下'));
+      noteDept(state, 'sales', `接单${productName(order.productId)} ${order.qty} 件`);
       return state;
+    }
+
+    case 'SET_EXTRA_PRODUCE': {
+      if (state.phase !== 'actions' && state.phase !== 'produce') return prev;
+      if (!state.unlockedProducts.includes(action.productId)) return prev;
+      const qty = Math.max(0, Math.floor(action.qty));
+      const extra = { ...(state.extraProduce ?? {}), [action.productId]: 0 };
+      const max = maxExtraProduce({ ...state, extraProduce: extra }, action.productId);
+      state.extraProduce = { ...extra, [action.productId]: Math.min(qty, max) };
+      state.deptActs.infra = state.deptActs.infra.filter((line) => !line.startsWith('超产'));
+      if ((state.extraProduce[action.productId] ?? 0) > 0) {
+        noteDept(state, 'infra', `超产${productName(action.productId)} ${state.extraProduce[action.productId]} 件入库`);
+      }
+      return state;
+    }
 
     case 'SETTLE':
-      if (state.phase !== 'produce' || !state.selectedProduct) return prev;
+      if (state.phase !== 'produce') return prev;
+      if (!productionPlan(state).ok) {
+        pushLog(state, `当前接单超出产能或原料：${productionPlan(state).missing.join('，')}`);
+        return state;
+      }
       return settleMonth(state);
 
     case 'NEXT_MONTH':
@@ -1910,29 +2148,59 @@ export function reduce(prev: GameState, action: GameAction): GameState {
 }
 
 function settleMonth(state: GameState): GameState {
-  const productId = state.selectedProduct!;
+  ensureImpairmentState(state);
+  const plan = productionPlan(state);
   const salaries = syncMonthWages(state);
-  const produced = maxProduce(state, productId);
-  if (produced > 0) consumeBom(state, productId, produced);
+  const producedEntries = (Object.entries(plan.produce) as Array<[ProductId, number]>).filter(([, qty]) => qty > 0);
+  const produced = producedEntries.reduce((sum, [, qty]) => sum + qty, 0);
 
   const depreciation = accrueDepreciation(state);
   const upkeep = roundMoney(state.factories * FACTORY_UPKEEP);
   if (produced > 0) {
-    state.wip = roundMoney((state.wip ?? 0) + depreciation + upkeep);
     pay(state, upkeep, 'opOut');
+    const conversion = roundMoney((state.wip ?? 0) + depreciation + upkeep);
+    let allocated = 0;
+    producedEntries.forEach(([productId, qty], index) => {
+      const materialCost = consumeBom(state, productId, qty);
+      const share =
+        index === producedEntries.length - 1
+          ? roundMoney(conversion - allocated)
+          : roundMoney((conversion * qty) / produced);
+      allocated = roundMoney(allocated + share);
+      state.finishedLayers[productId] = addLayer(state.finishedLayers[productId], qty, roundMoney(materialCost + share), state.month);
+    });
+    state.wip = 0;
+    syncFinishedBooks(state);
   } else {
     chargeAdmin(state, roundMoney((state.wip ?? 0) + depreciation));
     state.wip = 0;
     pay(state, upkeep, 'admin');
   }
 
-  const { sold, leftover, cogs } = sellFinished(state, productId, produced);
-  if (state.quarterStats) {
-    state.quarterStats.sold += sold;
-    if (productId !== 'basic') state.quarterStats.nonBasic = true;
-    if (productId === 'premium' || productId === 'special') state.quarterStats.premiumOrSpecial = true;
+  let sold = 0;
+  let leftover = 0;
+  let cogs = 0;
+  let revenue = 0;
+  const soldNames: string[] = [];
+  for (const id of state.unlockedProducts) {
+    const sellQty = plan.sell[id] ?? 0;
+    if (sellQty > 0) {
+      const result = sellFinished(state, id, sellQty);
+      sold += result.sold;
+      leftover += result.leftover;
+      cogs = roundMoney(cogs + result.cogs);
+      revenue = roundMoney(revenue + result.sold * sellPriceOf(state, id));
+      soldNames.push(`${productName(id)} ${result.sold}件`);
+      if (state.quarterStats) {
+        if (id !== 'basic') state.quarterStats.nonBasic = true;
+        if (id === 'premium' || id === 'special') state.quarterStats.premiumOrSpecial = true;
+      }
+    } else {
+      leftover += state.finished[id] ?? 0;
+    }
   }
-  const revenue = roundMoney(sold * sellPriceOf(state, productId));
+  if (state.quarterStats) state.quarterStats.sold += sold;
+
   const cfSalesBefore = state.ledger.cfSales;
   const sale = recognizeSale(state, revenue);
   collectReceivables(state, state.modifiers.collectionBonus ?? 0, true);
@@ -1949,18 +2217,17 @@ function settleMonth(state: GameState): GameState {
   }
 
   let penalty = 0;
-  if (state.pendingDeal) {
-    const deal = state.pendingDeal;
-    const dealSold = productId === deal.productId ? sold : 0;
-    if (dealSold >= deal.minSold) {
-      pushLog(state, deal.okLog);
+  for (const order of (state.monthOrders ?? []).filter((item) => item.kind === 'contract')) {
+    const taken = (state.acceptedOrderIds ?? []).includes(order.id);
+    if (taken) {
+      if (order.okLog) pushLog(state, order.okLog);
     } else {
-      penalty = deal.penalty;
-      pay(state, penalty, 'extra');
-      pushLog(state, deal.failLog);
+      penalty = roundMoney(penalty + (order.penalty ?? 0));
+      if (order.penalty) pay(state, order.penalty, 'extra');
+      pushLog(state, order.failLog ?? `合同 ${productName(order.productId)} ${order.qty} 件未交，已扣违约金。`);
     }
-    state.pendingDeal = null;
   }
+  state.pendingDeal = null;
 
   const rdNote = applyRd(state);
   if (rdNote) pushLog(state, rdNote);
@@ -1969,9 +2236,10 @@ function settleMonth(state: GameState): GameState {
   const netProfit = netProfitOf(state.ledger);
   const reserve = appropriateStatutoryReserve(state, netProfit);
   const net = netAssetsOf(state);
+  const productNameLine = soldNames.join('、') || '未接单';
   const report: SettlementReport = {
     month: state.month,
-    productName: productName(productId),
+    productName: productNameLine,
     produced,
     sold,
     leftover,
@@ -1994,7 +2262,7 @@ function settleMonth(state: GameState): GameState {
   state.closedBooks = [...state.closedBooks, snapshotBooks(state, MONTH_NAMES[state.month - 1] ?? `${state.month}月`)];
   pushLog(
     state,
-    `${state.month} 月结算：售出 ${sold} 件${productName(productId)}，现销 ${money(sale.cash)}，赊销 ${money(sale.credit)}，账面成本 ${money(cogs)}，净利润 ${money(netProfit)}。`,
+    `${state.month} 月结算：${productNameLine}，现销 ${money(sale.cash)}，赊销 ${money(sale.credit)}，账面成本 ${money(cogs)}，净利润 ${money(netProfit)}。`,
   );
 
   if (net < 0) {

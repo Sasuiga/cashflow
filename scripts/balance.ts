@@ -1,19 +1,5 @@
-import { createInitialState, maxProduce, netAssetsOf, reduce } from '../src/game/engine';
-import type { GameState, ProductId } from '../src/game/types';
-
-function bestProduct(state: GameState): ProductId {
-  let best = state.unlockedProducts[0]!;
-  let score = -Infinity;
-  for (const id of state.unlockedProducts) {
-    const produced = maxProduce(state, id);
-    const value = produced * (state.productPrices[id] ?? 0);
-    if (value > score) {
-      score = value;
-      best = id;
-    }
-  }
-  return best;
-}
+import { createInitialState, netAssetsOf, reduce } from '../src/game/engine';
+import type { GameState } from '../src/game/types';
 
 function play(style: 'idle' | 'expand' | 'lean', seed: number): GameState {
   let state = reduce(createInitialState(), { type: 'START_GAME' });
@@ -71,7 +57,11 @@ function play(style: 'idle' | 'expand' | 'lean', seed: number): GameState {
       continue;
     }
     if (state.phase === 'produce') {
-      state = reduce(state, { type: 'SELECT_PRODUCT', id: bestProduct(state) });
+      for (const order of state.monthOrders ?? []) {
+        if (!(state.acceptedOrderIds ?? []).includes(order.id)) {
+          state = reduce(state, { type: 'TOGGLE_ORDER', id: order.id });
+        }
+      }
       state = reduce(state, { type: 'SETTLE' });
       continue;
     }

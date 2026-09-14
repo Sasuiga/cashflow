@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { netAssetsOf } from '../game/engine';
+import { arOverdueOf, inventoryValue, receivablesNet } from '../game/engine';
 import { MONTH_NAMES, money } from '../game/format';
 import type { GameAction, GameState } from '../game/types';
 import { FinancePage } from './FinancePage';
@@ -16,6 +16,9 @@ export function Board({
   dispatch: (action: GameAction) => void;
 }) {
   const [page, setPage] = useState<MainPage>('ops');
+  const inventory = inventoryValue(state);
+  const ar = receivablesNet(state);
+  const overdue = arOverdueOf(state);
 
   return (
     <div className="shell">
@@ -40,12 +43,16 @@ export function Board({
               <strong>{money(state.cash)}</strong>
             </div>
             <div className="stat">
-              <em>负债</em>
-              <strong>{money(state.debt)}</strong>
+              <em>存货</em>
+              <strong>{money(inventory)}</strong>
             </div>
-            <div className={`stat ${netAssetsOf(state) < 20 ? 'bad' : 'good'}`}>
-              <em>净资产</em>
-              <strong>{money(netAssetsOf(state))}</strong>
+            <div className={`stat ${overdue > 0 ? 'bad' : ''}`}>
+              <em>应收</em>
+              <strong>{money(ar)}</strong>
+            </div>
+            <div className="stat">
+              <em>借款</em>
+              <strong>{money(state.debt)}</strong>
             </div>
             <div className="stat">
               <em>行动点</em>

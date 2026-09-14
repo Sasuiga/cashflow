@@ -1,6 +1,6 @@
-import { createInitialState, equityAccounts, maxProduce, netAssetsOf, netProfitOf, reduce } from '../src/game/engine';
+import { createInitialState, equityAccounts, netAssetsOf, netProfitOf, reduce } from '../src/game/engine';
 import { roundMoney } from '../src/game/format';
-import type { GameState, ProductId } from '../src/game/types';
+import type { GameState } from '../src/game/types';
 
 function assert(cond: boolean, message: string): void {
   if (!cond) throw new Error(message);
@@ -82,27 +82,17 @@ function settleFirstMonth(): GameState {
       continue;
     }
     if (state.phase === 'produce') {
-      state = reduce(state, { type: 'SELECT_PRODUCT', id: 'basic' });
+      for (const order of state.monthOrders ?? []) {
+        if (!(state.acceptedOrderIds ?? []).includes(order.id)) {
+          state = reduce(state, { type: 'TOGGLE_ORDER', id: order.id });
+        }
+      }
       state = reduce(state, { type: 'SETTLE' });
       continue;
     }
     throw new Error(`Unexpected phase ${state.phase}`);
   }
   throw new Error('Did not reach first settlement');
-}
-
-function bestProduct(state: GameState): ProductId {
-  let best = state.unlockedProducts[0]!;
-  let score = -Infinity;
-  for (const id of state.unlockedProducts) {
-    const produced = maxProduce(state, id);
-    const value = produced * (state.productPrices[id] ?? 0);
-    if (value > score) {
-      score = value;
-      best = id;
-    }
-  }
-  return best;
 }
 
 function play(): GameState {
@@ -159,7 +149,11 @@ function play(): GameState {
         if (state.phase !== 'produce') throw new Error('GO_PRODUCE did not re-enter produce');
         bounced = true;
       }
-      state = reduce(state, { type: 'SELECT_PRODUCT', id: bestProduct(state) });
+      for (const order of state.monthOrders ?? []) {
+        if (!(state.acceptedOrderIds ?? []).includes(order.id)) {
+          state = reduce(state, { type: 'TOGGLE_ORDER', id: order.id });
+        }
+      }
       state = reduce(state, { type: 'SETTLE' });
       continue;
     }

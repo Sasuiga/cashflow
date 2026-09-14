@@ -1,5 +1,5 @@
 import { MATERIALS, PRODUCTS, eventById } from '../game/data';
-import { equityAccounts, receivablesGross } from '../game/engine';
+import { booksForView, netProfitOf, operatingCashOf } from '../game/engine';
 import { MONTH_NAMES, money, priceDelta, signedMoney } from '../game/format';
 import { QUARTER_LABEL, basicGoalOf, challengePoolOf, climateById, marketDigest } from '../game/board';
 import type { GameState } from '../game/types';
@@ -175,6 +175,13 @@ export function ReportModal({ state, onNext }: { state: GameState; onNext: () =>
   const report = state.lastReport;
   if (!report) return null;
   const closing = Boolean(state.endKind);
+  const { prev, curr } = booksForView(state);
+  const netProfit = netProfitOf(curr.ledger);
+  const opCash = operatingCashOf(curr.ledger);
+  const prevInv = Math.max(0, (prev.inventory ?? 0) - (prev.inventoryProvision ?? 0));
+  const currInv = Math.max(0, (curr.inventory ?? 0) - (curr.inventoryProvision ?? 0));
+  const prevAr = prev.receivablesNet ?? Math.max(0, (prev.receivables ?? 0) - (prev.badDebtProvision ?? 0));
+  const currAr = curr.receivablesNet ?? Math.max(0, (curr.receivables ?? 0) - (curr.badDebtProvision ?? 0));
   return (
     <div className="overlay">
       <div className="modal">
@@ -183,9 +190,28 @@ export function ReportModal({ state, onNext }: { state: GameState; onNext: () =>
         </p>
         <h2>{closing ? (state.endKind === 'bankrupt' ? '清算报告' : '年终决算') : '本月已结'}</h2>
         <p className="lead">
-          本月只做 {report.productName}：产出 {report.produced}，售出 {report.sold}
+          本月交付 {report.productName}：产出 {report.produced}，售出 {report.sold}
           {report.leftover ? `，库存 ${report.leftover}` : ''}。
         </p>
+        <div className="settle-story">
+          <div>
+            <em>利润表</em>
+            <b className={netProfit >= 0 ? 'good' : 'bad'}>净利润 {signedMoney(netProfit)}</b>
+            <span>营业收入 {money(report.revenue)}</span>
+          </div>
+          <div>
+            <em>现金流量表</em>
+            <b className={opCash >= 0 ? 'good' : 'bad'}>经营现金流 {signedMoney(opCash)}</b>
+            <span>期末现金 {money(report.cash)}</span>
+          </div>
+          <div>
+            <em>资产负债表</em>
+            <b className={report.netAssets >= 0 ? 'good' : 'bad'}>净资产 {money(report.netAssets)}</b>
+            <span>
+              存货 {money(prevInv)} → {money(currInv)} · 应收 {money(prevAr)} → {money(currAr)}
+            </span>
+          </div>
+        </div>
         <div className="ledger">
           {report.lines.map((line) => (
             <div key={line.label}>
@@ -195,40 +221,6 @@ export function ReportModal({ state, onNext }: { state: GameState; onNext: () =>
               </span>
             </div>
           ))}
-          <div>
-            <b>本月收付净额</b>
-            <b className={report.netCash >= 0 ? 'good' : 'bad'}>{signedMoney(report.netCash)}</b>
-          </div>
-          <div>
-            <span>现金 / 短期借款</span>
-            <span>
-              {money(report.cash)} / {money(report.debt)}
-            </span>
-          </div>
-          <div>
-            <span>应付职工薪酬</span>
-            <span>{money(state.wagesPayable)}</span>
-          </div>
-          <div>
-            <span>应收账款 / 坏账准备</span>
-            <span>
-              {money(receivablesGross(state))} / {money(state.badDebtProvision ?? 0)}
-            </span>
-          </div>
-          <div>
-            <span>存货跌价准备</span>
-            <span>{money(state.inventoryProvision ?? 0)}</span>
-          </div>
-          <div>
-            <span>净资产</span>
-            <span className={report.netAssets >= 0 ? 'good' : 'bad'}>{money(report.netAssets)}</span>
-          </div>
-          <div>
-            <span>实收资本 / 盈余公积 / 未分配利润</span>
-            <span>
-              {money(equityAccounts(state).paidIn)} / {money(equityAccounts(state).surplus)} / {money(equityAccounts(state).retained)}
-            </span>
-          </div>
         </div>
         {report.rdNote && <p className="lead">{report.rdNote}</p>}
         <div className="footer-actions">

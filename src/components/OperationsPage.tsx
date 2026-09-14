@@ -1,7 +1,5 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
-  AR_TERM_MONTHS,
-  CREDIT_SALE_RATE,
   FACTORY_COST,
   HAND_LIMIT,
   FACTORY_UPKEEP,
@@ -14,7 +12,6 @@ import {
   RD_UNLOCKS,
   SALARY,
   WORKERS_PER_MACHINE,
-  arCreditLossRate,
   cardById,
   eventById,
   productById,
@@ -22,74 +19,104 @@ import {
 import {
   arOverdueOf,
   bomBookCost,
+  buyCartCost,
+  buyLineCost,
   capacityOf,
-  demandOf,
+  creditSaleRateOf,
   finishedMaxAge,
   finishedProvisionOf,
   hireEffectLines,
   loanLimit,
   materialMaxAge,
   materialProvisionOf,
-  maxProduce,
+  maxExtraProduce,
   monthlyInterest,
   monthlySalary,
   monthOutlook,
-  netAssetsOf,
   nextCardBuyAp,
+  productionPlan,
+  receivablesGross,
   receivablesNet,
   sellPriceOf,
   totalStaff,
 } from '../game/engine';
-import { ROLE_HINT, ROLE_LABEL, bomLabel, materialName, money, qty, roundMoney, signedMoney } from '../game/format';
+import { MONTH_NAMES, ROLE_HINT, ROLE_LABEL, bomLabel, materialName, money, qty, roundMoney, signedMoney } from '../game/format';
 import { QUARTER_LABEL, climateById, goalById, q3ProcurementFree } from '../game/board';
-import type { DeptId, GameAction, GameState, MaterialId, Role } from '../game/types';
+import type { DeptId, GameAction, GameState, MaterialId, MonthOrder, Role } from '../game/types';
 
 const ROLES: Role[] = ['production', 'management', 'sales', 'rd'];
 const QTY = [10, 20, 40];
 const LOAN = [2, 4, 8];
+const EXTRA = [0, 2, 4, 6];
 
-function deptDone(state: GameState, id: DeptId): string {
-  const lines = state.deptActs[id] ?? [];
-  return lines.length > 0 ? lines.join('；') : '本月尚未行动。';
+type StageId = 'ceo' | 'sales' | 'materials' | 'production' | 'collect' | 'rd' | 'treasury';
+
+function stageDone(state: GameState, ids: DeptId[]): string {
+  return ids.flatMap((id) => state.deptActs[id] ?? []).join('；');
 }
 
-function Dept({
+function orderPreview(state: GameState, order: MonthOrder) {
+  const price = sellPriceOf(state, order.productId);
+  const revenue = roundMoney(order.qty * price);
+  const credit = roundMoney(revenue * creditSaleRateOf(state));
+  return {
+    price,
+    revenue,
+    credit,
+    cash: roundMoney(revenue - credit),
+    stock: state.finished[order.productId] ?? 0,
+    unitMat: bomBookCost(state, order.productId),
+  };
+}
+
+function Stage({
+  id,
+  index,
   title,
   intro,
+  summary,
   done,
   open,
   onToggle,
   wide,
+  now,
   children,
 }: {
+  id: StageId;
+  index?: string;
   title: string;
   intro: string;
-  done: string;
+  summary: string;
+  done?: string;
   open: boolean;
   onToggle: () => void;
   wide?: boolean;
+  now?: boolean;
   children: ReactNode;
 }) {
-  const idle = done === '本月尚未行动。';
   return (
-    <section className={wide ? 'dept wide' : 'dept'}>
+    <section id={`stage-${id}`} className={['dept', wide ? 'wide' : '', now ? 'now' : ''].filter(Boolean).join(' ')}>
       <button type="button" className="dept-head" onClick={onToggle} aria-expanded={open}>
         <div>
-          <h3>{title}</h3>
+          <h3>
+            {index ? <span className="stage-index">{index}</span> : null}
+            {title}
+          </h3>
           <p className="dept-intro">{intro}</p>
-          <p className={idle ? 'dept-done idle' : 'dept-done'}>{done}</p>
+          <p className="dept-done">{summary}</p>
+          {done ? <p className="dept-done">{done}</p> : null}
         </div>
-        <span>{open ? '收起' : '展开'}</span>
+        <span className="dept-toggle">{open ? '收起' : '展开'}</span>
       </button>
       {open && <div className="dept-body">{children}</div>}
     </section>
   );
 }
 
-function Facts({ children, title = '现状' }: { children: ReactNode; title?: string }) {
+function Facts({ children, title }: { children: ReactNode; title?: string }) {
   return (
     <div className="dept-block">
-      <p className="dept-kicker">{title}</p>
+      {title ? <p className="dept-kicker">{title}</p> : null}
       {children}
     </div>
   );
@@ -98,7 +125,6 @@ function Facts({ children, title = '现状' }: { children: ReactNode; title?: st
 function Actions({ children, note }: { children?: ReactNode; note?: string }) {
   return (
     <div className="dept-block">
-      <p className="dept-kicker">本月行动</p>
       {note && <p className="hint">{note}</p>}
       {children}
     </div>
@@ -112,28 +138,34 @@ export function OperationsPage({
   state: GameState;
   dispatch: (action: GameAction) => void;
 }) {
-  const [open, setOpen] = useState<Record<DeptId, boolean>>({
-    ceo: false,
-    hr: false,
-    infra: false,
-    store: false,
-    sales: false,
+  const acting = state.phase === 'actions';
+  const producing = state.phase === 'produce';
+  const arGross = receivablesGross(state);
+  const arNet = receivablesNet(state);
+  const overdue = arOverdueOf(state);
+  const [open, setOpen] = useState<Record<StageId, boolean>>({
+    ceo: true,
+    sales: true,
+    materials: false,
+    production: false,
+    collect: true,
     rd: false,
-    finance: false,
+    treasury: state.debt > 0,
   });
-  const [material, setMaterial] = useState<MaterialId>('a');
-  const [buyQty, setBuyQty] = useState(20);
+  const touched = useRef(new Set<StageId>());
+  const [cart, setCart] = useState<Partial<Record<MaterialId, number>>>({});
   const [loanAmt, setLoanAmt] = useState(4);
   const [hireRole, setHireRole] = useState<Role | null>(null);
 
-  const acting = state.phase === 'actions';
-  const producing = state.phase === 'produce';
   const canAct = acting && state.ap > 0;
   const buyApFree = q3ProcurementFree(state.month);
   const canBuy = acting && (canAct || buyApFree);
   const visibleMaterials = MATERIALS.filter((item) => item.id !== 'd' || state.materialDUnlocked);
-  const unit = state.materialPrices[material] ?? 0;
-  const buyCost = Math.round(unit * buyQty * (1 - state.modifiers.nextBuyDiscount) * 10) / 10;
+  const cartItems = visibleMaterials
+    .map((item) => ({ material: item.id, qty: cart[item.id] ?? 0 }))
+    .filter((line) => line.qty > 0);
+  const cartTotal = buyCartCost(state, cartItems);
+  const cartOk = cartItems.length > 0 && state.cash >= cartTotal;
   const room = Math.max(0, loanLimit(state.machines) - state.debt);
   const borrowAmt = Math.min(loanAmt, room);
   const repayAmt = Math.min(loanAmt, state.debt, Math.max(0, state.cash));
@@ -153,12 +185,55 @@ export function OperationsPage({
     weight: 1 + state.staff[role] * 0.85,
   }));
   const cardWeightTotal = cardWeights.reduce((sum, item) => sum + item.weight, 0);
+  const showAgeCols = visibleMaterials.some((item) => {
+    if (state.materials[item.id] <= 0) return false;
+    return materialMaxAge(state, item.id) >= 2 || materialProvisionOf(state, item.id) > 0;
+  });
+  const lots = state.receivables ?? [];
 
-  const toggle = (id: DeptId) => setOpen((prev) => ({ ...prev, [id]: !prev[id] }));
+  const toggle = (id: StageId) => {
+    touched.current.add(id);
+    setOpen((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
+  const focusStage = (id: StageId) => {
+    touched.current.add(id);
+    setOpen((prev) => ({ ...prev, [id]: true }));
+    document.getElementById(`stage-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  };
+
+  useEffect(() => {
+    if (producing && !touched.current.has('production')) {
+      setOpen((prev) => ({ ...prev, sales: true, production: true }));
+      document.getElementById('stage-production')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+    if (acting && !touched.current.has('sales')) {
+      setOpen((prev) => ({ ...prev, sales: true }));
+    }
+  }, [acting, producing]);
+
+  useEffect(() => {
+    if (arGross > 0 && !touched.current.has('collect')) {
+      setOpen((prev) => ({ ...prev, collect: true }));
+    }
+  }, [arGross]);
+
   const monthEvent = state.eventId ? eventById(state.eventId) : null;
   const climate = climateById(state.climateId);
   const basicGoal = state.basicGoalId ? goalById(state.basicGoalId) : null;
   const challengeGoals = (state.challengeGoalIds ?? []).map((id) => goalById(id));
+  const materialSummary = visibleMaterials
+    .filter((item) => state.materials[item.id] > 0)
+    .map((item) => `${item.name} ${qty(state.materials[item.id])}`)
+    .join(' · ') || '原料库存为空';
+  const orders = state.monthOrders ?? [];
+  const accepted = state.acceptedOrderIds ?? [];
+  const plan = productionPlan(state);
+  const cartSummary =
+    cartItems.length > 0
+      ? cartItems.map((line) => `${materialName(line.material)}${line.qty}件`).join('、')
+      : '';
+  const workersMax = state.machines * WORKERS_PER_MACHINE;
+  const workerOverflow = Math.max(0, state.staff.production - workersMax);
 
   return (
     <div className="ops">
@@ -190,208 +265,78 @@ export function OperationsPage({
           <p>{monthOutlook(state)}</p>
         </div>
       </aside>
-      <p className="ops-lead">标了「耗 1 AP」的动作会花行动点。排产不耗行动点。</p>
 
-      <div className="dept-grid">
-        <Dept title="总经理室" intro="翻牌、买牌、打牌，用决策卡影响当月经营。" done={deptDone(state, 'ceo')} open={open.ceo} onToggle={() => toggle('ceo')} wide>
+      <div className="flow-rail" role="navigation" aria-label="经营分区">
+        <button type="button" className={open.ceo ? 'on' : undefined} onClick={() => focusStage('ceo')}>
+          <span className="n">0</span>
+          总经
+        </button>
+        <button type="button" className={producing || acting ? 'on' : undefined} onClick={() => focusStage('sales')}>
+          <span className="n">1</span>
+          订单
+        </button>
+        <button type="button" className={acting ? 'on' : undefined} onClick={() => focusStage('materials')}>
+          <span className="n">2</span>
+          采购
+        </button>
+        <button type="button" className={producing ? 'on' : undefined} onClick={() => focusStage('production')}>
+          <span className="n">3</span>
+          生产
+        </button>
+        <button type="button" className={arGross > 0 ? 'on' : undefined} onClick={() => focusStage('collect')}>
+          <span className="n">4</span>
+          货款
+        </button>
+        <button type="button" onClick={() => focusStage('rd')}>
+          <span className="n">5</span>
+          研发
+        </button>
+        <button type="button" className={state.debt > 0 ? 'on' : undefined} onClick={() => focusStage('treasury')}>
+          <span className="n">6</span>
+          资金
+        </button>
+      </div>
+
+      <div className="dept-grid flow-grid">
+        <Stage
+          id="ceo"
+          index="0"
+          title="总经理室"
+          intro="人员结构决定翻开的卡类。管理人员在这里招聘。"
+          summary={
+            state.cardsUnlocked
+              ? `${totalStaff(state.staff)} 人 · 手牌 ${state.hand.length}/${HAND_LIMIT}`
+              : `${totalStaff(state.staff)} 人 · 管理 ${state.staff.management}`
+          }
+          done={stageDone(state, ['ceo'])}
+          open={open.ceo}
+          onToggle={() => toggle('ceo')}
+          wide
+        >
           <Facts>
             <div className="row">
-              <span>剩余行动点</span>
+              <span>行动点</span>
               <span>
                 {state.ap} / {state.maxAp}
               </span>
             </div>
-            <div className="row">
-              <span>决策卡</span>
-              <span>
-                {state.cardsUnlocked
-                  ? `手牌 ${state.hand.length} / ${HAND_LIMIT}`
-                  : '未解锁（三月或编制满 6 人）'}
-              </span>
-            </div>
             <div className="sheet-wrap" style={{ marginTop: 12 }}>
-            <table className="sheet dark">
-              <thead>
-                <tr>
-                  <th>人员结构</th>
-                  <th className="num">人数</th>
-                  <th className="num">本月卡类倾向</th>
-                </tr>
-              </thead>
-              <tbody>
-                {cardWeights.map((item) => (
-                  <tr key={item.role}>
-                    <td>{ROLE_LABEL[item.role]}</td>
-                    <td className="num">{state.staff[item.role]} 人</td>
-                    <td className="num">{Math.round((item.weight / cardWeightTotal) * 100)}%</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            </div>
-            <p className="hint" style={{ marginTop: 10 }}>
-              某类员工越多，翻开的决策卡越容易出对应花色。
-            </p>
-          </Facts>
-          <Actions
-            note={
-              !state.cardsUnlocked
-                ? '决策卡尚未解锁。到了三月，或编制满 6 人后，这里才能翻牌。'
-                : acting
-                  ? '翻牌不耗 AP。本月第一张买牌免 AP，之后每多买一张多耗 1 AP。打牌耗 1 AP。'
-                  : '现在只能看已有的牌。打牌要等行动阶段。'
-            }
-          >
-            {state.cardsUnlocked && acting && (
-              <>
-                <div className="footer-actions" style={{ marginTop: 0, justifyContent: 'flex-start' }}>
-                  <button className="btn small ghost" disabled={state.shopDrawn} onClick={() => dispatch({ type: 'DRAW_SHOP' })}>
-                    {state.shopDrawn ? '本月已翻牌' : '翻开本月卡铺 · 不耗 AP'}
-                  </button>
-                </div>
-                {state.shop.length > 0 && (
-                  <div className="cards" style={{ marginTop: 12 }}>
-                    {state.shop.map((card, index) => {
-                      const def = cardById(card.defId);
-                      const buyAp = nextCardBuyAp(state);
-                      const buyApLabel = buyAp > 0 ? `耗 ${buyAp} AP` : '本月首张免 AP';
-                      return (
-                        <article key={card.uid} className="card" style={{ ['--tilt' as string]: `${index - 1}deg` }}>
-                          <div className="suit">{ROLE_LABEL[def.suit]}</div>
-                          <h4>{def.name}</h4>
-                          <p>{def.blurb}</p>
-                          <div className="cost">{money(def.cost)} · {buyApLabel}</div>
-                          <button
-                            className="btn small"
-                            style={{ marginTop: 10 }}
-                            disabled={state.cash < def.cost || buyAp > state.ap}
-                            onClick={() => dispatch({ type: 'BUY_CARD', index })}
-                          >
-                            买入「{def.name}」 · {buyApLabel} · 花费 {money(def.cost)}
-                          </button>
-                        </article>
-                      );
-                    })}
-                  </div>
-                )}
-              </>
-            )}
-            {state.cardsUnlocked && state.hand.length > 0 && (
-              <div className="hand" style={{ marginTop: 14 }}>
-                {state.hand.map((card) => {
-                  const def = cardById(card.defId);
-                  return (
-                    <article key={card.uid} className="card">
-                      <div className="suit">手牌 · {ROLE_LABEL[def.suit]}</div>
-                      <h4>{def.name}</h4>
-                      <p>{def.blurb}</p>
-                      {acting ? (
-                        <button className="btn small" disabled={!canAct} style={{ marginTop: 10 }} onClick={() => dispatch({ type: 'PLAY_CARD', uid: card.uid })}>
-                          打出「{def.name}」 · 耗 1 AP
-                        </button>
-                      ) : (
-                        <div className="cost">行动阶段才能打出</div>
-                      )}
-                    </article>
-                  );
-                })}
-              </div>
-            )}
-            {state.cardsUnlocked && state.hand.length === 0 && (
-              <p className="hint">手牌是空的。{acting ? '本月卡铺尚未翻开。' : '等行动阶段再翻牌。'}</p>
-            )}
-          </Actions>
-        </Dept>
-
-        <Dept title="财务部" intro="借款、还款，并盯紧应收账款账龄。" done={deptDone(state, 'finance')} open={open.finance} onToggle={() => toggle('finance')} wide>
-          <Facts>
-            <div className="row">
-              <span>货币资金</span>
-              <span>{money(state.cash)}</span>
-            </div>
-            <div className="row">
-              <span>应收账款</span>
-              <span>
-                账面 {money(receivablesNet(state))}
-                {(state.badDebtProvision ?? 0) > 0 ? `（已提坏账 ${money(state.badDebtProvision)}）` : ''}
-              </span>
-            </div>
-            <div className="row">
-              <span>其中逾期</span>
-              <span>{arOverdueOf(state) > 0 ? money(arOverdueOf(state)) : '无'}</span>
-            </div>
-            <div className="row">
-              <span>短期借款</span>
-              <span>{money(state.debt)}</span>
-            </div>
-            <div className="row">
-              <span>设备抵押额度</span>
-              <span>
-                {money(loanLimit(state.machines))} · 还可借 {money(room)}
-              </span>
-            </div>
-            <div className="row">
-              <span>预计本月利息</span>
-              <span>{currentInterest > 0 ? money(currentInterest) : '无'}</span>
-            </div>
-            <div className="row">
-              <span>净资产</span>
-              <span>{money(netAssetsOf(state))}</span>
-            </div>
-            <p className="hint" style={{ marginTop: 10 }}>
-              货款默认 {Math.round(CREDIT_SALE_RATE * 100)}% 赊销、账期 {AR_TERM_MONTHS} 个月。到期收回 65%，逾期 1 / 2 个月再收 40% / 20%。坏账准备：未到期 5%，逾期 1 / 2 / 3 个月及以上分别为 {Math.round(arCreditLossRate(1) * 100)}% / {Math.round(arCreditLossRate(2) * 100)}% / 100%。
-            </p>
-          </Facts>
-          <Actions
-            note={
-              acting
-                ? '借款耗 1 AP；还款不耗 AP。月末按剩余负债计提 10% 财务费用。两者都记入现金流量表筹资活动。'
-                : '资金调度要等事件结束后才能做。'
-            }
-          >
-            <div className="qty-row">
-              {LOAN.map((n) => (
-                <button key={n} className={loanAmt === n ? 'chip on' : 'chip'} onClick={() => setLoanAmt(n)}>
-                  {money(n)}
-                </button>
-              ))}
-            </div>
-            <div className="qty-row loan-actions" style={{ marginTop: 8 }}>
-              <button className="btn small" disabled={!canBorrow} onClick={() => dispatch({ type: 'BORROW', amount: borrowAmt })}>
-                {`借入 ${money(borrowAmt)} · 耗 1 AP${
-                  extraInterest > 0
-                    ? ` · 财务费用 ${signedMoney(extraInterest)}/月${currentInterest > 0 ? `（合计 ${money(afterBorrowInterest)}）` : ''}`
-                    : ''
-                }`}
-              </button>
-              <button className="btn small ghost" disabled={!canRepay} onClick={() => dispatch({ type: 'REPAY', amount: repayAmt })}>
-                {`偿还 ${money(repayAmt > 0 ? repayAmt : loanAmt)} · 不耗 AP${
-                  savedInterest > 0 ? ` · 财务费用 ${signedMoney(-savedInterest)}/月` : ''
-                }`}
-              </button>
-            </div>
-          </Actions>
-        </Dept>
-
-        <Dept title="人事部" intro="招聘四类员工，编制影响产能、行动点和卡类。" done={deptDone(state, 'hr')} open={open.hr} onToggle={() => toggle('hr')}>
-          <Facts>
-            <div className="sheet-wrap">
               <table className="sheet dark staff-sheet">
                 <thead>
                   <tr>
-                    <th>岗位</th>
+                    <th>部门</th>
                     <th className="num">人数</th>
-                    <th className="num">月薪</th>
-                    <th className="num">小计</th>
+                    <th className="num">月薪小计</th>
+                    <th className="num">本月卡类倾向</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {ROLES.map((role) => (
-                    <tr key={role}>
-                      <td>{ROLE_LABEL[role]}</td>
-                      <td className="num">{state.staff[role]}</td>
-                      <td className="num">{money(SALARY[role])}</td>
-                      <td className="num">{money(state.staff[role] * SALARY[role])}</td>
+                  {cardWeights.map((item) => (
+                    <tr key={item.role}>
+                      <td>{ROLE_LABEL[item.role]}</td>
+                      <td className="num">{state.staff[item.role]} 人</td>
+                      <td className="num">{money(state.staff[item.role] * SALARY[item.role])}</td>
+                      <td className="num">{Math.round((item.weight / cardWeightTotal) * 100)}%</td>
                     </tr>
                   ))}
                 </tbody>
@@ -399,25 +344,281 @@ export function OperationsPage({
                   <tr>
                     <td>合计</td>
                     <td className="num">{totalStaff(state.staff)} 人</td>
-                    <td />
                     <td className="num">{money(monthlySalary(state.staff))}</td>
+                    <td />
                   </tr>
                 </tfoot>
               </table>
             </div>
           </Facts>
-          <Actions note={acting ? undefined : '事件结束后才能发人事令。'}>
+          <Actions
+            note={
+              acting
+                ? state.cardsUnlocked
+                  ? '翻牌不耗 AP。本月第一张买牌免 AP，之后每多买一张多耗 1 AP。打牌耗 1 AP。'
+                  : undefined
+                : '事件结束后才能招聘、翻牌和打牌。'
+            }
+          >
             <div className="qty-row stacked">
-              {ROLES.map((role) => (
-                <button key={role} className="chip" disabled={!canAct} onClick={() => setHireRole(role)}>
-                  招聘{ROLE_LABEL[role]}
-                </button>
-              ))}
+              <button className="chip" disabled={!canAct} onClick={() => setHireRole('management')}>
+                招聘管理人员 · 耗 1 AP
+              </button>
             </div>
+            {state.cardsUnlocked ? (
+              <>
+                {acting && (
+                  <>
+                    <div className="footer-actions" style={{ marginTop: 12, justifyContent: 'flex-start' }}>
+                      <button className="btn small ghost" disabled={state.shopDrawn} onClick={() => dispatch({ type: 'DRAW_SHOP' })}>
+                        {state.shopDrawn ? '本月已翻牌' : '翻开本月卡铺 · 不耗 AP'}
+                      </button>
+                    </div>
+                    {state.shop.length > 0 && (
+                      <div className="cards" style={{ marginTop: 12 }}>
+                        {state.shop.map((card, index) => {
+                          const def = cardById(card.defId);
+                          const buyAp = nextCardBuyAp(state);
+                          const buyApLabel = buyAp > 0 ? `耗 ${buyAp} AP` : '本月首张免 AP';
+                          return (
+                            <article key={card.uid} className="card" style={{ ['--tilt' as string]: `${index - 1}deg` }}>
+                              <div className="suit">{ROLE_LABEL[def.suit]}</div>
+                              <h4>{def.name}</h4>
+                              <p>{def.blurb}</p>
+                              <div className="cost">
+                                {money(def.cost)} · {buyApLabel}
+                              </div>
+                              <button
+                                className="btn small"
+                                style={{ marginTop: 10 }}
+                                disabled={state.cash < def.cost || buyAp > state.ap}
+                                onClick={() => dispatch({ type: 'BUY_CARD', index })}
+                              >
+                                买入「{def.name}」 · {buyApLabel} · 付现 {money(def.cost)}
+                              </button>
+                            </article>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </>
+                )}
+                {state.hand.length > 0 && (
+                  <div className="hand" style={{ marginTop: 14 }}>
+                    {state.hand.map((card) => {
+                      const def = cardById(card.defId);
+                      return (
+                        <article key={card.uid} className="card">
+                          <div className="suit">手牌 · {ROLE_LABEL[def.suit]}</div>
+                          <h4>{def.name}</h4>
+                          <p>{def.blurb}</p>
+                          {acting ? (
+                            <button className="btn small" disabled={!canAct} style={{ marginTop: 10 }} onClick={() => dispatch({ type: 'PLAY_CARD', uid: card.uid })}>
+                              打出「{def.name}」 · 耗 1 AP
+                            </button>
+                          ) : (
+                            <div className="cost">行动阶段才能打出</div>
+                          )}
+                        </article>
+                      );
+                    })}
+                  </div>
+                )}
+                {state.hand.length === 0 && acting && state.shop.length === 0 && (
+                  <p className="hint" style={{ marginTop: 12 }}>
+                    {state.shopDrawn ? '本月卡铺已空。' : '本月卡铺尚未翻开。'}
+                  </p>
+                )}
+              </>
+            ) : null}
           </Actions>
-        </Dept>
+        </Stage>
 
-        <Dept title="基建部" intro="购买设备、扩建厂区，扩大产能。" done={deptDone(state, 'infra')} open={open.infra} onToggle={() => toggle('infra')}>
+        <Stage
+          id="sales"
+          index="1"
+          title="订单获取"
+          intro="招募销售立刻多一张本月订单。整张交得出才接，接单不耗行动点。"
+          summary={
+            orders.length
+              ? `已接 ${accepted.length}/${orders.length} 张 · 销售 ${state.staff.sales} 人`
+              : `销售 ${state.staff.sales} 人 · 本月订单尚未开出`
+          }
+          done={stageDone(state, ['sales'])}
+          open={open.sales}
+          onToggle={() => toggle('sales')}
+          wide
+          now={producing || acting}
+        >
+          <Facts>
+            <div className="row">
+              <span>销售人员</span>
+              <span>
+                {state.staff.sales} 人 · {ROLE_HINT.sales}
+              </span>
+            </div>
+          </Facts>
+          <Actions>
+            <div className="qty-row stacked">
+              <button className="chip" disabled={!canAct} onClick={() => setHireRole('sales')}>
+                招聘销售人员 · 耗 1 AP
+              </button>
+            </div>
+            {orders.length > 0 && (
+              <div className="produce-list" style={{ marginTop: 12 }}>
+                {orders.map((order) => {
+                  const view = orderPreview(state, order);
+                  const on = accepted.includes(order.id);
+                  const trial = productionPlan(state, on ? accepted : [...accepted, order.id], state.extraProduce ?? {});
+                  const can = on || trial.ok;
+                  const item = productById(order.productId);
+                  return (
+                    <button
+                      key={order.id}
+                      className={['product', on ? 'on' : '', !can ? 'locked' : '', order.kind === 'contract' ? 'contract' : '']
+                        .filter(Boolean)
+                        .join(' ')}
+                      disabled={(!acting && !producing) || (!can && !on)}
+                      onClick={() => dispatch({ type: 'TOGGLE_ORDER', id: order.id })}
+                    >
+                      <b>
+                        {order.kind === 'contract' ? '合同 · ' : ''}
+                        {item.tier} · {item.name} {order.qty} 件
+                      </b>
+                      <div>{item.blurb}</div>
+                      <div className="meta">
+                        <span>库存 {view.stock}</span>
+                        <span>单价 {money(view.price)}</span>
+                        <span>单件料本 {money(view.unitMat)}</span>
+                        <span>营业收入 {money(view.revenue)}</span>
+                        <span>现销 {money(view.cash)}</span>
+                        <span>赊销 {money(view.credit)}</span>
+                        <span>{on ? '已接' : can ? '可接' : trial.missing.join('，') || '交不出'}</span>
+                        {order.kind === 'contract' && !on ? <span>不接扣 {money(order.penalty)} 违约金</span> : null}
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </Actions>
+        </Stage>
+
+        <Stage
+          id="materials"
+          index="2"
+          title="原料采购"
+          intro="勾选要买的料，确认后一次付现、耗 1 AP。"
+          summary={materialSummary}
+          done={stageDone(state, ['store'])}
+          open={open.materials}
+          onToggle={() => toggle('materials')}
+          now={acting}
+        >
+          <Facts>
+            <div className="sheet-wrap">
+              <table className="sheet dark cart-sheet">
+                <thead>
+                  <tr>
+                    <th>原料</th>
+                    <th className="num">库存</th>
+                    <th className="num">报价</th>
+                    <th className="num">账面成本</th>
+                    {showAgeCols && <th className="num">最长库龄</th>}
+                    {showAgeCols && <th className="num">跌价准备</th>}
+                    <th className="num">本次采购</th>
+                    <th className="num">付现</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visibleMaterials.map((item) => {
+                    const age = materialMaxAge(state, item.id);
+                    const pick = cart[item.id] ?? 0;
+                    const line = buyLineCost(state, item.id, pick);
+                    return (
+                      <tr key={item.id}>
+                        <td>{item.name}</td>
+                        <td className="num">{qty(state.materials[item.id])}</td>
+                        <td className="num">{money(state.materialPrices[item.id])} / 件</td>
+                        <td className="num">{money(state.materialCost?.[item.id] ?? 0)}</td>
+                        {showAgeCols && (
+                          <td className="num">{state.materials[item.id] > 0 ? `${age} 个月` : '—'}</td>
+                        )}
+                        {showAgeCols && <td className="num">{money(materialProvisionOf(state, item.id))}</td>}
+                        <td className="num">
+                          <span className="cart-qty">
+                            <button
+                              type="button"
+                              className={pick === 0 ? 'chip on' : 'chip'}
+                              disabled={!acting}
+                              onClick={() => setCart((prev) => ({ ...prev, [item.id]: 0 }))}
+                            >
+                              0
+                            </button>
+                            {QTY.map((n) => (
+                              <button
+                                key={n}
+                                type="button"
+                                className={pick === n ? 'chip on' : 'chip'}
+                                disabled={!acting}
+                                onClick={() => setCart((prev) => ({ ...prev, [item.id]: n }))}
+                              >
+                                {n}
+                              </button>
+                            ))}
+                          </span>
+                        </td>
+                        <td className="num">{pick > 0 ? money(line) : '—'}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            {state.modifiers.nextBuyDiscount > 0 && (
+              <p className="hint" style={{ marginTop: 8 }}>
+                本单集采折扣 {Math.round(state.modifiers.nextBuyDiscount * 100)}%。
+              </p>
+            )}
+          </Facts>
+          <Actions
+            note={
+              acting
+                ? buyApFree
+                  ? '第三、四季度采购不耗行动点，仍要付现。'
+                  : undefined
+                : '事件结束后才能采购。'
+            }
+          >
+            <div className="footer-actions" style={{ justifyContent: 'flex-start' }}>
+              <button
+                className="btn small"
+                disabled={!canBuy || !cartOk}
+                onClick={() => {
+                  dispatch({ type: 'BUY_MATERIALS', items: cartItems });
+                  setCart({});
+                }}
+              >
+                {cartItems.length === 0
+                  ? `确认采购 · ${buyApFree ? '不耗 AP' : '耗 1 AP'}`
+                  : `确认采购 ${cartSummary} · 付现 ${money(cartTotal)} · ${buyApFree ? '不耗 AP' : '耗 1 AP'}`}
+              </button>
+            </div>
+            {cartItems.length > 0 && state.cash < cartTotal && <p className="hint">现金不够支付本单。</p>}
+          </Actions>
+        </Stage>
+
+        <Stage
+          id="production"
+          index="3"
+          title="生产安排"
+          intro="厂区、设备和生产工决定产能。有余量可以超产入库。"
+          summary={`产能 ${capacityOf(state)} · 设备 ${state.machines} 台 · 生产工 ${state.staff.production} 人`}
+          done={stageDone(state, ['infra'])}
+          open={open.production}
+          onToggle={() => toggle('production')}
+          now={producing}
+        >
           <Facts>
             <div className="row">
               <span>厂区 / 机位</span>
@@ -428,107 +629,201 @@ export function OperationsPage({
             <div className="row">
               <span>本月产能</span>
               <span>
-                {capacityOf(state)}（设备 {state.machines}×{MACHINE_BASE_CAP}，生产工最多 {state.machines * WORKERS_PER_MACHINE} 人上线）
+                {capacityOf(state)}（设备 {state.machines}×{MACHINE_BASE_CAP}，生产工最多 {workersMax} 人上线
+                {workerOverflow ? `，超编 ${workerOverflow}` : ''}）
               </span>
             </div>
             <div className="row">
               <span>厂区月维护</span>
               <span>{money(state.factories * FACTORY_UPKEEP)}</span>
             </div>
+            <div className="row">
+              <span>生产工</span>
+              <span>
+                {state.staff.production} 人 · {ROLE_HINT.production}
+              </span>
+            </div>
+            <div className="row">
+              <span>产能占用</span>
+              <span>
+                {plan.capUsed} / {plan.capTotal}
+                {plan.missing.length ? ` · ${plan.missing.join('，')}` : ''}
+              </span>
+            </div>
+            {products.some((item) => (state.finished[item.id] ?? 0) > 0) &&
+              products
+                .filter((item) => (state.finished[item.id] ?? 0) > 0)
+                .map((item) => (
+                  <div className="row" key={item.id}>
+                    <span>成品 · {item.name}</span>
+                    <span>
+                      {qty(state.finished[item.id] ?? 0)} · 账面 {money(state.finishedCost?.[item.id] ?? 0)}
+                      {finishedMaxAge(state, item.id) >= 2 ? ` · 库龄 ${finishedMaxAge(state, item.id)} 个月` : ''}
+                      {finishedProvisionOf(state, item.id) > 0
+                        ? ` · 跌价 ${money(finishedProvisionOf(state, item.id))}`
+                        : ''}
+                    </span>
+                  </div>
+                ))}
           </Facts>
-          <Actions note={acting ? (state.machines >= state.slots ? '机位已满，无法再买设备。' : undefined) : '事件结束后才能发基建令。'}>
-            <div className="action-grid">
+          <Actions note={acting ? undefined : producing ? undefined : '事件结束后才能改编制和产线。'}>
+            <div className="qty-row stacked">
+              <button className="chip" disabled={!canAct} onClick={() => setHireRole('production')}>
+                招聘生产人员 · 耗 1 AP
+              </button>
+            </div>
+            <div className="action-grid" style={{ marginTop: 10 }}>
               <button className="action" disabled={!canAct} onClick={() => dispatch({ type: 'BUY_MACHINE' })}>
-                <b>购买设备 1台 · 耗 1 AP · 花费 {money(MACHINE_COST)}</b>
+                <b>购买设备 1台 · 耗 1 AP · 付现 {money(MACHINE_COST)}</b>
                 <small>基础产能 +{MACHINE_BASE_CAP}，最多安置 {WORKERS_PER_MACHINE} 名生产工。</small>
               </button>
               <button className="action" disabled={!canAct} onClick={() => dispatch({ type: 'EXPAND_FACTORY' })}>
-                <b>扩建厂区 1座 · 耗 1 AP · 花费 {money(FACTORY_COST)}</b>
+                <b>扩建厂区 1座 · 耗 1 AP · 付现 {money(FACTORY_COST)}</b>
                 <small>机位 +3，月维护 +{money(FACTORY_UPKEEP)}。</small>
               </button>
             </div>
-          </Actions>
-        </Dept>
-
-        <Dept title="采购部" intro="按报价采购原料入库。库龄越长，跌价准备越高。" done={deptDone(state, 'store')} open={open.store} onToggle={() => toggle('store')}>
-          <Facts title="库房现状">
-            <div className="sheet-wrap">
-            <table className="sheet dark">
-              <thead>
-                <tr>
-                  <th>原料</th>
-                  <th className="num">库存</th>
-                  <th className="num">报价</th>
-                  <th className="num">账面成本</th>
-                  <th className="num">最长库龄</th>
-                  <th className="num">跌价准备</th>
-                </tr>
-              </thead>
-              <tbody>
-                {visibleMaterials.map((item) => {
-                  const age = materialMaxAge(state, item.id);
+            {(acting || producing) && products.length > 0 && (
+              <div className="dept-block" style={{ paddingTop: 12 }}>
+                <p className="dept-kicker">超产入库</p>
+                {products.map((item) => {
+                  const extra = state.extraProduce?.[item.id] ?? 0;
+                  const max = maxExtraProduce(state, item.id);
                   return (
-                  <tr key={item.id}>
-                    <td>{item.name}</td>
-                    <td className="num">{qty(state.materials[item.id])}</td>
-                    <td className="num">{money(state.materialPrices[item.id])} / 件</td>
-                    <td className="num">{money(state.materialCost?.[item.id] ?? 0)}</td>
-                    <td className="num">{state.materials[item.id] > 0 ? `${age} 个月` : '—'}</td>
-                    <td className="num">{money(materialProvisionOf(state, item.id))}</td>
-                  </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-            </div>
-            {products.some((item) => (state.finished[item.id] ?? 0) > 0) && (
-              <div style={{ marginTop: 10 }}>
-                {products
-                  .filter((item) => (state.finished[item.id] ?? 0) > 0)
-                  .map((item) => (
-                    <div className="row" key={item.id}>
-                      <span>成品库存 · {item.name}</span>
+                    <div key={item.id} className="row" style={{ marginTop: 8 }}>
                       <span>
-                        {qty(state.finished[item.id] ?? 0)} · 账面 {money(state.finishedCost?.[item.id] ?? 0)}
-                        {finishedMaxAge(state, item.id) > 0 ? ` · 库龄 ${finishedMaxAge(state, item.id)} 个月` : ''}
-                        {finishedProvisionOf(state, item.id) > 0 ? ` · 跌价 ${money(finishedProvisionOf(state, item.id))}` : ''}
+                        {item.name}
+                        {extra > 0 ? ` · 已排 ${extra}` : ''}
+                      </span>
+                      <span className="qty-row" style={{ margin: 0 }}>
+                        {EXTRA.map((n) => (
+                          <button
+                            key={n}
+                            className={extra === n ? 'chip on' : 'chip'}
+                            disabled={n > 0 && n > Math.max(extra, max)}
+                            onClick={() => dispatch({ type: 'SET_EXTRA_PRODUCE', productId: item.id, qty: n })}
+                          >
+                            {n === 0 ? '不超产' : `+${n}`}
+                          </button>
+                        ))}
                       </span>
                     </div>
-                  ))}
+                  );
+                })}
               </div>
             )}
-            <p className="hint" style={{ marginTop: 10 }}>
-              库龄 0–1 个月不提跌价；2 个月 10%，3 个月 25%，4–5 个月 40%，6 个月及以上 70%。当月新增下月起算库龄。
-            </p>
-          </Facts>
-          <Actions note={acting ? (buyApFree ? '第三、四季度采购不耗行动点，仍要付现。' : '一次采购只买一种原料。有折扣时会写在报价里。') : '采购单要等事件结束后才能下。'}>
-            <div className="qty-row">
-              {visibleMaterials.map((item) => (
-                <button
-                  key={item.id}
-                  className={material === item.id ? 'chip on' : 'chip'}
-                  onClick={() => setMaterial(item.id)}
-                >
-                  {item.name}
+            {producing && (
+              <div className="footer-actions">
+                <button className="btn small ghost" onClick={() => dispatch({ type: 'BACK_TO_ACTIONS' })}>
+                  取消排产，返回经营
                 </button>
-              ))}
-              {QTY.map((n) => (
-                <button key={n} className={buyQty === n ? 'chip on' : 'chip'} onClick={() => setBuyQty(n)}>
-                  {n} 件
+                <button className="btn" disabled={!plan.ok} onClick={() => dispatch({ type: 'SETTLE' })}>
+                  确认接单并结算 · 不耗 AP
                 </button>
-              ))}
-            </div>
-            <div className="footer-actions" style={{ justifyContent: 'flex-start' }}>
-              <button className="btn small" disabled={!canBuy || state.cash < buyCost} onClick={() => dispatch({ type: 'BUY_MATERIAL', material, qty: buyQty })}>
-                采购{materialName(material)} {buyQty}件 · {buyApFree ? '不耗 AP' : '耗 1 AP'} · 花费 {money(buyCost)}
+              </div>
+            )}
+            {acting && (
+              <button className="btn small ghost" style={{ marginTop: 12 }} onClick={() => dispatch({ type: 'GO_PRODUCE' })}>
+                现在就去排产 · 不耗 AP
               </button>
-            </div>
+            )}
           </Actions>
-        </Dept>
+        </Stage>
 
-        <Dept title="研发中心" intro="靠研发人员推进项目，解锁新产品与特种料。" done={deptDone(state, 'rd')} open={open.rd} onToggle={() => toggle('rd')}>
+        <Stage
+          id="collect"
+          index="4"
+          title="货款"
+          intro="赊销尚未收回的部分，记在应收账款。"
+          summary={arGross > 0 ? `账面 ${money(arNet)}${overdue > 0 ? ` · 逾期 ${money(overdue)}` : ''}` : '本月还没有应收'}
+          open={open.collect}
+          onToggle={() => toggle('collect')}
+          now={arGross > 0}
+        >
           <Facts>
             <div className="row">
+              <span>应收账款</span>
+              <span>
+                账面 {money(arNet)}
+                {(state.badDebtProvision ?? 0) > 0 ? `（已提坏账 ${money(state.badDebtProvision)}）` : ''}
+              </span>
+            </div>
+            {overdue > 0 && (
+              <div className="row">
+                <span>其中逾期</span>
+                <span>{money(overdue)}</span>
+              </div>
+            )}
+            {lots.length > 0 && (
+              <div className="sheet-wrap" style={{ marginTop: 12 }}>
+                <table className="sheet dark">
+                  <thead>
+                    <tr>
+                      <th>发生月</th>
+                      <th className="num">到期月</th>
+                      <th className="num">金额</th>
+                      <th className="num">状态</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lots.map((lot, index) => {
+                      const past = state.month - lot.dueMonth;
+                      const status =
+                        past < 0
+                          ? `${lot.dueMonth - state.month} 个月后到期`
+                          : past === 0
+                            ? '本月到期'
+                            : `逾期 ${past} 个月`;
+                      return (
+                        <tr key={`${lot.originMonth}-${lot.dueMonth}-${index}`}>
+                          <td>{MONTH_NAMES[lot.originMonth - 1] ?? `${lot.originMonth}月`}</td>
+                          <td className="num">{MONTH_NAMES[lot.dueMonth - 1] ?? `${lot.dueMonth}月`}</td>
+                          <td className="num">{money(lot.amount)}</td>
+                          <td className="num">{status}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Facts>
+        </Stage>
+
+        <Stage
+          id="rd"
+          index="5"
+          title="产品研发"
+          intro="先看已有 BOM 和人手，再看项目进度。"
+          summary={`${state.rdProgress} / ${RD_THRESHOLD} · ${state.staff.rd} 人`}
+          done={stageDone(state, ['rd'])}
+          open={open.rd}
+          onToggle={() => toggle('rd')}
+          wide
+        >
+          <Facts>
+            <div className="sheet-wrap">
+              <table className="sheet dark">
+                <thead>
+                  <tr>
+                    <th>已有产品</th>
+                    <th>BOM</th>
+                    <th className="num">单件料本</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {products.map((item) => (
+                    <tr key={item.id}>
+                      <td>
+                        {item.tier} · {item.name}
+                      </td>
+                      <td>{bomLabel(item.bom)}</td>
+                      <td className="num">{money(bomBookCost(state, item.id))}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="row" style={{ marginTop: 12 }}>
               <span>研发人员</span>
               <span>
                 {state.staff.rd} 人 · 结算时推进 {state.staff.rd} 点
@@ -552,127 +847,79 @@ export function OperationsPage({
                     ? '下一档将开特种合金线。'
                     : '量产项目已经做完，团队在做工艺微调。'}
             </p>
-            <div className="sheet-wrap" style={{ marginTop: 12 }}>
-            <table className="sheet dark">
-              <thead>
-                <tr>
-                  <th>已有产品</th>
-                  <th>BOM</th>
-                  <th className="num">单件料本</th>
-                </tr>
-              </thead>
-              <tbody>
-                {products.map((item) => (
-                  <tr key={item.id}>
-                    <td>
-                      {item.tier} · {item.name}
-                    </td>
-                    <td>{bomLabel(item.bom)}</td>
-                    <td className="num">{money(bomBookCost(state, item.id))}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            </div>
           </Facts>
-        </Dept>
+          <Actions>
+            <div className="qty-row stacked">
+              <button className="chip" disabled={!canAct} onClick={() => setHireRole('rd')}>
+                招聘研发人员 · 耗 1 AP
+              </button>
+            </div>
+          </Actions>
+        </Stage>
 
-        <Dept title="生产与销售部" intro="查看行情，安排本月唯一产品产销。" done={deptDone(state, 'sales')} open={open.sales} onToggle={() => toggle('sales')}>
+        <Stage
+          id="treasury"
+          index="6"
+          title="资金管理"
+          intro="现金不够时借款，有余钱再还。"
+          summary={
+            state.debt > 0
+              ? `借款 ${money(state.debt)} · 利息 ${money(currentInterest)}/月 · 还可借 ${money(room)}`
+              : `无借款 · 设备抵押额度 ${money(loanLimit(state.machines))}`
+          }
+          done={stageDone(state, ['finance'])}
+          open={open.treasury}
+          onToggle={() => toggle('treasury')}
+        >
           <Facts>
             <div className="row">
-              <span>销售人员</span>
+              <span>短期借款</span>
+              <span>{money(state.debt)}</span>
+            </div>
+            <div className="row">
+              <span>设备抵押额度</span>
               <span>
-                {state.staff.sales} 人 · {ROLE_HINT.sales}
+                {money(loanLimit(state.machines))} · 还可借 {money(room)}
               </span>
             </div>
-            <div className="sheet-wrap">
-            <table className="sheet dark">
-              <thead>
-                <tr>
-                  <th>产品</th>
-                  <th className="num">市价</th>
-                  <th className="num">需求</th>
-                  <th className="num">当前可产</th>
-                </tr>
-              </thead>
-              <tbody>
-                {products.map((item) => (
-                  <tr key={item.id}>
-                    <td>
-                      {item.tier} · {item.name}
-                    </td>
-                    <td className="num">{money(sellPriceOf(state, item.id))}</td>
-                    <td className="num">{demandOf(state, item.id)}</td>
-                    <td className="num">{maxProduce(state, item.id)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            </div>
+            {currentInterest > 0 && (
+              <div className="row">
+                <span>预计本月利息</span>
+                <span>{money(currentInterest)}</span>
+              </div>
+            )}
           </Facts>
-          <Actions
-            note={
-              producing
-                ? '本月只排一种。产量取产能与原料的较小值，再与需求取小后售出。'
-                : acting
-                  ? '排产不耗 AP，每月只出一种产品。'
-                  : '排产在行动阶段结束后开放。'
-            }
-          >
-            {producing && (
-              <>
-                <div className="produce-list">
-                  {products.map((item) => {
-                    const can = maxProduce(state, item.id);
-                    const demand = demandOf(state, item.id);
-                    const price = sellPriceOf(state, item.id);
-                    const sold = Math.min(can + (state.finished[item.id] ?? 0), demand);
-                    return (
-                      <button
-                        key={item.id}
-                        className={state.selectedProduct === item.id ? 'product on' : 'product'}
-                        onClick={() => dispatch({ type: 'SELECT_PRODUCT', id: item.id })}
-                      >
-                        <b>
-                          {item.tier} · {item.name}
-                        </b>
-                        <div>{item.blurb}</div>
-                        <div className="meta">
-                          <span>可产 {can}</span>
-                          <span>需求 {demand}</span>
-                          <span>单价 {money(price)}</span>
-                          <span>单件料本 {money(bomBookCost(state, item.id))}</span>
-                          <span>预计收入 {money(sold * price)}</span>
-                          <span>{sold < demand ? '可能欠单' : '需求可覆盖'}</span>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-                <div className="footer-actions">
-                  <button className="btn small ghost" onClick={() => dispatch({ type: 'BACK_TO_ACTIONS' })}>
-                    取消排产，返回经营
-                  </button>
-                  <button className="btn" disabled={!state.selectedProduct} onClick={() => dispatch({ type: 'SETTLE' })}>
-                    确认排产「{state.selectedProduct ? productById(state.selectedProduct).name : ''}」并结算 · 不耗 AP
-                  </button>
-                </div>
-              </>
-            )}
-            {acting && (
-              <button className="btn small ghost" onClick={() => dispatch({ type: 'GO_PRODUCE' })}>
-                现在就去排产 · 不耗 AP
+          <Actions note={acting ? undefined : '资金调度要等事件结束后才能做。'}>
+            <div className="qty-row">
+              {LOAN.map((n) => (
+                <button key={n} className={loanAmt === n ? 'chip on' : 'chip'} onClick={() => setLoanAmt(n)}>
+                  {money(n)}
+                </button>
+              ))}
+            </div>
+            <div className="qty-row loan-actions" style={{ marginTop: 8 }}>
+              <button className="btn small" disabled={!canBorrow} onClick={() => dispatch({ type: 'BORROW', amount: borrowAmt })}>
+                {`借入 ${money(borrowAmt)} · 耗 1 AP${
+                  extraInterest > 0
+                    ? ` · 财务费用 ${signedMoney(extraInterest)}/月${currentInterest > 0 ? `（合计 ${money(afterBorrowInterest)}）` : ''}`
+                    : ''
+                }`}
               </button>
-            )}
+              <button className="btn small ghost" disabled={!canRepay} onClick={() => dispatch({ type: 'REPAY', amount: repayAmt })}>
+                {`偿还 ${money(repayAmt > 0 ? repayAmt : loanAmt)} · 不耗 AP${
+                  savedInterest > 0 ? ` · 财务费用 ${signedMoney(-savedInterest)}/月` : ''
+                }`}
+              </button>
+            </div>
           </Actions>
-        </Dept>
+        </Stage>
       </div>
 
       {hireRole && (
         <div className="overlay hire-overlay" onClick={() => setHireRole(null)}>
           <div className="modal hire-modal" onClick={(event) => event.stopPropagation()}>
             <p className="kicker" style={{ color: '#8a7040' }}>
-              人事令
+              编制
             </p>
             <h2>招聘{ROLE_LABEL[hireRole]} 1 人</h2>
             <ul className="hire-points">

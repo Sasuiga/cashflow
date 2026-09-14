@@ -168,9 +168,9 @@ export const GOALS: GoalDef[] = [
     quarter: 1,
     kind: 'challenge',
     name: '试产非基础款',
-    desc: '本季至少完成一次非基础款排产结算。',
+    desc: '本季至少交付一次非基础款订单。',
     reached: (state) => state.quarterStats.nonBasic,
-    progress: (state) => (state.quarterStats.nonBasic ? '已完成一次' : '尚未排产非基础款'),
+    progress: (state) => (state.quarterStats.nonBasic ? '已完成一次' : '尚未交付非基础款'),
   },
   {
     id: 'q2-payroll',

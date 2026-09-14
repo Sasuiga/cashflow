@@ -1,13 +1,8 @@
-import { booksForView, netProfitOf, operatingProfitOf, profitBeforeTaxOf } from '../game/engine';
+import { AR_TERM_MONTHS, CREDIT_SALE_RATE, arCreditLossRate } from '../game/data';
+import { booksForView, netProfitOf, operatingCashOf, operatingProfitOf, profitBeforeTaxOf } from '../game/engine';
 import { amount, roundMoney, signedAmount } from '../game/format';
 import type { MonthBooks, MonthLedger } from '../game/types';
 import type { GameState } from '../game/types';
-
-function operateCf(ledger: MonthLedger): number {
-  return roundMoney(
-    ledger.cfSales - ledger.cfBuy - ledger.cfEmployees - ledger.cfTaxes + ledger.cfOtherOpIn - ledger.cfOtherOpOut,
-  );
-}
 
 function investCf(ledger: MonthLedger): number {
   return roundMoney(-ledger.cfCapex);
@@ -18,7 +13,7 @@ function financeCf(ledger: MonthLedger): number {
 }
 
 function cashChange(ledger: MonthLedger): number {
-  return roundMoney(operateCf(ledger) + investCf(ledger) + financeCf(ledger));
+  return roundMoney(operatingCashOf(ledger) + investCf(ledger) + financeCf(ledger));
 }
 
 function occurred(...values: number[]): boolean {
@@ -81,7 +76,12 @@ function Statement({
                 <td colSpan={4}>{line.section}</td>
               </tr>
             ) : (
-              <tr key={line.label} className={line.total ? 'sheet-total' : undefined}>
+              <tr
+                key={line.label}
+                className={[line.total ? 'sheet-total' : '', Math.abs(line.curr - line.prev) > 1e-6 ? 'sheet-moved' : '']
+                  .filter(Boolean)
+                  .join(' ') || undefined}
+              >
                 <td className={line.indent ? 'indent' : undefined}>{line.label}</td>
                 <td className="num">
                   <Cell value={line.curr} />
@@ -238,8 +238,8 @@ function cashFlowLines(prev: MonthLedger, curr: MonthLedger): Array<Line | { sec
   if (operate.length) {
     lines.push({ section: '经营活动产生的现金流量' }, ...operate.map((line) => ({ ...line, indent: true })), {
       label: '经营活动产生的现金流量净额',
-      prev: operateCf(prev),
-      curr: operateCf(curr),
+      prev: operatingCashOf(prev),
+      curr: operatingCashOf(curr),
       total: true,
     });
   }
@@ -282,7 +282,7 @@ export function FinancePage({ state }: { state: GameState }) {
     <div className="page-stack">
       <Statement
         title="资产负债表"
-        hint="按企业会计准则列示。存货按成本与可变现净值孰低，应收账款按摊余成本并计提坏账准备。价款按不含增值税简化。"
+        hint={`存货按库龄计提跌价：0–1 月不提，2 月 10%，3 月 25%，4–5 月 40%，6 月及以上 70%。应收账款按逾期计提坏账：未到期 5%，逾期 1 / 2 / 3 个月及以上分别为 ${Math.round(arCreditLossRate(1) * 100)}% / ${Math.round(arCreditLossRate(2) * 100)}% / 100%。货款默认 ${Math.round(CREDIT_SALE_RATE * 100)}% 赊销、账期 ${AR_TERM_MONTHS} 个月。价款不含增值税。`}
         prevLabel="上期"
         currLabel="本月"
         lines={balanceLines(prev, curr)}

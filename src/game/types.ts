@@ -77,6 +77,16 @@ export interface PendingDeal {
   failLog: string;
 }
 
+export interface MonthOrder {
+  id: string;
+  productId: ProductId;
+  qty: number;
+  kind: 'market' | 'contract';
+  penalty: number;
+  okLog?: string;
+  failLog?: string;
+}
+
 export interface QuarterStats {
   sold: number;
   peakCash: number;
@@ -263,6 +273,9 @@ export interface GameState {
   eventNote: string | null;
   usedEventIds: string[];
   selectedProduct: ProductId | null;
+  monthOrders: MonthOrder[];
+  acceptedOrderIds: string[];
+  extraProduce: Partial<Record<ProductId, number>>;
   lastReport: SettlementReport | null;
   prevReport: SettlementReport | null;
   log: string[];
@@ -297,6 +310,7 @@ export type GameAction =
   | { type: 'EXPAND_FACTORY' }
   | { type: 'HIRE'; role: Role }
   | { type: 'BUY_MATERIAL'; material: MaterialId; qty: number }
+  | { type: 'BUY_MATERIALS'; items: { material: MaterialId; qty: number }[] }
   | { type: 'BORROW'; amount: number }
   | { type: 'REPAY'; amount: number }
   | { type: 'DRAW_SHOP' }
@@ -304,7 +318,8 @@ export type GameAction =
   | { type: 'PLAY_CARD'; uid: string }
   | { type: 'GO_PRODUCE' }
   | { type: 'BACK_TO_ACTIONS' }
-  | { type: 'SELECT_PRODUCT'; id: ProductId }
+  | { type: 'TOGGLE_ORDER'; id: string }
+  | { type: 'SET_EXTRA_PRODUCE'; productId: ProductId; qty: number }
   | { type: 'SETTLE' }
   | { type: 'NEXT_MONTH' }
   | { type: 'RESTART' };
