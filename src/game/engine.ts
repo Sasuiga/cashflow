@@ -28,7 +28,18 @@ import {
   productById,
 } from './data';
 import { ACHIEVEMENTS } from './achievements';
-import { MILESTONES } from './score';
+import {
+  BASIC_PENALTY,
+  CHALLENGE_POINTS,
+  CLIMATES,
+  QUARTER_LABEL,
+  basicGoalOf,
+  climateById,
+  emptyQuarterStats,
+  goalById,
+  q3ProcurementFree,
+  quarterOf,
+} from './board';
 import { MONTH_NAMES, ROLE_LABEL, materialName, money, productName, roundMoney } from './format';
 import type {
   CardInstance,
@@ -124,6 +135,27 @@ export function maxProduce(state: GameState, id: ProductId): number {
   return Math.max(0, limit);
 }
 
+export function monthOutlook(state: GameState): string {
+  const cap = capacityOf(state);
+  if (state.pendingDeal) {
+    const deal = state.pendingDeal;
+    const can = maxProduce(state, deal.productId) + (state.finished[deal.productId] ?? 0);
+    const name = productName(deal.productId);
+    if (can >= deal.minSold) {
+      return `合同要求 ${name} ${deal.minSold} 件，当前可交 ${can} 件。本月可以交单。`;
+    }
+    return `合同要求 ${name} ${deal.minSold} 件，当前可交 ${can} 件。本月可能欠单。`;
+  }
+  const id = state.unlockedProducts.includes('basic') ? 'basic' : state.unlockedProducts[0];
+  if (!id) return `本月产能 ${cap}。`;
+  const demand = demandOf(state, id);
+  const can = maxProduce(state, id);
+  const name = productName(id);
+  if (can <= 0) return `产能 ${cap}，${name} 需求 ${demand}，原料不够，本月可能交不出货。`;
+  if (can < demand) return `产能 ${cap}，${name} 需求 ${demand}，当前可产 ${can}。本月可能欠单。`;
+  return `产能 ${cap}，${name} 需求 ${demand}，当前可产 ${can}。原料与需求匹配，可以排产。`;
+}
+
 export function materialValue(state: GameState): number {
   return MATERIAL_IDS.reduce((sum, id) => sum + state.materials[id] * state.materialPrices[id], 0);
 }
@@ -141,6 +173,12 @@ export function bookAssets(state: GameState): number {
 export function netAssetsOf(state: GameState): number {
   return roundMoney(
     state.cash + materialValue(state) + finishedValue(state) + bookAssets(state) - state.debt - state.wagesPayable,
+  );
+}
+
+export function scoreNetAssets(state: GameState): number {
+  return roundMoney(
+    state.cash + materialValue(state) * 0.5 + finishedValue(state) + bookAssets(state) - state.debt - state.wagesPayable,
   );
 }
 
@@ -295,7 +333,9 @@ function receive(state: GameState, amount: number, kind: 'sales' | 'extra' | 'bo
   if (kind === 'borrow') {
     state.debt = roundMoney(state.debt + n);
     state.ledger.cfBorrow = roundMoney(state.ledger.cfBorrow + n);
+    if (state.quarterStats) state.quarterStats.borrowed = true;
   }
+  notePeakCash(state);
 }
 
 function unlockAchievement(state: GameState, id: string): void {
@@ -338,12 +378,67 @@ export function checkAchievements(state: GameState): void {
   if (state.everDebt && state.debt <= 0) unlockAchievement(state, 'debtFree');
   if (state.month >= 6) unlockAchievement(state, 'survive6');
   if (state.lastReport?.productName === '旗舰款') unlockAchievement(state, 'premium');
-  for (const mile of MILESTONES) {
-    if (!state.milestones.includes(mile.id) && mile.reached(state)) {
-      state.milestones = [...state.milestones, mile.id];
-      pushLog(state, `里程碑：${mile.name}（+${mile.points} 分）。`);
-    }
+}
+
+function notePeakCash(state: GameState): void {
+  if (!state.quarterStats) return;
+  state.quarterStats.peakCash = Math.max(state.quarterStats.peakCash, state.cash);
+}
+
+function noteStockout(state: GameState): void {
+  if (!state.quarterStats) return;
+  if ((state.materials.a ?? 0) <= 0 && (state.materials.b ?? 0) <= 0) {
+    state.quarterStats.stockoutAB = true;
   }
+}
+
+function settleQuarter(state: GameState, quarter: 1 | 2 | 3 | 4): void {
+  if (state.boardHistory.some((item) => item.quarter === quarter)) return;
+  const basic = basicGoalOf(quarter);
+  const basicOk = basic.reached(state);
+  const challengeHits = (state.challengeGoalIds ?? []).filter((id) => goalById(id).reached(state));
+  const points = (basicOk ? 0 : -BASIC_PENALTY) + challengeHits.length * CHALLENGE_POINTS;
+  const challengeLines = (state.challengeGoalIds ?? []).map((id) => {
+    const goal = goalById(id);
+    return challengeHits.includes(id) ? `挑战目标「${goal.name}」已兑现。` : `挑战目标「${goal.name}」未兑现。`;
+  });
+  const minutes = [
+    `${QUARTER_LABEL[quarter]}考核：`,
+    basicOk ? `基本目标「${basic.name}」达成。` : `基本目标「${basic.name}」未达成，扣 ${BASIC_PENALTY} 分。`,
+    ...challengeLines,
+    `本季董事会计分 ${points} 分。`,
+  ].join('');
+  state.boardHistory = [
+    ...state.boardHistory,
+    {
+      quarter,
+      climateId: state.climateId,
+      basicId: basic.id,
+      basicOk,
+      challengeIds: [...(state.challengeGoalIds ?? [])],
+      challengeHits,
+      minutes,
+      points,
+    },
+  ];
+  state.boardMinutes = minutes;
+  pushLog(state, minutes);
+}
+
+function beginQuarter(state: GameState, quarter: 1 | 2 | 3 | 4): void {
+  if (quarter > 1) settleQuarter(state, (quarter - 1) as 1 | 2 | 3 | 4);
+  state.quarter = quarter;
+  const unused = CLIMATES.filter((item) => !state.usedClimateIds.includes(item.id));
+  const pool = unused.length > 0 ? unused : CLIMATES;
+  const climate = pick(pool);
+  state.climateId = climate.id;
+  state.usedClimateIds = [...state.usedClimateIds, climate.id];
+  state.basicGoalId = basicGoalOf(quarter).id;
+  state.challengeGoalIds = [];
+  state.challengeDraft = [];
+  state.quarterStats = emptyQuarterStats(totalStaff(state.staff), state.debt);
+  state.quarterStats.peakCash = Math.max(0, state.cash);
+  state.phase = 'board';
 }
 
 function spendAp(state: GameState, n = 1): boolean {
@@ -362,6 +457,7 @@ function nextUid(state: GameState): string {
 }
 
 function rollMarket(state: GameState, firstMonth: boolean): void {
+  const climate = climateById(state.climateId);
   for (const mat of MATERIALS) {
     if (mat.id === 'd' && !state.materialDUnlocked) {
       state.materialPrices.d = mat.basePrice;
@@ -371,7 +467,9 @@ function rollMarket(state: GameState, firstMonth: boolean): void {
       state.materialPrices[mat.id] = mat.basePrice;
       continue;
     }
-    const step = pick([-0.2, -0.1, 0, 0.1, 0.2]);
+    let step = pick([-0.1, 0, 0.1]);
+    if (climate.id === 'steel' && mat.id === 'a') step += 0.1;
+    if (climate.id === 'chip' && mat.id === 'c') step += 0.2;
     state.materialPrices[mat.id] = roundPrice(
       clamp(state.materialPrices[mat.id] + step, roundMoney(mat.basePrice * 0.5), roundMoney(mat.basePrice * 2)),
     );
@@ -385,7 +483,8 @@ function rollMarket(state: GameState, firstMonth: boolean): void {
       state.demand[product.id] = Math.round((product.baseDemand * salesBoost) / 5) * 5;
       continue;
     }
-    const step = pick([-0.5, -0.2, 0, 0.2, 0.5]);
+    let step = pick([-0.2, 0, 0.2]);
+    if (climate.id === 'priceWar') step -= 0.2;
     state.productPrices[product.id] = roundPrice(
       clamp(
         (state.productPrices[product.id] ?? product.basePrice) + step,
@@ -393,18 +492,28 @@ function rollMarket(state: GameState, firstMonth: boolean): void {
         roundMoney(product.basePrice * 1.5),
       ),
     );
-    const demandStep = pick([-10, -5, 0, 5, 10]);
+    let demandStep = pick([-5, 0, 5]);
+    if (climate.id === 'channel') demandStep += 5;
     state.demand[product.id] = Math.max(
       5,
-      Math.round(((state.demand[product.id] ?? product.baseDemand) + demandStep + state.staff.sales * 5) / 5) * 5,
+      Math.round(((state.demand[product.id] ?? product.baseDemand) + demandStep) / 5) * 5,
     );
   }
 }
 
 function pickEvent(state: GameState): string {
-  const unused = EVENTS.filter((event) => !state.usedEventIds.includes(event.id));
-  const pool = unused.length > 0 ? unused : EVENTS;
-  const weighted = pool.flatMap((event) => Array.from({ length: event.weight ?? 1 }, () => event.id));
+  const climate = climateById(state.climateId);
+  let pool = EVENTS.filter((event) => !state.usedEventIds.includes(event.id));
+  if (climate.id !== 'channel') {
+    pool = pool.filter((event) => event.id !== 'bigOrder' && event.id !== 'rushOrder');
+  }
+  if (pool.length === 0) {
+    pool = climate.id === 'channel' ? [...EVENTS] : EVENTS.filter((event) => event.id !== 'bigOrder' && event.id !== 'rushOrder');
+  }
+  const weighted = pool.flatMap((event) => {
+    const extra = climate.eventIds.includes(event.id) ? 3 : 0;
+    return Array.from({ length: Math.max(1, (event.weight ?? 1) + extra) }, () => event.id);
+  });
   return pick(weighted);
 }
 
@@ -412,6 +521,7 @@ function takeMaterial(state: GameState, id: MaterialId, qty: number): number {
   const have = state.materials[id] ?? 0;
   const taken = Math.min(qty, have);
   state.materials[id] = have - taken;
+  noteStockout(state);
   return taken;
 }
 
@@ -441,6 +551,7 @@ function consumeBom(state: GameState, id: ProductId, count: number): void {
     const need = (bom[key] ?? 0) * count;
     state.materials[key] -= need;
   }
+  noteStockout(state);
 }
 
 function applyRd(state: GameState): string | null {
@@ -588,6 +699,7 @@ function applyEvent(state: GameState): void {
         if (amount > 0) {
           pay(state, amount, 'repay');
           state.debt = roundMoney(state.debt - amount);
+          if (state.quarterStats) state.quarterStats.repaid = true;
           bits.push(`银行抽贷，强制收回 ${money(amount)}`);
         }
         if (state.debt > 0 && state.cash <= 0) {
@@ -686,16 +798,24 @@ export function createInitialState(): GameState {
     achievements: [],
     milestones: [],
     everDebt: false,
+    quarter: 1,
+    climateId: 'steel',
+    basicGoalId: 'q1-net20',
+    challengeGoalIds: [],
+    challengeDraft: [],
+    boardHistory: [],
+    boardMinutes: null,
+    quarterStats: emptyQuarterStats(4, 0),
+    usedClimateIds: [],
   };
 }
 
 function startGame(prev: GameState): GameState {
   const state = createInitialState();
   state.uidSeq = prev.uidSeq;
-  prepareMonth(state, true);
   state.openBooks = snapshotBooks(state, '开业');
-  syncMonthWages(state);
-  pushLog(state, '第一份行业月报已放在桌上。先看行情，再看本月落地的事件。');
+  beginQuarter(state, 1);
+  pushLog(state, '第一季度董事会召开。请确认本季经营目标后，再看行业月报。');
   checkAchievements(state);
   return state;
 }
@@ -708,8 +828,41 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
   if (typeof state.cardsBoughtThisMonth !== 'number' || Number.isNaN(state.cardsBoughtThisMonth)) state.cardsBoughtThisMonth = 0;
   if (!Array.isArray(state.milestones)) state.milestones = [];
   if (typeof state.eventNote !== 'string' && state.eventNote !== null) state.eventNote = null;
+  if (!Array.isArray(state.boardHistory)) state.boardHistory = [];
+  if (!Array.isArray(state.challengeGoalIds)) state.challengeGoalIds = [];
+  if (!Array.isArray(state.challengeDraft)) state.challengeDraft = [];
+  if (!Array.isArray(state.usedClimateIds)) state.usedClimateIds = [];
+  if (!state.quarterStats) state.quarterStats = emptyQuarterStats(totalStaff(state.staff), state.debt);
 
   switch (action.type) {
+    case 'TOGGLE_BOARD_GOAL': {
+      if (state.phase !== 'board') return prev;
+      const id = action.id;
+      const allowed = goalById(id);
+      if (allowed.kind !== 'challenge' || allowed.quarter !== state.quarter) return prev;
+      if (state.challengeDraft.includes(id)) {
+        state.challengeDraft = state.challengeDraft.filter((item) => item !== id);
+      } else if (state.challengeDraft.length < 2) {
+        state.challengeDraft = [...state.challengeDraft, id];
+      }
+      return state;
+    }
+
+    case 'CONFIRM_BOARD': {
+      if (state.phase !== 'board' || state.challengeDraft.length !== 2) return prev;
+      state.challengeGoalIds = [...state.challengeDraft];
+      const firstMonth = state.month === 1 && !state.lastReport;
+      prepareMonth(state, firstMonth);
+      syncMonthWages(state);
+      const climate = climateById(state.climateId);
+      const picked = state.challengeGoalIds.map((id) => `「${goalById(id).name}」`).join('、');
+      pushLog(
+        state,
+        `${QUARTER_LABEL[state.quarter]}决议：基本目标「${goalById(state.basicGoalId).name}」；挑战目标${picked}。${climate.headline}`,
+      );
+      return state;
+    }
+
     case 'CONFIRM_BRIEFING':
       if (state.phase !== 'briefing') return prev;
       applyEvent(state);
@@ -813,7 +966,7 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
         pushLog(state, '采购金额超过现金。');
         return state;
       }
-      if (!spendAp(state)) {
+      if (!q3ProcurementFree(state.month) && !spendAp(state)) {
         pushLog(state, '行动点不足。');
         return state;
       }
@@ -822,7 +975,9 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
       const off = Math.round(state.modifiers.nextBuyDiscount * 100);
       const buyNote = off > 0
         ? `采购${materialName(action.material)} ${action.qty}件，花费 ${money(cost)}（${100 - off}折）`
-        : `采购${materialName(action.material)} ${action.qty}件，花费 ${money(cost)}`;
+        : q3ProcurementFree(state.month)
+          ? `采购${materialName(action.material)} ${action.qty}件，花费 ${money(cost)}，本季采购不耗 AP`
+          : `采购${materialName(action.material)} ${action.qty}件，花费 ${money(cost)}`;
       noteDept(state, 'store', buyNote);
       if (state.modifiers.nextBuyDiscount > 0) {
         pushLog(state, `集采折扣已使用（${off}% off）。`);
@@ -863,6 +1018,7 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
       }
       pay(state, amount, 'repay');
       state.debt = roundMoney(state.debt - amount);
+      if (state.quarterStats) state.quarterStats.repaid = true;
       noteDept(state, 'finance', `偿还 ${money(amount)}，负债现为 ${money(state.debt)}`);
       pushLog(state, `还款 ${money(amount)}。剩余负债 ${money(state.debt)}。`);
       return state;
@@ -925,6 +1081,7 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
       const [card] = state.hand.splice(index, 1);
       const def = cardById(card!.defId);
       const text = playCardEffect(state, card!.defId);
+      if (state.quarterStats) state.quarterStats.playedCard = true;
       noteDept(state, 'ceo', `打出「${def.name}」：${def.playText}`);
       pushLog(state, text);
       return state;
@@ -968,6 +1125,10 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
         return state;
       }
       state.month += 1;
+      if (state.month === 4 || state.month === 7 || state.month === 10) {
+        beginQuarter(state, quarterOf(state.month));
+        return state;
+      }
       prepareMonth(state, false);
       syncMonthWages(state);
       pushLog(state, `${state.month} 月行情已更新。`);
@@ -992,6 +1153,11 @@ function settleMonth(state: GameState): GameState {
   const sold = Math.min(stock, demandOf(state, productId));
   const leftover = stock - sold;
   state.finished[productId] = leftover;
+  if (state.quarterStats) {
+    state.quarterStats.sold += sold;
+    if (productId !== 'basic') state.quarterStats.nonBasic = true;
+    if (productId === 'premium' || productId === 'special') state.quarterStats.premiumOrSpecial = true;
+  }
   const revenue = roundMoney(sold * sellPriceOf(state, productId));
   const cogs = roundMoney(bomCost(state, productId) * produced);
   state.ledger.cogs = roundMoney(state.ledger.cogs + cogs);
@@ -1004,6 +1170,9 @@ function settleMonth(state: GameState): GameState {
   const interest = state.debt > 0 ? roundMoney(state.debt * INTEREST_RATE) : 0;
   pay(state, upkeep, 'admin');
   pay(state, interest, 'finance');
+  if (state.quarterStats && revenue >= salaries + upkeep) {
+    state.quarterStats.coveringMonth = true;
+  }
 
   let penalty = 0;
   if (state.pendingDeal) {
@@ -1059,6 +1228,7 @@ function settleMonth(state: GameState): GameState {
   if (net < 0) {
     state.endKind = 'bankrupt';
     state.phase = 'report';
+    settleQuarter(state, state.quarter);
     pushLog(state, '净资产转负，银行上门封账。本局结束。');
     return state;
   }
@@ -1066,6 +1236,7 @@ function settleMonth(state: GameState): GameState {
   if (state.month >= TOTAL_MONTHS) {
     state.endKind = 'finished';
     state.phase = 'report';
+    settleQuarter(state, state.quarter);
     pushLog(state, '十二个月走完。账本合上，看最终评分。');
     return state;
   }

@@ -1,6 +1,75 @@
 import { MATERIALS, PRODUCTS, eventById } from '../game/data';
 import { MONTH_NAMES, money, priceDelta, signedMoney } from '../game/format';
+import { QUARTER_LABEL, basicGoalOf, challengePoolOf, climateById } from '../game/board';
 import type { GameState } from '../game/types';
+
+export function BoardModal({
+  state,
+  onToggle,
+  onConfirm,
+}: {
+  state: GameState;
+  onToggle: (id: string) => void;
+  onConfirm: () => void;
+}) {
+  const climate = climateById(state.climateId);
+  const basic = basicGoalOf(state.quarter);
+  const pool = challengePoolOf(state.quarter);
+  const picked = new Set(state.challengeDraft);
+  const ready = state.challengeDraft.length === 2;
+  return (
+    <div className="overlay">
+      <div className="modal">
+        <p className="kicker" style={{ color: '#8a7040' }}>
+          {QUARTER_LABEL[state.quarter]} · 董事会
+        </p>
+        <h2>{state.quarter === 1 ? '开局决议' : '季度考核与新决议'}</h2>
+        {state.boardMinutes && state.quarter > 1 && (
+          <div className="event-impact">
+            <b>上季纪要</b>
+            <p>{state.boardMinutes}</p>
+          </div>
+        )}
+        <p className="lead">{climate.headline}</p>
+        <p className="sheet-caption">本季市场基调 · {climate.name}</p>
+        <p className="lead" style={{ marginTop: 0 }}>
+          {climate.briefing}
+        </p>
+        <div className="event-impact">
+          <b>基本目标 · 未达成扣 5 分</b>
+          <p>
+            {basic.name}。{basic.desc}
+          </p>
+        </div>
+        <p className="sheet-caption">挑战目标 · 四选二 · 兑现各 5 分</p>
+        {pool.map((goal) => {
+          const on = picked.has(goal.id);
+          return (
+            <button
+              key={goal.id}
+              className={on ? 'choice on' : 'choice'}
+              onClick={() => onToggle(goal.id)}
+            >
+              <span className="choice-top">
+                <b>{goal.name}</b>
+                <em>{on ? '已选' : '点选'}</em>
+              </span>
+              <span>{goal.desc}</span>
+            </button>
+          );
+        })}
+        <p className="lead event-hint">
+          {ready ? '两条挑战目标已选定，可以确认本季决议。' : '请从短名单中选定两条挑战目标。'}
+        </p>
+        <div className="footer-actions">
+          <button className="btn" disabled={!ready} onClick={onConfirm}>
+            确认本季目标
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export function BriefingModal({ state, onConfirm }: { state: GameState; onConfirm: () => void }) {
   const visibleMaterials = MATERIALS.filter((item) => item.id !== 'd' || state.materialDUnlocked);
@@ -9,6 +78,9 @@ export function BriefingModal({ state, onConfirm }: { state: GameState; onConfir
     <div className="overlay">
       <div className="modal">
         <h2>{MONTH_NAMES[state.month - 1]} · 行业月报</h2>
+        <p className="lead" style={{ marginBottom: 12 }}>
+          {climateById(state.climateId).briefing}
+        </p>
         <p className="sheet-caption">原料报价</p>
         <div className="sheet-wrap">
         <table className="sheet">
@@ -96,7 +168,7 @@ export function EventModal({
           <b>已经发生</b>
           <p>{state.eventNote ?? event.impact}</p>
         </div>
-        <p className="lead event-hint">没有应对选项。用本月行动去补库存、借款、加人、换产品或打牌。</p>
+        <p className="lead event-hint">本月事项已经落地。请用采购、借款、招聘或排产去消化，没有当面选项。</p>
         <div className="footer-actions">
           <button className="btn" onClick={onAck}>
             已知悉，开始经营

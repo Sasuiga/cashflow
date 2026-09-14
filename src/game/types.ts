@@ -1,5 +1,6 @@
 export type Phase =
   | 'title'
+  | 'board'
   | 'briefing'
   | 'event'
   | 'actions'
@@ -74,6 +75,31 @@ export interface PendingDeal {
   penalty: number;
   okLog: string;
   failLog: string;
+}
+
+export interface QuarterStats {
+  sold: number;
+  peakCash: number;
+  coveringMonth: boolean;
+  repaid: boolean;
+  borrowed: boolean;
+  playedCard: boolean;
+  nonBasic: boolean;
+  stockoutAB: boolean;
+  premiumOrSpecial: boolean;
+  startStaff: number;
+  startDebt: number;
+}
+
+export interface BoardQuarterResult {
+  quarter: 1 | 2 | 3 | 4;
+  climateId: string;
+  basicId: string;
+  basicOk: boolean;
+  challengeIds: string[];
+  challengeHits: string[];
+  minutes: string;
+  points: number;
 }
 
 export interface EventDef {
@@ -199,10 +225,21 @@ export interface GameState {
   achievements: string[];
   milestones: string[];
   everDebt: boolean;
+  quarter: 1 | 2 | 3 | 4;
+  climateId: 'steel' | 'channel' | 'chip' | 'priceWar';
+  basicGoalId: string;
+  challengeGoalIds: string[];
+  challengeDraft: string[];
+  boardHistory: BoardQuarterResult[];
+  boardMinutes: string | null;
+  quarterStats: QuarterStats;
+  usedClimateIds: string[];
 }
 
 export type GameAction =
   | { type: 'START_GAME' }
+  | { type: 'TOGGLE_BOARD_GOAL'; id: string }
+  | { type: 'CONFIRM_BOARD' }
   | { type: 'CONFIRM_BRIEFING' }
   | { type: 'ACK_EVENT' }
   | { type: 'BUY_MACHINE' }

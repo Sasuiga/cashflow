@@ -24,12 +24,14 @@ import {
   loanLimit,
   maxProduce,
   monthlySalary,
+  monthOutlook,
   netAssetsOf,
   nextCardBuyAp,
   sellPriceOf,
   totalStaff,
 } from '../game/engine';
 import { ROLE_DETAIL, ROLE_HINT, ROLE_LABEL, bomLabel, materialName, money, qty } from '../game/format';
+import { QUARTER_LABEL, climateById, goalById, q3ProcurementFree } from '../game/board';
 import type { DeptId, GameAction, GameState, MaterialId, Role } from '../game/types';
 
 const ROLES: Role[] = ['production', 'management', 'sales', 'rd'];
@@ -100,17 +102,14 @@ export function OperationsPage({
   state: GameState;
   dispatch: (action: GameAction) => void;
 }) {
-  const [open, setOpen] = useState<Record<DeptId, boolean>>(() => {
-    const phone = window.matchMedia('(max-width: 720px)').matches;
-    return {
-      ceo: !phone,
-      hr: !phone,
-      infra: !phone,
-      store: !phone,
-      sales: !phone,
-      rd: !phone,
-      finance: !phone,
-    };
+  const [open, setOpen] = useState<Record<DeptId, boolean>>({
+    ceo: false,
+    hr: false,
+    infra: false,
+    store: false,
+    sales: false,
+    rd: false,
+    finance: false,
   });
   const [material, setMaterial] = useState<MaterialId>('a');
   const [buyQty, setBuyQty] = useState(20);
@@ -120,6 +119,8 @@ export function OperationsPage({
   const acting = state.phase === 'actions';
   const producing = state.phase === 'produce';
   const canAct = acting && state.ap > 0;
+  const buyApFree = q3ProcurementFree(state.month);
+  const canBuy = acting && (canAct || buyApFree);
   const visibleMaterials = MATERIALS.filter((item) => item.id !== 'd' || state.materialDUnlocked);
   const unit = state.materialPrices[material] ?? 0;
   const buyCost = Math.round(unit * buyQty * (1 - state.modifiers.nextBuyDiscount) * 10) / 10;
@@ -136,20 +137,43 @@ export function OperationsPage({
 
   const toggle = (id: DeptId) => setOpen((prev) => ({ ...prev, [id]: !prev[id] }));
   const monthEvent = state.eventId ? eventById(state.eventId) : null;
+  const climate = climateById(state.climateId);
+  const basicGoal = state.basicGoalId ? goalById(state.basicGoalId) : null;
+  const challengeGoals = (state.challengeGoalIds ?? []).map((id) => goalById(id));
 
   return (
     <div className="ops">
+      <aside className="exec-summary">
+        <p className="dept-kicker">
+          {QUARTER_LABEL[state.quarter]} · {climate.name}
+        </p>
+        <p className="exec-climate">{climate.headline}</p>
+        {basicGoal && (
+          <div className="exec-goal">
+            <b>基本目标 · {basicGoal.name}</b>
+            <p>{basicGoal.progress(state)}</p>
+          </div>
+        )}
+        {challengeGoals.map((goal) => (
+          <div key={goal.id} className={goal.reached(state) ? 'exec-goal on' : 'exec-goal'}>
+            <b>挑战目标 · {goal.name}</b>
+            <p>{goal.progress(state)}</p>
+          </div>
+        ))}
+        {monthEvent && state.eventNote && (
+          <div className={`exec-event tone-${monthEvent.tone}`}>
+            <b>本月事项 · {monthEvent.title}</b>
+            <p>{state.eventNote}</p>
+          </div>
+        )}
+        <div className="exec-outlook">
+          <b>本月产销</b>
+          <p>{monthOutlook(state)}</p>
+        </div>
+      </aside>
       <p className="ops-lead">
-        每个部门先看现状，再决定要不要做事。带「耗 1 AP」的按钮会花掉行动点；生产与销售部的产销安排不耗行动点。
+        先看本季目标与本月事项，再打开部门去执行。带「耗 1 AP」的按钮会花掉行动点；生产与销售部的排产不耗行动点。
       </p>
-      {monthEvent && state.eventNote && (
-        <aside className={`event-banner tone-${monthEvent.tone}`}>
-          <b>
-            本月事件 · {monthEvent.title}
-          </b>
-          <p>{state.eventNote}</p>
-        </aside>
-      )}
 
       <div className="dept-grid">
         <Dept title="总经理室" intro="翻牌、买牌、打牌，用决策卡影响当月经营。" done={deptDone(state, 'ceo')} open={open.ceo} onToggle={() => toggle('ceo')} wide>
@@ -420,7 +444,7 @@ export function OperationsPage({
               </div>
             )}
           </Facts>
-          <Actions note={acting ? '一次采购只买一种原料。有折扣时会写在报价里。' : '采购单要等事件结束后才能下。'}>
+          <Actions note={acting ? (buyApFree ? '第三、四季度采购不耗行动点，仍要付现。' : '一次采购只买一种原料。有折扣时会写在报价里。') : '采购单要等事件结束后才能下。'}>
             <div className="qty-row">
               {visibleMaterials.map((item) => (
                 <button
@@ -438,8 +462,8 @@ export function OperationsPage({
               ))}
             </div>
             <div className="footer-actions" style={{ justifyContent: 'flex-start' }}>
-              <button className="btn small" disabled={!canAct} onClick={() => dispatch({ type: 'BUY_MATERIAL', material, qty: buyQty })}>
-                采购{materialName(material)} {buyQty}件 · 耗 1 AP · 花费 {money(buyCost)}
+              <button className="btn small" disabled={!canBuy || state.cash < buyCost} onClick={() => dispatch({ type: 'BUY_MATERIAL', material, qty: buyQty })}>
+                采购{materialName(material)} {buyQty}件 · {buyApFree ? '不耗 AP' : '耗 1 AP'} · 花费 {money(buyCost)}
               </button>
             </div>
           </Actions>
@@ -563,6 +587,7 @@ export function OperationsPage({
                           <span>单价 {money(price)}</span>
                           <span>单件成本 {money(bomCost(state, item.id))}</span>
                           <span>预计收入 {money(sold * price)}</span>
+                          <span>{sold < demand ? '可能欠单' : '需求可覆盖'}</span>
                         </div>
                       </button>
                     );

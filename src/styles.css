@@ -489,6 +489,64 @@ h1,
   color: var(--cream);
 }
 
+.exec-summary {
+  margin: 0 0 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--line-strong);
+  background: rgba(224, 180, 90, 0.07);
+}
+
+.exec-climate {
+  margin: 0 0 12px;
+  color: var(--cream);
+  font-size: 14px;
+  line-height: 1.55;
+}
+
+.exec-goal,
+.exec-event,
+.exec-outlook {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.exec-goal b,
+.exec-event b,
+.exec-outlook b {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  color: var(--gold-2);
+}
+
+.exec-goal.on b {
+  color: var(--mint);
+}
+
+.exec-goal p,
+.exec-event p,
+.exec-outlook p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--cream);
+}
+
+.exec-event.tone-bad b {
+  color: #f0b4a4;
+}
+
+.exec-event.tone-good b {
+  color: var(--mint);
+}
+
+.choice.on {
+  border-color: #b8892d;
+  background: #efe4c0;
+}
+
 .event-impact {
   margin: 0 0 16px;
   padding: 12px 14px;
@@ -1217,6 +1275,11 @@ h1,
 
   .event-banner {
     padding: 10px 12px;
+    margin-bottom: 10px;
+  }
+
+  .exec-summary {
+    padding: 12px;
     margin-bottom: 10px;
   }
 

@@ -13,7 +13,7 @@ export function EndScreen({ state, onRestart }: { state: GameState; onRestart: (
         <p className="sub">
           {state.endKind === 'bankrupt'
             ? `第 ${state.month} 月结算后，净资产跌破零。北港制造被清算。`
-            : '十二本月报合上。活下来只是门槛，分数来自生存、净资产、里程碑、奖项和成就。'}
+            : '十二本月报合上。活下来只是门槛，分数来自生存、董事会考核和净资产。'}
         </p>
         <p className="score-total">
           总分 <b>{score.total}</b>

@@ -1,7 +1,7 @@
 import { useReducer } from 'react';
 import { Board } from './components/Board';
 import { EndScreen } from './components/EndScreen';
-import { BriefingModal, EventModal, ReportModal } from './components/Modals';
+import { BriefingModal, BoardModal, EventModal, ReportModal } from './components/Modals';
 import { TitleScreen } from './components/TitleScreen';
 import { createInitialState, reduce } from './game/engine';
 
@@ -16,6 +16,13 @@ export function App() {
       {state.phase !== 'title' && state.phase !== 'ended' && (
         <>
           <Board state={state} dispatch={dispatch} />
+          {state.phase === 'board' && (
+            <BoardModal
+              state={state}
+              onToggle={(id) => dispatch({ type: 'TOGGLE_BOARD_GOAL', id })}
+              onConfirm={() => dispatch({ type: 'CONFIRM_BOARD' })}
+            />
+          )}
           {state.phase === 'briefing' && (
             <BriefingModal state={state} onConfirm={() => dispatch({ type: 'CONFIRM_BRIEFING' })} />
           )}

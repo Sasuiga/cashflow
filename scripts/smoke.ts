@@ -20,6 +20,19 @@ function play(): GameState {
   let bounced = false;
   for (let i = 0; i < 120; i += 1) {
     if (state.phase === 'ended') return state;
+    if (state.phase === 'board') {
+      const fallback = {
+        1: ['q1-sold30', 'q1-stock'],
+        2: ['q2-machine', 'q2-staff6'],
+        3: ['q3-rd', 'q3-sales'],
+        4: ['q4-flagship', 'q4-nodebt'],
+      }[state.quarter]!;
+      for (const id of fallback) {
+        if (!state.challengeDraft.includes(id)) state = reduce(state, { type: 'TOGGLE_BOARD_GOAL', id });
+      }
+      state = reduce(state, { type: 'CONFIRM_BOARD' });
+      continue;
+    }
     if (state.phase === 'briefing') {
       state = reduce(state, { type: 'CONFIRM_BRIEFING' });
       continue;
