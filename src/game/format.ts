@@ -29,11 +29,15 @@ export const ROLE_HINT: Record<Role, string> = {
   rd: '推进研发，每累计 2 点解锁新产品',
 };
 
+export function roundMoney(value: number): number {
+  return Math.round(value * 10) / 10;
+}
+
 export function money(value: number): string {
-  const wan = value / 10;
-  const abs = Math.abs(wan);
-  const sign = wan < 0 ? '-' : '';
-  if (abs >= 100) return `${sign}¥${abs.toFixed(0)}万`;
+  const amount = roundMoney(value);
+  const abs = Math.abs(amount);
+  const sign = amount < 0 ? '-' : '';
+  if (Math.abs(abs * 10 - Math.round(abs) * 10) < 1e-6) return `${sign}¥${Math.round(abs)}万`;
   return `${sign}¥${abs.toFixed(1)}万`;
 }
 
@@ -68,10 +72,17 @@ export function productName(id: ProductId): string {
   return map[id];
 }
 
+export function priceDelta(current: number, base: number): { text: string; tone: 'up' | 'down' | 'flat' } {
+  const pct = (current - base) / base;
+  if (Math.abs(pct) < 0.005) return { text: '持平', tone: 'flat' };
+  const signed = `${pct > 0 ? '+' : ''}${Math.round(pct * 100)}%`;
+  return { text: signed, tone: pct > 0 ? 'up' : 'down' };
+}
+
 export function scoreTitle(netAssets: number, kind: 'bankrupt' | 'finished'): string {
   if (kind === 'bankrupt') return '破产清算';
-  if (netAssets >= 1800) return '商业帝国';
-  if (netAssets >= 1200) return '行业新星';
-  if (netAssets >= 700) return '稳健经营';
+  if (netAssets >= 180) return '商业帝国';
+  if (netAssets >= 120) return '行业新星';
+  if (netAssets >= 70) return '稳健经营';
   return '艰难度日';
 }

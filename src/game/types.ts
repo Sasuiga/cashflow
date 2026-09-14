@@ -67,7 +67,16 @@ export interface CardInstance {
 
 export interface EventChoice {
   label: string;
+  cost: string;
   hint: string;
+}
+
+export interface PendingDeal {
+  productId: ProductId;
+  minSold: number;
+  penalty: number;
+  okLog: string;
+  failLog: string;
 }
 
 export interface EventDef {
@@ -102,12 +111,46 @@ export interface SettlementReport {
   salaries: number;
   upkeep: number;
   interest: number;
+  penalty: number;
   netCash: number;
   cash: number;
   debt: number;
   netAssets: number;
   rdNote: string | null;
   lines: SettlementLine[];
+}
+
+export interface MonthLedger {
+  openingCash: number;
+  revenue: number;
+  cogs: number;
+  taxes: number;
+  selling: number;
+  admin: number;
+  finance: number;
+  extraIncome: number;
+  extraExpense: number;
+  cfSales: number;
+  cfBuy: number;
+  cfEmployees: number;
+  cfTaxes: number;
+  cfOtherOpIn: number;
+  cfOtherOpOut: number;
+  cfCapex: number;
+  cfBorrow: number;
+  cfRepay: number;
+  cfInterest: number;
+}
+
+export interface MonthBooks {
+  title: string;
+  month: number;
+  cash: number;
+  inventory: number;
+  fixedAssets: number;
+  borrowings: number;
+  equity: number;
+  ledger: MonthLedger;
 }
 
 export interface GameState {
@@ -139,10 +182,16 @@ export interface GameState {
   usedEventIds: string[];
   selectedProduct: ProductId | null;
   lastReport: SettlementReport | null;
+  prevReport: SettlementReport | null;
   log: string[];
   endKind: EndKind | null;
   uidSeq: number;
-  supermarketDeal: boolean;
+  pendingDeal: PendingDeal | null;
+  ledger: MonthLedger;
+  openBooks: MonthBooks;
+  closedBooks: MonthBooks[];
+  achievements: string[];
+  everDebt: boolean;
 }
 
 export type GameAction =
