@@ -1,4 +1,4 @@
-import type { MaterialId, ProductId, Role } from './types';
+import type { Bom, MaterialId, ProductId, Role } from './types';
 
 export const MONTH_NAMES = [
   '一月',
@@ -49,6 +49,15 @@ export function signedMoney(value: number): string {
 
 export function qty(n: number): string {
   return `${n} 件`;
+}
+
+export function bomLabel(bom: Bom): string {
+  const parts: string[] = [];
+  if (bom.a) parts.push(`${bom.a}钢材`);
+  if (bom.b) parts.push(`${bom.b}塑料`);
+  if (bom.c) parts.push(`${bom.c}芯片`);
+  if (bom.d) parts.push(`${bom.d}特种合金`);
+  return parts.join(' + ') || '—';
 }
 
 export function materialName(id: MaterialId): string {
