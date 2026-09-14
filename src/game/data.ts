@@ -3,6 +3,9 @@ import type { CardDef, EventDef, MaterialDef, MaterialId, ProductDef, Role } fro
 export const TOTAL_MONTHS = 12;
 export const HAND_LIMIT = 5;
 export const BASE_AP = 3;
+export const NEWS_MITIGATE_COST = 3;
+export const SHOP_REFRESH_COST = 1;
+export const DEFAULT_PENALTY_PER_UNIT = 0.5;
 export const MACHINE_COST = 10;
 export const MACHINE_LIFE_MONTHS = 12;
 export const MACHINE_BASE_CAP = 6;
