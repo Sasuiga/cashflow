@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import {
   FACTORY_COST,
+  HAND_LIMIT,
   FACTORY_UPKEEP,
   HIRE_COST,
   INTEREST_RATE,
@@ -113,6 +114,11 @@ export function OperationsPage({
   const nextProduct = nextUnlock?.product ? productById(nextUnlock.product) : null;
   const waitPoints = Math.max(0, RD_THRESHOLD - state.rdProgress);
   const products = PRODUCTS.filter((item) => state.unlockedProducts.includes(item.id));
+  const cardWeights = ROLES.map((role) => ({
+    role,
+    weight: 1 + state.staff[role] * 0.85,
+  }));
+  const cardWeightTotal = cardWeights.reduce((sum, item) => sum + item.weight, 0);
 
   const toggle = (id: DeptId) => setOpen((prev) => ({ ...prev, [id]: !prev[id] }));
 
@@ -123,7 +129,7 @@ export function OperationsPage({
       </p>
 
       <div className="dept-grid">
-        <Dept title="总经理室" duty="看行动点，打决策卡，结束本月行动。" open={open.ceo} onToggle={() => toggle('ceo')} wide>
+        <Dept title="总经理室" duty="翻牌、买牌、看手牌。只有打牌耗 1 AP。" open={open.ceo} onToggle={() => toggle('ceo')} wide>
           <Facts>
             <div className="row">
               <span>剩余行动点</span>
@@ -132,32 +138,45 @@ export function OperationsPage({
               </span>
             </div>
             <div className="row">
-              <span>管理人员</span>
+              <span>决策卡</span>
               <span>
-                {state.staff.management} 人 · 每 2 人 +1 AP
+                {state.cardsUnlocked
+                  ? `手牌 ${state.hand.length} / ${HAND_LIMIT}`
+                  : '未解锁（三月或编制满 6 人）'}
               </span>
             </div>
-            <div className="row">
-              <span>决策卡</span>
-              <span>{state.cardsUnlocked ? `手牌 ${state.hand.length} 张` : '未解锁（三月或编制满 6 人）'}</span>
-            </div>
-            {(state.modifiers.extraCapacity || state.modifiers.extraDemand || state.modifiers.priceBonus || state.modifiers.nextBuyDiscount) ? (
-              <p className="hint" style={{ marginTop: 10 }}>
-                本月修正：产能 {state.modifiers.extraCapacity} · 需求 {state.modifiers.extraDemand} · 售价{' '}
-                {Math.round(state.modifiers.priceBonus * 100)}% · 采购折扣 {Math.round(state.modifiers.nextBuyDiscount * 100)}%
-              </p>
-            ) : null}
+            <table className="sheet dark" style={{ marginTop: 12 }}>
+              <thead>
+                <tr>
+                  <th>人员结构</th>
+                  <th className="num">人数</th>
+                  <th className="num">本月卡类倾向</th>
+                </tr>
+              </thead>
+              <tbody>
+                {cardWeights.map((item) => (
+                  <tr key={item.role}>
+                    <td>{ROLE_LABEL[item.role]}</td>
+                    <td className="num">{state.staff[item.role]} 人</td>
+                    <td className="num">{Math.round((item.weight / cardWeightTotal) * 100)}%</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p className="hint" style={{ marginTop: 10 }}>
+              某类员工越多，翻开的决策卡越容易出对应花色。加人请去人事部。
+            </p>
           </Facts>
           <Actions
             note={
-              acting
-                ? '翻牌不耗行动点。选购耗现金。打出耗 1 AP。'
-                : producing
-                  ? '产销已交销售部处理。'
-                  : '月报和事件处理完后，这里才能下令。'
+              !state.cardsUnlocked
+                ? '决策卡尚未解锁。到了三月，或编制满 6 人后，这里才能翻牌。'
+                : acting
+                  ? '翻牌、买牌不耗行动点。只有打出手牌耗 1 AP。'
+                  : '现在只能看已有的牌。打牌要等行动阶段。'
             }
           >
-            {acting && state.cardsUnlocked && (
+            {state.cardsUnlocked && acting && (
               <>
                 <div className="footer-actions" style={{ marginTop: 0, justifyContent: 'flex-start' }}>
                   <button className="btn small ghost" disabled={state.shopDrawn} onClick={() => dispatch({ type: 'DRAW_SHOP' })}>
@@ -173,7 +192,7 @@ export function OperationsPage({
                           <div className="suit">{ROLE_LABEL[def.suit]}</div>
                           <h4>{def.name}</h4>
                           <p>{def.blurb}</p>
-                          <div className="cost">{money(def.cost)} · 不耗 AP</div>
+                          <div className="cost">{money(def.cost)} · 买牌不耗 AP</div>
                           <button className="btn small" style={{ marginTop: 10 }} onClick={() => dispatch({ type: 'BUY_CARD', index })}>
                             选购入袋
                           </button>
@@ -182,31 +201,31 @@ export function OperationsPage({
                     })}
                   </div>
                 )}
-                {state.hand.length > 0 && (
-                  <div className="hand" style={{ marginTop: 14 }}>
-                    {state.hand.map((card) => {
-                      const def = cardById(card.defId);
-                      return (
-                        <article key={card.uid} className="card">
-                          <div className="suit">手牌 · {ROLE_LABEL[def.suit]}</div>
-                          <h4>{def.name}</h4>
-                          <p>{def.blurb}</p>
-                          <button className="btn small" disabled={!canAct} style={{ marginTop: 10 }} onClick={() => dispatch({ type: 'PLAY_CARD', uid: card.uid })}>
-                            打出 · 耗 1 AP
-                          </button>
-                        </article>
-                      );
-                    })}
-                  </div>
-                )}
               </>
             )}
-            {acting && (
-              <div className="footer-actions">
-                <button className="btn" onClick={() => dispatch({ type: 'GO_PRODUCE' })}>
-                  结束行动，去销售部排产
-                </button>
+            {state.cardsUnlocked && state.hand.length > 0 && (
+              <div className="hand" style={{ marginTop: 14 }}>
+                {state.hand.map((card) => {
+                  const def = cardById(card.defId);
+                  return (
+                    <article key={card.uid} className="card">
+                      <div className="suit">手牌 · {ROLE_LABEL[def.suit]}</div>
+                      <h4>{def.name}</h4>
+                      <p>{def.blurb}</p>
+                      {acting ? (
+                        <button className="btn small" disabled={!canAct} style={{ marginTop: 10 }} onClick={() => dispatch({ type: 'PLAY_CARD', uid: card.uid })}>
+                          打出 · 耗 1 AP
+                        </button>
+                      ) : (
+                        <div className="cost">行动阶段才能打出</div>
+                      )}
+                    </article>
+                  );
+                })}
               </div>
+            )}
+            {state.cardsUnlocked && state.hand.length === 0 && (
+              <p className="hint">手牌是空的。{acting ? '先翻牌再选购。' : '等行动阶段再翻牌。'}</p>
             )}
           </Actions>
         </Dept>
@@ -462,7 +481,7 @@ export function OperationsPage({
               producing
                 ? '本月只排一种。产量取产能与原料的较小值，再与需求取小后售出。'
                 : acting
-                  ? '行动做完后，到总经理室点「去销售部排产」。'
+                  ? '各部门行动可以随时停。准备出货时，在这里排产，不耗 AP。'
                   : '行情可以先看。排产要等行动阶段结束。'
             }
           >
