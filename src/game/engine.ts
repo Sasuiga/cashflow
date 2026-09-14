@@ -90,8 +90,68 @@ export function maxApFor(staff: Staff): number {
   return BASE_AP + Math.floor(staff.management / 2);
 }
 
+function openingDemand(base: number, sales: number): number {
+  return Math.max(5, Math.round((base * (1 + sales * 0.1)) / 5) * 5);
+}
+
+export function hireEffectLines(state: GameState, role: Role): string[] {
+  const card = `${ROLE_LABEL[role]}人员越多，翻开的决策卡越容易出${ROLE_LABEL[role]}花色。`;
+  if (role === 'production') {
+    const next = { ...state, staff: { ...state.staff, production: state.staff.production + 1 } };
+    const before = capacityOf(state);
+    const after = capacityOf(next);
+    const slots = state.machines * WORKERS_PER_MACHINE;
+    const overflow = Math.max(0, next.staff.production - slots);
+    return [
+      `本月立刻到岗。设备位内每人产能 +${CAP_PER_WORKER}，超出每人 +${CAP_OVERFLOW}。`,
+      `本次入职：产能 ${before} → ${after}（可安置 ${slots} 人${overflow ? `，超编 ${overflow} 人` : ''}）。`,
+      card,
+    ];
+  }
+  if (role === 'management') {
+    const before = maxApFor(state.staff);
+    const after = maxApFor({ ...state.staff, management: state.staff.management + 1 });
+    const apLine =
+      after > before
+        ? `本次入职：行动点上限 ${before} → ${after}。本月剩余行动点不补发，下月按新上限刷新。`
+        : `本次入职：行动点上限仍为 ${before}。再招 1 名管理后升到 ${before + 1}。`;
+    return [`每 2 名管理人员提供 1 点行动点上限（基础 ${BASE_AP} 点）。`, apLine, card];
+  }
+  if (role === 'sales') {
+    const from = state.staff.sales;
+    const to = from + 1;
+    const shifts = PRODUCTS.filter((item) => state.unlockedProducts.includes(item.id))
+      .map((item) => {
+        const a = openingDemand(item.baseDemand, from);
+        const b = openingDemand(item.baseDemand, to);
+        return a === b ? null : `${item.name} ${a} → ${b} 件`;
+      })
+      .filter((item): item is string => Boolean(item));
+    const shiftLine = shifts.length
+      ? `本次入职，开盘口径 ${shifts.join('，')}。本月已开订单不重算。`
+      : `本次入职：现有产品开盘口径暂无变化（取整到 5 件）。本月已开订单不重算。`;
+    return [
+      `每名销售使开盘需求相对基准 +10%（取整到 5 件）；新品上市需求 +12%。`,
+      shiftLine,
+      card,
+    ];
+  }
+  const from = state.staff.rd;
+  const to = from + 1;
+  const remain = Math.max(0, RD_THRESHOLD - state.rdProgress);
+  return [
+    `本月结算按在职人数推进，每人 +1 点；累计 ${RD_THRESHOLD} 点解锁一档产品或特种料。`,
+    `本次入职：本月推进 ${from} → ${to} 点。当前进度 ${state.rdProgress}/${RD_THRESHOLD}，距下一档 ${remain} 点。`,
+    card,
+  ];
+}
+
 export function loanLimit(machines: number): number {
   return machines * LOAN_PER_MACHINE;
+}
+
+export function monthlyInterest(debt: number): number {
+  return debt > 0 ? roundMoney(debt * INTEREST_RATE) : 0;
 }
 
 export function capacityOf(state: GameState): number {
@@ -153,7 +213,7 @@ export function monthOutlook(state: GameState): string {
   const name = productName(id);
   if (can <= 0) return `产能 ${cap}，${name} 需求 ${demand}，原料不够，本月可能交不出货。`;
   if (can < demand) return `产能 ${cap}，${name} 需求 ${demand}，当前可产 ${can}。本月可能欠单。`;
-  return `产能 ${cap}，${name} 需求 ${demand}，当前可产 ${can}。原料与需求匹配，可以排产。`;
+  return `产能 ${cap}，${name} 需求 ${demand}，当前可产 ${can}。`;
 }
 
 export function materialValue(state: GameState): number {
@@ -815,7 +875,7 @@ function startGame(prev: GameState): GameState {
   state.uidSeq = prev.uidSeq;
   state.openBooks = snapshotBooks(state, '开业');
   beginQuarter(state, 1);
-  pushLog(state, '第一季度董事会召开。请确认本季经营目标后，再看行业月报。');
+  pushLog(state, '第一季度董事会召开。');
   checkAchievements(state);
   return state;
 }
@@ -1000,8 +1060,12 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
         return state;
       }
       receive(state, amount, 'borrow');
+      const interest = monthlyInterest(state.debt);
       noteDept(state, 'finance', `借入 ${money(amount)}，负债现为 ${money(state.debt)}`);
-      pushLog(state, `放款 ${money(amount)}。负债 ${money(state.debt)} / 上限 ${money(loanLimit(state.machines))}。`);
+      pushLog(
+        state,
+        `放款 ${money(amount)}。负债 ${money(state.debt)} / 上限 ${money(loanLimit(state.machines))}。月末将计提财务费用 ${money(interest)}。`,
+      );
       return state;
     }
 
@@ -1010,10 +1074,6 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
       const amount = Math.min(action.amount, state.debt, Math.max(0, state.cash));
       if (amount <= 0) {
         pushLog(state, '没有可还的债，或现金不足。');
-        return state;
-      }
-      if (!spendAp(state)) {
-        pushLog(state, '行动点不足。');
         return state;
       }
       pay(state, amount, 'repay');
@@ -1167,7 +1227,7 @@ function settleMonth(state: GameState): GameState {
   const wagesPaid = roundMoney(state.wagesPayable - salaries);
   payAccruedWages(state, wagesPaid);
   const upkeep = roundMoney(state.factories * FACTORY_UPKEEP);
-  const interest = state.debt > 0 ? roundMoney(state.debt * INTEREST_RATE) : 0;
+  const interest = monthlyInterest(state.debt);
   pay(state, upkeep, 'admin');
   pay(state, interest, 'finance');
   if (state.quarterStats && revenue >= salaries + upkeep) {

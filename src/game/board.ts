@@ -1,4 +1,5 @@
 import type { GameState } from './types';
+import { MATERIALS, PRODUCTS } from './data';
 
 export type ClimateId = 'steel' | 'channel' | 'chip' | 'priceWar';
 export type GoalKind = 'basic' | 'challenge';
@@ -68,6 +69,40 @@ export function quarterOf(month: number): 1 | 2 | 3 | 4 {
 
 export function climateById(id: ClimateId): ClimateDef {
   return CLIMATES.find((item) => item.id === id) ?? CLIMATES[0]!;
+}
+
+export function marketDigest(state: GameState): string {
+  const climate = climateById(state.climateId);
+  if (state.month === 1) {
+    return `本月开盘，报价贴近基准。${climate.briefing}`;
+  }
+
+  const matMoves: string[] = [];
+  for (const mat of MATERIALS) {
+    if (mat.id === 'd' && !state.materialDUnlocked) continue;
+    const price = state.materialPrices[mat.id];
+    const pct = (price - mat.basePrice) / mat.basePrice;
+    if (Math.abs(pct) < 0.05) continue;
+    matMoves.push(`${mat.name}较基准${pct > 0 ? '上涨' : '回落'} ${Math.round(Math.abs(pct) * 100)}%`);
+  }
+
+  const productMoves: string[] = [];
+  for (const product of PRODUCTS) {
+    if (!state.unlockedProducts.includes(product.id)) continue;
+    const price = state.productPrices[product.id] ?? product.basePrice;
+    const pct = (price - product.basePrice) / product.basePrice;
+    const demand = state.demand[product.id] ?? product.baseDemand;
+    if (Math.abs(pct) >= 0.08) {
+      productMoves.push(`${product.name}售价${pct > 0 ? '上浮' : '下压'} ${Math.round(Math.abs(pct) * 100)}%`);
+    } else if (demand !== product.baseDemand) {
+      productMoves.push(`${product.name}需求${demand > product.baseDemand ? '放到' : '收到'} ${demand} 件`);
+    }
+  }
+
+  const parts = [climate.briefing];
+  parts.push(matMoves.length > 0 ? `原料方面，${matMoves.join('，')}。` : '原料报价大体贴近基准，现货还算平稳。');
+  parts.push(productMoves.length > 0 ? `成品这边，${productMoves.join('，')}。` : '成品市价和需求没有大幅偏离基准。');
+  return parts.join('');
 }
 
 export function emptyQuarterStats(startStaff: number, startDebt: number) {

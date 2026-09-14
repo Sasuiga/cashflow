@@ -1,6 +1,6 @@
 import { MATERIALS, PRODUCTS, eventById } from '../game/data';
 import { MONTH_NAMES, money, priceDelta, signedMoney } from '../game/format';
-import { QUARTER_LABEL, basicGoalOf, challengePoolOf, climateById } from '../game/board';
+import { QUARTER_LABEL, basicGoalOf, challengePoolOf, climateById, marketDigest } from '../game/board';
 import type { GameState } from '../game/types';
 
 export function BoardModal({
@@ -58,9 +58,7 @@ export function BoardModal({
             </button>
           );
         })}
-        <p className="lead event-hint">
-          {ready ? '两条挑战目标已选定，可以确认本季决议。' : '请从短名单中选定两条挑战目标。'}
-        </p>
+        <p className="lead event-hint">{ready ? '两条挑战目标已选定。' : '选定两条挑战目标。'}</p>
         <div className="footer-actions">
           <button className="btn" disabled={!ready} onClick={onConfirm}>
             确认本季目标
@@ -76,20 +74,17 @@ export function BriefingModal({ state, onConfirm }: { state: GameState; onConfir
   const products = PRODUCTS.filter((item) => state.unlockedProducts.includes(item.id));
   return (
     <div className="overlay">
-      <div className="modal">
+      <div className="modal briefing-modal">
         <h2>{MONTH_NAMES[state.month - 1]} · 行业月报</h2>
-        <p className="lead" style={{ marginBottom: 12 }}>
-          {climateById(state.climateId).briefing}
-        </p>
-        <p className="sheet-caption">原料报价</p>
-        <div className="sheet-wrap">
-        <table className="sheet">
+        <p className="lead briefing-digest">{marketDigest(state)}</p>
+        <p className="sheet-caption">原料报价 · 万元/件</p>
+        <div className="sheet-wrap briefing-sheet">
+        <table className="sheet compact">
           <thead>
             <tr>
               <th>品种</th>
-              <th>代码</th>
               <th className="num">报价</th>
-              <th className="num">较基准</th>
+              <th className="num">变动</th>
             </tr>
           </thead>
           <tbody>
@@ -99,8 +94,7 @@ export function BriefingModal({ state, onConfirm }: { state: GameState; onConfir
               return (
                 <tr key={item.id}>
                   <td>{item.name}</td>
-                  <td>{item.short}</td>
-                  <td className="num">{money(price)} / 件</td>
+                  <td className="num">{money(price)}</td>
                   <td className={`num delta-${delta.tone}`}>{delta.text}</td>
                 </tr>
               );
@@ -108,16 +102,15 @@ export function BriefingModal({ state, onConfirm }: { state: GameState; onConfir
           </tbody>
         </table>
         </div>
-        <p className="sheet-caption">成品市价</p>
-        <div className="sheet-wrap">
-        <table className="sheet">
+        <p className="sheet-caption">成品行情</p>
+        <div className="sheet-wrap briefing-sheet">
+        <table className="sheet compact">
           <thead>
             <tr>
-              <th>档位</th>
               <th>产品</th>
               <th className="num">市价</th>
               <th className="num">需求</th>
-              <th className="num">较基准</th>
+              <th className="num">变动</th>
             </tr>
           </thead>
           <tbody>
@@ -126,7 +119,6 @@ export function BriefingModal({ state, onConfirm }: { state: GameState; onConfir
               const delta = priceDelta(price, item.basePrice);
               return (
                 <tr key={item.id}>
-                  <td>{item.tier}</td>
                   <td>{item.name}</td>
                   <td className="num">{money(price)}</td>
                   <td className="num">{state.demand[item.id] ?? 0}</td>
@@ -165,10 +157,9 @@ export function EventModal({
         <h2>{event.title}</h2>
         <p className="lead">{event.body}</p>
         <div className={`event-impact tone-${event.tone}`}>
-          <b>已经发生</b>
+          <b>入账影响</b>
           <p>{state.eventNote ?? event.impact}</p>
         </div>
-        <p className="lead event-hint">本月事项已经落地。请用采购、借款、招聘或排产去消化，没有当面选项。</p>
         <div className="footer-actions">
           <button className="btn" onClick={onAck}>
             已知悉，开始经营

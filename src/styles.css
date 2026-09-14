@@ -234,6 +234,16 @@ h1,
   background: rgba(224, 180, 90, 0.1);
 }
 
+.modal .btn.ghost {
+  color: var(--paper-ink);
+  border-color: #8a7040;
+}
+
+.modal .btn.ghost:hover {
+  background: rgba(138, 112, 64, 0.12);
+  border-color: #6e5528;
+}
+
 .btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
@@ -243,6 +253,17 @@ h1,
   padding: 8px 12px;
   letter-spacing: 0.04em;
   font-size: 13px;
+  white-space: normal;
+  line-height: 1.4;
+}
+
+.qty-row.loan-actions {
+  flex-direction: column;
+}
+
+.qty-row.loan-actions .btn {
+  width: 100%;
+  text-align: center;
 }
 
 .shell {
@@ -671,7 +692,7 @@ h1,
 }
 
 .hire-points {
-  margin: 0 0 16px;
+  margin: 12px 0 16px;
   padding-left: 18px;
 }
 
@@ -981,6 +1002,19 @@ h1,
   width: 100%;
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
+}
+
+.briefing-sheet {
+  overflow: hidden;
+}
+
+.sheet.compact th,
+.sheet.compact td {
+  padding: 8px 6px;
+}
+
+.briefing-digest {
+  font-size: 14px;
 }
 
 .sheet {
@@ -1387,12 +1421,40 @@ h1,
   }
 
   .sheet-wrap {
-    margin: 0 -4px;
-    padding: 0 4px;
+    margin: 0;
+    padding: 0;
+    overflow-x: hidden;
   }
 
   .modal .sheet {
-    min-width: 420px;
+    min-width: 0;
+    table-layout: fixed;
+    font-size: 12px;
+  }
+
+  .modal .sheet th,
+  .modal .sheet td {
+    padding: 7px 4px;
+    word-break: break-word;
+  }
+
+  .modal .sheet .num {
+    white-space: nowrap;
+  }
+
+  .briefing-modal {
+    padding-left: 14px;
+    padding-right: 14px;
+  }
+
+  .briefing-digest {
+    font-size: 13px;
+    line-height: 1.55;
+    margin-bottom: 8px;
+  }
+
+  .briefing-modal .sheet-caption {
+    margin-top: 14px;
   }
 
   .overlay {

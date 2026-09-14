@@ -4,7 +4,6 @@ import {
   HAND_LIMIT,
   FACTORY_UPKEEP,
   HIRE_COST,
-  INTEREST_RATE,
   MACHINE_BASE_CAP,
   MACHINE_COST,
   MATERIALS,
@@ -21,8 +20,10 @@ import {
   bomCost,
   capacityOf,
   demandOf,
+  hireEffectLines,
   loanLimit,
   maxProduce,
+  monthlyInterest,
   monthlySalary,
   monthOutlook,
   netAssetsOf,
@@ -30,7 +31,7 @@ import {
   sellPriceOf,
   totalStaff,
 } from '../game/engine';
-import { ROLE_DETAIL, ROLE_HINT, ROLE_LABEL, bomLabel, materialName, money, qty } from '../game/format';
+import { ROLE_HINT, ROLE_LABEL, bomLabel, materialName, money, qty, roundMoney, signedMoney } from '../game/format';
 import { QUARTER_LABEL, climateById, goalById, q3ProcurementFree } from '../game/board';
 import type { DeptId, GameAction, GameState, MaterialId, Role } from '../game/types';
 
@@ -125,6 +126,15 @@ export function OperationsPage({
   const unit = state.materialPrices[material] ?? 0;
   const buyCost = Math.round(unit * buyQty * (1 - state.modifiers.nextBuyDiscount) * 10) / 10;
   const room = Math.max(0, loanLimit(state.machines) - state.debt);
+  const borrowAmt = Math.min(loanAmt, room);
+  const repayAmt = Math.min(loanAmt, state.debt, Math.max(0, state.cash));
+  const currentInterest = monthlyInterest(state.debt);
+  const afterBorrowInterest = monthlyInterest(state.debt + borrowAmt);
+  const extraInterest = roundMoney(afterBorrowInterest - currentInterest);
+  const afterRepayInterest = monthlyInterest(roundMoney(state.debt - repayAmt));
+  const savedInterest = roundMoney(currentInterest - afterRepayInterest);
+  const canBorrow = canAct && borrowAmt > 0;
+  const canRepay = acting && repayAmt > 0;
   const nextUnlock = RD_UNLOCKS[state.rdUnlockIndex];
   const nextProduct = nextUnlock?.product ? productById(nextUnlock.product) : null;
   const waitPoints = Math.max(0, RD_THRESHOLD - state.rdProgress);
@@ -171,9 +181,7 @@ export function OperationsPage({
           <p>{monthOutlook(state)}</p>
         </div>
       </aside>
-      <p className="ops-lead">
-        先看本季目标与本月事项，再打开部门去执行。带「耗 1 AP」的按钮会花掉行动点；生产与销售部的排产不耗行动点。
-      </p>
+      <p className="ops-lead">标了「耗 1 AP」的动作会花行动点。排产不耗行动点。</p>
 
       <div className="dept-grid">
         <Dept title="总经理室" intro="翻牌、买牌、打牌，用决策卡影响当月经营。" done={deptDone(state, 'ceo')} open={open.ceo} onToggle={() => toggle('ceo')} wide>
@@ -213,7 +221,7 @@ export function OperationsPage({
             </table>
             </div>
             <p className="hint" style={{ marginTop: 10 }}>
-              某类员工越多，翻开的决策卡越容易出对应花色。加人请去人事部。
+              某类员工越多，翻开的决策卡越容易出对应花色。
             </p>
           </Facts>
           <Actions
@@ -281,7 +289,7 @@ export function OperationsPage({
               </div>
             )}
             {state.cardsUnlocked && state.hand.length === 0 && (
-              <p className="hint">手牌是空的。{acting ? '先翻牌再选购。' : '等行动阶段再翻牌。'}</p>
+              <p className="hint">手牌是空的。{acting ? '本月卡铺尚未翻开。' : '等行动阶段再翻牌。'}</p>
             )}
           </Actions>
         </Dept>
@@ -304,14 +312,20 @@ export function OperationsPage({
             </div>
             <div className="row">
               <span>预计本月利息</span>
-              <span>{state.debt > 0 ? money(state.debt * INTEREST_RATE) : '无'}</span>
+              <span>{currentInterest > 0 ? money(currentInterest) : '无'}</span>
             </div>
             <div className="row">
               <span>净资产</span>
               <span>{money(netAssetsOf(state))}</span>
             </div>
           </Facts>
-          <Actions note={acting ? '借款与还款都记入现金流量表筹资活动。' : '资金调度要等事件结束后才能做。'}>
+          <Actions
+            note={
+              acting
+                ? '借款耗 1 AP；还款不耗 AP。月末按剩余负债计提 10% 财务费用。两者都记入现金流量表筹资活动。'
+                : '资金调度要等事件结束后才能做。'
+            }
+          >
             <div className="qty-row">
               {LOAN.map((n) => (
                 <button key={n} className={loanAmt === n ? 'chip on' : 'chip'} onClick={() => setLoanAmt(n)}>
@@ -319,12 +333,18 @@ export function OperationsPage({
                 </button>
               ))}
             </div>
-            <div className="qty-row" style={{ marginTop: 8 }}>
-              <button className="btn small" disabled={!canAct} onClick={() => dispatch({ type: 'BORROW', amount: Math.min(loanAmt, room) })}>
-                借入 {money(Math.min(loanAmt, room))} · 耗 1 AP
+            <div className="qty-row loan-actions" style={{ marginTop: 8 }}>
+              <button className="btn small" disabled={!canBorrow} onClick={() => dispatch({ type: 'BORROW', amount: borrowAmt })}>
+                {`借入 ${money(borrowAmt)} · 耗 1 AP${
+                  extraInterest > 0
+                    ? ` · 财务费用 ${signedMoney(extraInterest)}/月${currentInterest > 0 ? `（合计 ${money(afterBorrowInterest)}）` : ''}`
+                    : ''
+                }`}
               </button>
-              <button className="btn small ghost" disabled={!canAct} onClick={() => dispatch({ type: 'REPAY', amount: loanAmt })}>
-                偿还 {money(loanAmt)} · 耗 1 AP
+              <button className="btn small ghost" disabled={!canRepay} onClick={() => dispatch({ type: 'REPAY', amount: repayAmt })}>
+                {`偿还 ${money(repayAmt > 0 ? repayAmt : loanAmt)} · 不耗 AP${
+                  savedInterest > 0 ? ` · 财务费用 ${signedMoney(-savedInterest)}/月` : ''
+                }`}
               </button>
             </div>
           </Actions>
@@ -363,7 +383,7 @@ export function OperationsPage({
               </table>
             </div>
           </Facts>
-          <Actions note={acting ? '点岗位先看职责和代价，确认后入职。' : '人事令要等事件结束后才能发。'}>
+          <Actions note={acting ? undefined : '事件结束后才能发人事令。'}>
             <div className="qty-row stacked">
               {ROLES.map((role) => (
                 <button key={role} className="chip" disabled={!canAct} onClick={() => setHireRole(role)}>
@@ -393,7 +413,7 @@ export function OperationsPage({
               <span>{money(state.factories * FACTORY_UPKEEP)}</span>
             </div>
           </Facts>
-          <Actions note={acting ? '机位满了要先扩厂。' : '基建令要等事件结束后才能发。'}>
+          <Actions note={acting ? (state.machines >= state.slots ? '机位已满，无法再买设备。' : undefined) : '事件结束后才能发基建令。'}>
             <div className="action-grid">
               <button className="action" disabled={!canAct} onClick={() => dispatch({ type: 'BUY_MACHINE' })}>
                 <b>购买设备 1台 · 耗 1 AP · 花费 {money(MACHINE_COST)}</b>
@@ -488,7 +508,7 @@ export function OperationsPage({
             </div>
             <p className="hint">
               {state.staff.rd <= 0
-                ? '实验室无人值守，本月结算不会推进。去人事部招研发。'
+                ? '实验室无人，本月结算不推进研发。'
                 : nextProduct
                   ? `下一档：${nextProduct.name}。还需 ${waitPoints} 点，按现有人手约 ${Math.ceil(waitPoints / state.staff.rd)} 个月。`
                   : nextUnlock?.unlockD
@@ -518,7 +538,6 @@ export function OperationsPage({
             </table>
             </div>
           </Facts>
-          <Actions note="研发中心本身不耗行动点。加人请去人事部，打研发卡请去总经理室。" />
         </Dept>
 
         <Dept title="生产与销售部" intro="查看行情，安排本月唯一产品产销。" done={deptDone(state, 'sales')} open={open.sales} onToggle={() => toggle('sales')}>
@@ -559,8 +578,8 @@ export function OperationsPage({
               producing
                 ? '本月只排一种。产量取产能与原料的较小值，再与需求取小后售出。'
                 : acting
-                  ? '各部门行动可以随时停。准备出货时，在这里排产，不耗 AP。'
-                  : '行情可以先看。排产要等行动阶段结束。'
+                  ? '排产不耗 AP，每月只出一种产品。'
+                  : '排产在行动阶段结束后开放。'
             }
           >
             {producing && (
@@ -619,9 +638,8 @@ export function OperationsPage({
               人事令
             </p>
             <h2>招聘{ROLE_LABEL[hireRole]} 1 人</h2>
-            <p className="lead">入职后立刻到岗。先看清楚这个岗位做什么，以及要付什么代价。</p>
             <ul className="hire-points">
-              {ROLE_DETAIL[hireRole].map((line) => (
+              {hireEffectLines(state, hireRole).map((line) => (
                 <li key={line}>{line}</li>
               ))}
             </ul>
