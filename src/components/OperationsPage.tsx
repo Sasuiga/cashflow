@@ -68,13 +68,15 @@ function orderPreview(state: GameState, order: MonthOrder) {
   const price = sellPriceOf(state, order.productId);
   const revenue = roundMoney(order.qty * price);
   const credit = roundMoney(revenue * creditSaleRateOf(state));
+  const unitMat = bomBookCost(state, order.productId);
   return {
     price,
     revenue,
     credit,
     cash: roundMoney(revenue - credit),
     stock: state.finished[order.productId] ?? 0,
-    unitMat: bomBookCost(state, order.productId),
+    unitMat,
+    gross: roundMoney(revenue - order.qty * unitMat),
   };
 }
 
@@ -146,6 +148,7 @@ export function OperationsPage({
   const [cart, setCart] = useState<Partial<Record<MaterialId, number>>>({});
   const [loanAmt, setLoanAmt] = useState(4);
   const [hireRole, setHireRole] = useState<Role | null>(null);
+  const [settleOpen, setSettleOpen] = useState(false);
 
   const canAct = acting && state.ap > 0;
   const buyApFree = q3ProcurementFree(state.month);
@@ -207,6 +210,21 @@ export function OperationsPage({
   const orders = state.monthOrders ?? [];
   const accepted = state.acceptedOrderIds ?? [];
   const plan = productionPlan(state);
+  const acceptedOrders = orders.filter((order) => accepted.includes(order.id));
+  const acceptedViews = acceptedOrders.map((order) => ({
+    order,
+    item: productById(order.productId),
+    view: orderPreview(state, order),
+  }));
+  const extraLines = products
+    .map((item) => ({ item, qty: state.extraProduce?.[item.id] ?? 0 }))
+    .filter((line) => line.qty > 0);
+  const settleRevenue = acceptedViews.reduce((sum, line) => sum + line.view.revenue, 0);
+  const settleGross = acceptedViews.reduce((sum, line) => sum + line.view.gross, 0);
+  const settleQty = acceptedViews.reduce((sum, line) => sum + line.order.qty, 0);
+  const skippedPenalty = orders
+    .filter((order) => order.kind === 'contract' && !accepted.includes(order.id))
+    .reduce((sum, order) => sum + (order.penalty ?? 0), 0);
   const cartSummary =
     cartItems.length > 0
       ? cartItems.map((line) => `${materialName(line.material)}${line.qty}件`).join('、')
@@ -660,7 +678,7 @@ export function OperationsPage({
                 <button className="btn small ghost" onClick={() => dispatch({ type: 'BACK_TO_ACTIONS' })}>
                   取消排产，返回经营
                 </button>
-                <button className="btn" disabled={!plan.ok} onClick={() => dispatch({ type: 'SETTLE' })}>
+                <button className="btn" disabled={!plan.ok} onClick={() => setSettleOpen(true)}>
                   确认接单并结算 · 不耗 AP
                 </button>
               </div>
@@ -858,15 +876,8 @@ export function OperationsPage({
         <button
           type="button"
           className="settle-nav"
-          disabled={producing ? !plan.ok : !acting}
-          onClick={() => {
-            if (producing) {
-              dispatch({ type: 'SETTLE' });
-              return;
-            }
-            selectDept('production');
-            dispatch({ type: 'GO_PRODUCE' });
-          }}
+          disabled={!acting && !producing}
+          onClick={() => setSettleOpen(true)}
         >
           排产结算
         </button>
@@ -915,6 +926,102 @@ export function OperationsPage({
                 }}
               >
                 确认招聘
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {settleOpen && (
+        <div className="overlay hire-overlay" onClick={() => setSettleOpen(false)}>
+          <div className="modal settle-modal" onClick={(event) => event.stopPropagation()}>
+            <p className="kicker" style={{ color: '#8a7040' }}>
+              本月排产
+            </p>
+            <h2>确认结算</h2>
+            <p className="lead">核对已接订单和订单外生产后再入账。取消可继续调整。</p>
+            <p className="sheet-caption">已排产订单</p>
+            {acceptedViews.length === 0 ? (
+              <p className="settle-empty">本月未接订单，结算后无销售收入。</p>
+            ) : (
+              <div className="sheet-wrap">
+                <table className="sheet compact">
+                  <thead>
+                    <tr>
+                      <th>产品类型</th>
+                      <th className="num">数量</th>
+                      <th className="num">收入</th>
+                      <th className="num">毛利</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {acceptedViews.map(({ order, item, view }) => (
+                      <tr key={order.id}>
+                        <td>
+                          {item.tier} · {item.name}
+                          {order.kind === 'contract' ? '（合同）' : ''}
+                        </td>
+                        <td className="num">{qty(order.qty)}</td>
+                        <td className="num">{money(view.revenue)}</td>
+                        <td className="num">{money(view.gross)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr>
+                      <td>合计</td>
+                      <td className="num">{qty(settleQty)}</td>
+                      <td className="num">{money(settleRevenue)}</td>
+                      <td className="num">{money(settleGross)}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
+            <p className="sheet-caption">订单外生产</p>
+            {extraLines.length === 0 ? (
+              <p className="settle-empty">本月无订单外生产。</p>
+            ) : (
+              <div className="sheet-wrap">
+                <table className="sheet compact">
+                  <thead>
+                    <tr>
+                      <th>类型</th>
+                      <th className="num">数量</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {extraLines.map((line) => (
+                      <tr key={line.item.id}>
+                        <td>
+                          {line.item.tier} · {line.item.name}
+                        </td>
+                        <td className="num">{qty(line.qty)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            {skippedPenalty > 0 && (
+              <p className="settle-empty">未接合同将在结算时扣违约金 {money(skippedPenalty)}。</p>
+            )}
+            {!plan.ok && (
+              <p className="hint settle-warn">当前排产无法交付：{plan.missing.join('，') || '产能或原料不足'}</p>
+            )}
+            <div className="footer-actions">
+              <button className="btn ghost" onClick={() => setSettleOpen(false)}>
+                取消
+              </button>
+              <button
+                className="btn"
+                disabled={!plan.ok}
+                onClick={() => {
+                  dispatch({ type: 'SETTLE' });
+                  setSettleOpen(false);
+                }}
+              >
+                确认结算
               </button>
             </div>
           </div>

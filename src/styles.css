@@ -942,6 +942,26 @@ h1,
   line-height: 1.4;
 }
 
+.settle-modal {
+  width: min(640px, 100%);
+}
+
+.settle-modal .sheet-caption:first-of-type {
+  margin-top: 4px;
+}
+
+.settle-empty {
+  margin: 0 0 4px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #8a7040;
+}
+
+.settle-warn {
+  margin-top: 12px;
+  color: #8a4030;
+}
+
 .rd-bar {
   height: 6px;
   margin: 8px 0 10px;
@@ -1246,6 +1266,12 @@ h1,
 
 .sheet tbody tr:last-child td {
   border-bottom: 1px solid #c9b88a;
+}
+
+.sheet tfoot td {
+  padding-top: 10px;
+  font-weight: 650;
+  border-bottom: none;
 }
 
 .sheet .num {
@@ -1594,9 +1620,9 @@ h1,
   }
 
   .flow-rail button {
-    padding: 6px 1px;
-    min-height: 32px;
-    font-size: 11px;
+    padding: 10px 2px;
+    min-height: 42px;
+    font-size: 12px;
     letter-spacing: 0;
   }
 

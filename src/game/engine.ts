@@ -2113,11 +2113,12 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
     }
 
     case 'SETTLE':
-      if (state.phase !== 'produce') return prev;
+      if (state.phase !== 'produce' && state.phase !== 'actions') return prev;
       if (!productionPlan(state).ok) {
         pushLog(state, `当前接单超出产能或原料：${productionPlan(state).missing.join('，')}`);
         return state;
       }
+      if (state.phase === 'actions') state.phase = 'produce';
       return settleMonth(state);
 
     case 'NEXT_MONTH':
