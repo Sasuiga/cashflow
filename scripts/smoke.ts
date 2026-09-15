@@ -1,4 +1,5 @@
 import { createInitialState, equityAccounts, netAssetsOf, netProfitOf, reduce } from '../src/game/engine';
+import { goalById } from '../src/game/board';
 import { roundMoney } from '../src/game/format';
 import type { GameState } from '../src/game/types';
 
@@ -33,6 +34,18 @@ function checkBalance(state: GameState, label: string): void {
   assert(Math.abs(roundMoney(accounts.paidIn + accounts.surplus + accounts.retained) - accounts.total) < 1e-6, `${label} 权益分项不平`);
 }
 
+function checkBoardVariety(): void {
+  const deals = Array.from({ length: 12 }, () => reduce(createInitialState(), { type: 'START_GAME' }));
+  const basics = new Set(deals.map((state) => state.basicGoalId));
+  const pools = deals.map((state) => state.challengePoolIds.join('|'));
+  assert(deals.every((state) => state.challengePoolIds.length === 4), '每季挑战议题应为 4 条');
+  assert(
+    deals.every((state) => new Set(state.challengePoolIds.map((id) => goalById(id).axis)).size === 4),
+    '四条挑战议题应分属不同经营轴',
+  );
+  assert(basics.size >= 2 || new Set(pools).size >= 2, '开局目标组合应出现差异');
+}
+
 function checkOpeningAccounts(): void {
   const opened = reduce(createInitialState(), { type: 'START_GAME' });
   const net = netAssetsOf(opened);
@@ -63,7 +76,10 @@ function settleFirstMonth(): GameState {
       return state;
     }
     if (state.phase === 'board') {
-      for (const id of ['q1-sold30', 'q1-stock']) {
+      const pool = (state.challengePoolIds ?? []).filter((id) => id.startsWith(`q${state.quarter}-`));
+      const ids = pool.slice(0, 2);
+      if (ids.length < 2) throw new Error(`Board pool too small: ${pool.join(',')}`);
+      for (const id of ids) {
         if (!state.challengeDraft.includes(id)) state = reduce(state, { type: 'TOGGLE_BOARD_GOAL', id });
       }
       state = reduce(state, { type: 'CONFIRM_BOARD' });
@@ -107,7 +123,9 @@ function play(): GameState {
         3: ['q3-rd', 'q3-sales'],
         4: ['q4-flagship', 'q4-nodebt'],
       }[state.quarter]!;
-      for (const id of fallback) {
+      const pool = (state.challengePoolIds ?? []).filter((id) => id.startsWith(`q${state.quarter}-`));
+      const ids = (pool.length >= 2 ? pool : fallback).slice(0, 2);
+      for (const id of ids) {
         if (!state.challengeDraft.includes(id)) state = reduce(state, { type: 'TOGGLE_BOARD_GOAL', id });
       }
       state = reduce(state, { type: 'CONFIRM_BOARD' });
@@ -167,6 +185,7 @@ function play(): GameState {
 }
 
 checkOpeningAccounts();
+checkBoardVariety();
 settleFirstMonth();
 
 const result = play();

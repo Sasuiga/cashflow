@@ -68,6 +68,19 @@ export interface CardInstance {
 }
 
 export type EventTone = 'good' | 'bad' | 'mixed';
+export type EventFamily =
+  | 'material'
+  | 'order'
+  | 'hr'
+  | 'quality'
+  | 'price'
+  | 'capacity'
+  | 'tax'
+  | 'finance'
+  | 'inventory'
+  | 'ar'
+  | 'policy';
+export type EventRequire = 'receivables' | 'rdStaff' | 'finished' | 'debt';
 
 export interface PendingDeal {
   productId: ProductId;
@@ -91,14 +104,22 @@ export interface QuarterStats {
   sold: number;
   peakCash: number;
   coveringMonth: boolean;
+  coveringMonths: number;
   repaid: boolean;
   borrowed: boolean;
   playedCard: boolean;
   nonBasic: boolean;
+  nonBasicSold: number;
   stockoutAB: boolean;
+  stockoutA: boolean;
+  stockoutB: boolean;
   premiumOrSpecial: boolean;
   startStaff: number;
   startDebt: number;
+  startCash: number;
+  startMachines: number;
+  hired: number;
+  boughtQty: number;
 }
 
 export interface BoardQuarterResult {
@@ -119,7 +140,11 @@ export interface EventDef {
   body: string;
   impact: string;
   tone: EventTone;
+  family: EventFamily;
   weight?: number;
+  minMonth?: number;
+  requires?: EventRequire[];
+  channelOnly?: boolean;
 }
 
 export interface StockLayer {
@@ -294,10 +319,13 @@ export interface GameState {
   basicGoalId: string;
   challengeGoalIds: string[];
   challengeDraft: string[];
+  challengePoolIds: string[];
   boardHistory: BoardQuarterResult[];
   boardMinutes: string | null;
   quarterStats: QuarterStats;
   usedClimateIds: string[];
+  recentEventFamilies: string[];
+  quarterEventTones: EventTone[];
 }
 
 export type GameAction =

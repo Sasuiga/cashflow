@@ -1,7 +1,7 @@
 import { MATERIALS, PRODUCTS, eventById } from '../game/data';
 import { booksForView, netProfitOf, operatingCashOf } from '../game/engine';
 import { MONTH_NAMES, money, priceDelta, signedMoney } from '../game/format';
-import { QUARTER_LABEL, basicGoalOf, challengePoolOf, climateById, marketDigest } from '../game/board';
+import { QUARTER_LABEL, climateById, currentBasicGoal, currentChallengePool, marketDigest } from '../game/board';
 import type { GameState } from '../game/types';
 
 export function BoardModal({
@@ -14,8 +14,8 @@ export function BoardModal({
   onConfirm: () => void;
 }) {
   const climate = climateById(state.climateId);
-  const basic = basicGoalOf(state.quarter);
-  const pool = challengePoolOf(state.quarter);
+  const basic = currentBasicGoal(state);
+  const pool = currentChallengePool(state);
   const picked = new Set(state.challengeDraft);
   const ready = state.challengeDraft.length === 2;
   return (
@@ -42,7 +42,10 @@ export function BoardModal({
             {basic.name}。{basic.desc}
           </p>
         </div>
-        <p className="sheet-caption">挑战目标 · 四选二 · 兑现各 5 分</p>
+        <p className="sheet-caption">挑战目标 · 本季四选二 · 兑现各 5 分</p>
+        <p className="lead event-hint" style={{ marginTop: 0 }}>
+          基本目标和挑战议题每季重抽，四条挑战分属不同经营方向。
+        </p>
         {pool.map((goal) => {
           const on = picked.has(goal.id);
           return (
