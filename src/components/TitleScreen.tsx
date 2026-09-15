@@ -16,8 +16,8 @@ export function TitleScreen({ onStart }: { onStart: () => void }) {
             <p>每回合是一个月。先开董事会定本季目标，再看行情与本月事项，然后花行动点经营。</p>
           </article>
           <article className="rule">
-            <b>四条基本盘</b>
-            <p>扩建产线、招聘四类员工、按 BOM 采购、按设备抵押融资。销售部开出订单，整张交得出才接；产能有余可以超产入库。</p>
+            <b>五条基本盘</b>
+            <p>扩建产线、招聘五类员工、按 BOM 采购、按设备抵押融资。断料有三条活路：改配方、做供应链、付钱抢货。销售部开出订单，整张交得出才接；产能有余可以超产入库。</p>
           </article>
           <article className="rule">
             <b>破产或年报</b>

@@ -768,8 +768,16 @@ h1,
   border-color: rgba(224, 180, 90, 0.45);
 }
 
-.spot-card.soldout {
-  opacity: 0.55;
+.spot-card.trader {
+  background: var(--ink);
+}
+
+.spot-card.trader .spot-top b::after {
+  content: ' 加价';
+  font-family: var(--sans, inherit);
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--cream-dim);
 }
 
 .spot-top {

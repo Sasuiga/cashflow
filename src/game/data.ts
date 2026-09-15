@@ -29,7 +29,9 @@ export const SALARY: Record<Role, number> = {
   management: 1,
   sales: 1,
   rd: 1.5,
+  procurement: 1,
 };
+export const ROLES: Role[] = ['production', 'management', 'sales', 'rd', 'procurement'];
 export const PRODUCT_RD_MONTHS = 3;
 export const TECH_RD_MONTHS = 2;
 export const RD_SUCCESS_PER_HEAD = 0.2;
@@ -39,7 +41,13 @@ export const IP_YIELD_EVERY = 5;
 export const IP_PRICE_BONUS = 0.08;
 export const IP_JIG_CAPACITY = 4;
 export const IP_AUTO_PER_MACHINE = 2;
-export const IP_LEAN_RATE = 0.1;
+export const IP_LEAN_RATE = 0.5;
+export const TRADER_PRICE_MULT: Record<MaterialId, number> = { a: 1.5, b: 1.5, c: 2, d: 2 };
+export const SPOT_STAFF_ADD: Record<MaterialId, number> = { a: 4, b: 4, c: 1, d: 0 };
+export const SPOT_HARD_CAP: Record<MaterialId, number> = { a: 36, b: 36, c: 10, d: 5 };
+export const TRADER_HARD_CAP: Record<MaterialId, number> = { a: 16, b: 16, c: 4, d: 2 };
+export const CONTRACT_COVER_MONTHS = 3;
+export const LAST_CONTRACT_SIGN_MONTH = 9;
 
 export function inventoryWriteDownRate(ageMonths: number): number {
   if (ageMonths >= 6) return 0.7;
@@ -177,7 +185,7 @@ export const IP_CATALOG: IpDef[] = [
     id: 'lean',
     name: '节材配方',
     blurb: '下料损耗被压住，批量越大越省。',
-    effect: '生产耗料按九折计',
+    effect: '生产耗料按五折计，批量越大越省',
   },
   {
     id: 'auto',
@@ -290,6 +298,30 @@ export const CARDS: CardDef[] = [
     cost: 1,
     blurb: '加一张走量单，货款全部赊销，账期多一个月。',
     playText: '渠道愿接货，但货款全挂应收，账期拉长。',
+  },
+  {
+    id: 'rushBuy',
+    name: '紧急调货',
+    suit: 'procurement',
+    cost: 1,
+    blurb: '选择一种原料，本月现货钢材/塑料 +8，芯片 +2，合金 +1。',
+    playText: '货代把一车料抢了回来，本月额度放宽。',
+  },
+  {
+    id: 'secondSource',
+    name: '第二货源',
+    suit: 'procurement',
+    cost: 1,
+    blurb: '选择一种原料，本季剩余月份现货生成时钢材/塑料 +4，芯片/合金 +1。',
+    playText: '备用供应商备案完成，本季配额加一档。',
+  },
+  {
+    id: 'importChips',
+    name: '进口到港',
+    suit: 'procurement',
+    cost: 1,
+    blurb: '本月芯片现货 +3。',
+    playText: '报关单下来了，芯片额度松了一截。',
   },
 ];
 
@@ -641,6 +673,48 @@ export const EVENTS: EventDef[] = [
     family: 'tax',
     weight: 2,
   },
+  {
+    id: 'traderDump',
+    title: '钢贸压货',
+    monthHint: '原料',
+    body: '钢贸商库存压不住了，厂供额度松一档，加价盘上也多出几车。',
+    impact: '本月钢材现货 +8，贸易商钢材 +4。报价不变。',
+    tone: 'good',
+    family: 'material',
+    weight: 2,
+  },
+  {
+    id: 'plasticRestart',
+    title: '聚合装置复产',
+    monthHint: '原料',
+    body: '华东装置重新开车。有一小波塑料按市价划到你们名下，本月还能再买一些。',
+    impact: '免费入库塑料 4 件，按市价入账；本月塑料现货再 +4。',
+    tone: 'good',
+    family: 'material',
+    weight: 2,
+  },
+  {
+    id: 'contractWindow',
+    title: '协议窗口',
+    monthHint: '采购',
+    body: '供应商本月愿意签季度锁量。预付能少一刀，合同也不占行动点。',
+    impact: '本月签订长期协议不耗行动点，预付按九折。仍只能有一份。',
+    tone: 'mixed',
+    family: 'material',
+    weight: 2,
+    minMonth: 2,
+  },
+  {
+    id: 'buyerLeave',
+    title: '采购跳槽',
+    monthHint: '人事',
+    body: '对岸把你们的采购挖走了。货源还在，但本月能买到的量立刻瘦一圈。',
+    impact: '有采购则 -1 人；否则本月现货各砍一档。',
+    tone: 'bad',
+    family: 'hr',
+    weight: 2,
+    minMonth: 3,
+  },
 ];
 
 export const MATERIAL_IDS: MaterialId[] = ['a', 'b', 'c', 'd'];
@@ -701,6 +775,20 @@ export function cardById(id: string): CardDef {
   const found = CARDS.find((item) => item.id === id);
   if (!found) throw new Error(`Unknown card ${id}`);
   return found;
+}
+
+export function cardNeedsMaterial(id: string): boolean {
+  return id === 'rushBuy' || id === 'secondSource';
+}
+
+export function rushSpotBonus(id: MaterialId): number {
+  if (id === 'a' || id === 'b') return 8;
+  if (id === 'c') return 2;
+  return 1;
+}
+
+export function seasonSpotBonus(id: MaterialId): number {
+  return id === 'a' || id === 'b' ? 4 : 1;
 }
 
 export function eventById(id: string): EventDef {

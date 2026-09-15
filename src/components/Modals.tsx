@@ -1,5 +1,5 @@
 import { MATERIALS, catalogOf, eventById } from '../game/data';
-import { booksForView, netProfitOf, operatingCashOf, rdRevealOptions } from '../game/engine';
+import { booksForView, netProfitOf, operatingCashOf, rdRevealOptions, traderOf } from '../game/engine';
 import { MONTH_NAMES, RD_TRACK_LABEL, money, pctLabel, priceDelta, signedMoney } from '../game/format';
 import { QUARTER_LABEL, CHALLENGE_PICK, climateById, currentBasicGoal, currentChallengePool, quarterOutlook } from '../game/board';
 import type { GameState, RdAssign } from '../game/types';
@@ -91,6 +91,7 @@ export function BriefingModal({ state, onConfirm }: { state: GameState; onConfir
               <th className="num">报价</th>
               <th className="num">较上月</th>
               <th className="num">本月现货</th>
+              <th className="num">贸易商</th>
             </tr>
           </thead>
           <tbody>
@@ -98,12 +99,14 @@ export function BriefingModal({ state, onConfirm }: { state: GameState; onConfir
               const price = state.materialPrices[item.id];
               const delta = priceDelta(price, state.prevMaterialPrices?.[item.id] ?? item.basePrice);
               const spot = Math.max(0, state.materialSpot?.[item.id] ?? 0);
+              const trader = traderOf(state, item.id);
               return (
                 <tr key={item.id}>
                   <td>{item.name}</td>
                   <td className="num">{money(price)}</td>
                   <td className={`num delta-${delta.tone}`}>{delta.text}</td>
                   <td className="num">{spot}</td>
+                  <td className="num">{trader}</td>
                 </tr>
               );
             })}

@@ -138,14 +138,15 @@ function balanceLines(prev: MonthBooks, curr: MonthBooks): Array<Line | { sectio
       maybe('减：存货跌价准备', prev.inventoryProvision ?? 0, curr.inventoryProvision ?? 0, { invert: true }),
     ].filter(Boolean) as Line[]),
     { label: '存货账面价值', prev: inventoryNet(prev), curr: inventoryNet(curr), total: true },
+    ...([maybe('预付账款', prev.prepaid ?? 0, curr.prepaid ?? 0)].filter(Boolean) as Line[]),
     { label: '固定资产原价', prev: prev.fixedAssetCost ?? prev.fixedAssets, curr: curr.fixedAssetCost ?? curr.fixedAssets },
     { label: '减：累计折旧', prev: prev.accumDep ?? 0, curr: curr.accumDep ?? 0, invert: true },
     { label: '固定资产账面价值', prev: prev.fixedAssets, curr: curr.fixedAssets, total: true },
   ];
   const assetTotal = {
     label: '资产合计',
-    prev: roundMoney(prev.cash + arNet(prev) + inventoryNet(prev) + prev.fixedAssets),
-    curr: roundMoney(curr.cash + arNet(curr) + inventoryNet(curr) + curr.fixedAssets),
+    prev: roundMoney(prev.cash + arNet(prev) + inventoryNet(prev) + (prev.prepaid ?? 0) + prev.fixedAssets),
+    curr: roundMoney(curr.cash + arNet(curr) + inventoryNet(curr) + (curr.prepaid ?? 0) + curr.fixedAssets),
     total: true,
   };
   const debts = [

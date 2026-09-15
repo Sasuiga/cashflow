@@ -51,7 +51,7 @@ export const CLIMATES: ClimateDef[] = [
     name: '钢材紧缺',
     headline: '北方钢厂惜售，现货偏紧。',
     briefing: '本季市场：钢材紧缺。钢价易涨，吃钢的走量货料本会被抬上去。',
-    eventIds: ['steelSpike', 'plasticSpike', 'moldWear'],
+    eventIds: ['steelSpike', 'plasticSpike', 'moldWear', 'traderDump'],
     materialTrend: { a: 1 },
     productTrend: { basic: 1, economy: 1 },
   },
@@ -307,7 +307,13 @@ export function emptyQuarterStats(
 }
 
 function staffOf(state: GameState): number {
-  return state.staff.production + state.staff.management + state.staff.sales + state.staff.rd;
+  return (
+    state.staff.production +
+    state.staff.management +
+    state.staff.sales +
+    state.staff.rd +
+    (state.staff.procurement ?? 0)
+  );
 }
 
 function netOf(state: GameState): number {

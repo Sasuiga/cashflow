@@ -7,6 +7,7 @@ import {
   FACTORY_UPKEEP,
   HAND_LIMIT,
   HIRE_COST,
+  LAST_CONTRACT_SIGN_MONTH,
   MACHINE_BASE_CAP,
   MACHINE_COST,
   MACHINE_LIFE_MONTHS,
@@ -16,10 +17,12 @@ import {
   PRODUCT_RD_MONTHS,
   TECH_RD_MONTHS,
   catalogOf,
+  ROLES,
   SALARY,
   SLOTS_PER_FACTORY,
   WORKERS_PER_MACHINE,
   cardById,
+  cardNeedsMaterial,
 } from '../game/data';
 import {
   arOverdueOf,
@@ -27,7 +30,11 @@ import {
   bomCost,
   buyCartCost,
   buyLineCost,
+  canSignContract,
   capacityOf,
+  contractPrepayOf,
+  contractQtyOptions,
+  contractUnitPrice,
   creditSaleRateOf,
   availableTechIps,
   canOpenProductRd,
@@ -54,17 +61,18 @@ import {
   rdTrackStaff,
   receivablesGross,
   receivablesNet,
+  procurementOf,
   purchaseQtyOptions,
   materialCrateSize,
   sellPriceOf,
   spotOf,
   totalStaff,
+  traderOf,
 } from '../game/engine';
-import { MONTH_NAMES, RD_TRACK_LABEL, ROLE_HINT, ROLE_LABEL, bomLabel, factoryName, materialName, money, pctLabel, priceDelta, qty, roundMoney, signedMoney } from '../game/format';
+import { MONTH_NAMES, RD_ARCHETYPE_BLURB, RD_ARCHETYPE_LABEL, RD_TRACK_LABEL, ROLE_HINT, ROLE_LABEL, bomLabel, factoryName, materialName, money, pctLabel, priceDelta, qty, roundMoney, signedMoney } from '../game/format';
 import { goalById, q3ProcurementFree } from '../game/board';
-import type { GameAction, GameState, IpId, MaterialId, MonthOrder, ProductDef, ProductId, RdTrack, Role } from '../game/types';
+import type { GameAction, GameState, IpId, MaterialId, MonthOrder, ProductDef, ProductId, RdProductArchetype, RdTrack, Role } from '../game/types';
 
-const ROLES: Role[] = ['production', 'management', 'sales', 'rd'];
 const LOAN = [2, 4, 8];
 const EXTRA = [0, 2, 4, 6];
 type PlantKind = 'machine' | 'factory';
@@ -134,7 +142,7 @@ function orderGapText(state: GameState, plan: ReturnType<typeof productionPlan>)
     const short = (plan.materialNeed[mat.id] ?? 0) - (state.materials[mat.id] ?? 0);
     if (short > 0) parts.push(`${mat.name} ${short}`);
   }
-  return parts.length ? `缺口：${parts.join('、')}` : '缺口：无';
+  return parts.length ? `缺口：${parts.join('、')}。可加价买或等协议` : '缺口：无';
 }
 
 function Facts({ children, title }: { children: ReactNode; title?: string }) {
@@ -183,7 +191,7 @@ function RdLabCard({
   state: GameState;
   track: RdTrack;
   acting: boolean;
-  onOpenProduct?: () => void;
+  onOpenProduct?: (archetype: RdProductArchetype) => void;
   onPickTech?: (id: IpId) => void;
 }) {
   const staff = rdTrackStaff(state, track);
@@ -208,7 +216,7 @@ function RdLabCard({
   const idleBlurb =
     track === 'product'
       ? remainProduct > 0
-        ? '派人后随机生成 BOM 和名称，毛利保证高于现有最低档。'
+        ? '派人后在下面自选开题方向：简化结构、替代芯片，或冲毛利。'
         : '两档量产课题已经做完。'
       : remainTech > 0
         ? '招聘编入工艺组时选择要攻关的知识产权。'
@@ -242,9 +250,14 @@ function RdLabCard({
         <em>{staff} 人在岗</em>
       </div>
       {track === 'product' && acting && canOpenProductRd(state) ? (
-        <button type="button" className="chip" style={{ marginTop: 10 }} onClick={onOpenProduct}>
-          随机开题
-        </button>
+        <div className="rd-ip-picks" style={{ marginTop: 10 }}>
+          <p className="stat">选择开题方向</p>
+          {(['simplify', 'substitute', 'margin'] as RdProductArchetype[]).map((archetype) => (
+            <button key={archetype} type="button" className="chip" onClick={() => onOpenProduct?.(archetype)}>
+              {RD_ARCHETYPE_LABEL[archetype]} · {RD_ARCHETYPE_BLURB[archetype]}
+            </button>
+          ))}
+        </div>
       ) : null}
       {canAssignTech ? (
         <div className="rd-ip-picks">
@@ -613,20 +626,32 @@ export function OperationsPage({
   const touched = useRef(new Set<StageId>());
   const paneRef = useRef<HTMLDivElement>(null);
   const [cart, setCart] = useState<Partial<Record<MaterialId, number>>>({});
+  const [traderCart, setTraderCart] = useState<Partial<Record<MaterialId, number>>>({});
   const [loanAmt, setLoanAmt] = useState(4);
   const [hireRole, setHireRole] = useState<Role | null>(null);
   const [plantKind, setPlantKind] = useState<PlantKind | null>(null);
   const [openPlant, setOpenPlant] = useState(-1);
   const [settleOpen, setSettleOpen] = useState(false);
   const [pendingAdopt, setPendingAdopt] = useState<number | null>(null);
+  const [playCardUid, setPlayCardUid] = useState<string | null>(null);
+  const [contractMat, setContractMat] = useState<MaterialId>('a');
+  const [contractQty, setContractQty] = useState(4);
 
   const canAct = acting && state.ap > 0;
   const buyApFree = q3ProcurementFree(state.month);
   const canBuy = acting && (canAct || buyApFree);
   const visibleMaterials = MATERIALS.filter((item) => item.id !== 'd' || state.materialDUnlocked);
-  const cartItems = visibleMaterials
-    .map((item) => ({ material: item.id, qty: Math.min(cart[item.id] ?? 0, spotOf(state, item.id)) }))
+  const spotItems = visibleMaterials
+    .map((item) => ({ material: item.id, qty: Math.min(cart[item.id] ?? 0, spotOf(state, item.id)), channel: 'spot' as const }))
     .filter((line) => line.qty > 0);
+  const traderItems = visibleMaterials
+    .map((item) => ({
+      material: item.id,
+      qty: Math.min(traderCart[item.id] ?? 0, traderOf(state, item.id)),
+      channel: 'trader' as const,
+    }))
+    .filter((line) => line.qty > 0);
+  const cartItems = [...spotItems, ...traderItems];
   const cartTotal = buyCartCost(state, cartItems);
   const cartOk = cartItems.length > 0 && state.cash >= cartTotal;
   const room = Math.max(0, loanLimit(state.machines) - state.debt);
@@ -685,8 +710,17 @@ export function OperationsPage({
     .reduce((sum, order) => sum + (order.penalty ?? 0), 0);
   const cartSummary =
     cartItems.length > 0
-      ? cartItems.map((line) => `${materialName(line.material)}${line.qty}件`).join('、')
+      ? cartItems
+          .map((line) => `${line.channel === 'trader' ? '贸易商' : ''}${materialName(line.material)}${line.qty}件`)
+          .join('、')
       : '';
+  const buyers = procurementOf(state);
+  const liveContract = Boolean(
+    state.supplyContract && ((state.supplyContract.remainingMonths ?? 0) > 0 || (state.supplyContract.pendingQty ?? 0) > 0),
+  );
+  const contractSignCost = contractPrepayOf(state, contractMat, contractQty);
+  const contractBlock = canSignContract(state, contractMat, contractQty);
+  const playCard = playCardUid ? state.hand.find((card) => card.uid === playCardUid) : null;
   const plants = factoryLayout(state, plan.capUsed);
   const loads = orderCapLoads(state);
 
@@ -848,7 +882,10 @@ export function OperationsPage({
                             className="btn small"
                             style={{ marginTop: 10 }}
                             disabled={!canAct || state.cash < def.cost}
-                            onClick={() => dispatch({ type: 'PLAY_CARD', uid: card.uid })}
+                            onClick={() => {
+                              if (cardNeedsMaterial(def.id)) setPlayCardUid(card.uid);
+                              else dispatch({ type: 'PLAY_CARD', uid: card.uid });
+                            }}
                           >
                             落地「{def.name}」 · 耗 1 AP · 付现 {money(def.cost)}
                           </button>
@@ -938,6 +975,7 @@ export function OperationsPage({
         <Stage
           id="materials"
           title="采购部"
+          summary={`采购 ${buyers} 人 · 现货加成已计入${liveContract ? ' · 有长期协议' : ''}`}
           now={acting}
         >
           <Facts>
@@ -965,12 +1003,13 @@ export function OperationsPage({
               </table>
             </div>
           </Facts>
-          <Actions>
+          <Actions note="厂供是便宜正道。额度用完后贸易商加价盘仍可买，集采折扣只打厂供。">
+            <p className="dept-kicker">厂供现货</p>
             <div className="spot-list">
               {visibleMaterials.map((item) => {
                 const remaining = spotOf(state, item.id);
                 const pick = Math.min(cart[item.id] ?? 0, remaining);
-                const line = buyLineCost(state, item.id, pick);
+                const line = buyLineCost(state, item.id, pick, 'spot');
                 const steps = purchaseQtyOptions(remaining, materialCrateSize(item.id));
                 const stock = state.materials[item.id] ?? 0;
                 const age = materialMaxAge(state, item.id);
@@ -1017,9 +1056,51 @@ export function OperationsPage({
                 );
               })}
             </div>
+            <p className="dept-kicker" style={{ marginTop: 16 }}>贸易商 · 加价盘</p>
+            <p className="hint">钢材/塑料 1.5 倍，芯片/合金 2 倍。厂供卖完后仍可买。</p>
+            <div className="spot-list">
+              {visibleMaterials.map((item) => {
+                const remaining = traderOf(state, item.id);
+                const pick = Math.min(traderCart[item.id] ?? 0, remaining);
+                const line = buyLineCost(state, item.id, pick, 'trader');
+                const steps = purchaseQtyOptions(remaining, materialCrateSize(item.id));
+                const soldOut = remaining <= 0;
+                return (
+                  <article key={`trader-${item.id}`} className={['spot-card', 'trader', soldOut ? 'soldout' : '', pick > 0 ? 'on' : ''].filter(Boolean).join(' ')}>
+                    <header className="spot-top">
+                      <b>{item.name}</b>
+                      <span>{money(roundMoney((state.materialPrices[item.id] ?? 0) * (item.id === 'a' || item.id === 'b' ? 1.5 : 2)))} / 件</span>
+                    </header>
+                    <div className="spot-row">
+                      <p className="spot-meta">
+                        <span className={soldOut ? 'bad' : 'good'}>{soldOut ? '贸易商本月也空了' : `加价盘 ${qty(remaining)}`}</span>
+                      </p>
+                      {soldOut ? null : (
+                        <div className="spot-lots">
+                          {steps.map((n) => (
+                            <button
+                              key={n}
+                              type="button"
+                              className={pick === n ? 'chip on' : 'chip'}
+                              disabled={!acting}
+                              onClick={() =>
+                                setTraderCart((prev) => ({ ...prev, [item.id]: pick === n ? 0 : n }))
+                              }
+                            >
+                              {n === remaining ? `全 ${n}` : n}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    {pick > 0 ? <p className="spot-pay">付现 {money(line)}</p> : null}
+                  </article>
+                );
+              })}
+            </div>
             {state.modifiers.nextBuyDiscount > 0 && (
               <p className="hint" style={{ marginTop: 8 }}>
-                本单集采折扣 {Math.round(state.modifiers.nextBuyDiscount * 100)}%。
+                本单厂供集采折扣 {Math.round(state.modifiers.nextBuyDiscount * 100)}%。不加价盘。
               </p>
             )}
           </Actions>
@@ -1027,8 +1108,8 @@ export function OperationsPage({
             note={
               acting
                 ? buyApFree
-                  ? '第三、四季度采购不耗行动点，仍要付现。本月没买完的额度月底作废。'
-                  : '本月没买完的额度月底作废。'
+                  ? '第三、四季度采购不耗行动点，仍要付现。本月没买完的厂供和加价盘月底作废。'
+                  : '本月没买完的厂供和加价盘月底作废。'
                 : '事件结束后才能采购。'
             }
           >
@@ -1039,6 +1120,7 @@ export function OperationsPage({
                 onClick={() => {
                   dispatch({ type: 'BUY_MATERIALS', items: cartItems });
                   setCart({});
+                  setTraderCart({});
                 }}
               >
                 {cartItems.length === 0
@@ -1047,6 +1129,75 @@ export function OperationsPage({
               </button>
             </div>
             {cartItems.length > 0 && state.cash < cartTotal && <p className="hint">现金不够支付本单。</p>}
+          </Actions>
+          <Actions note="签的是未来三个完整月，本月不到货。冲击不砍协议到货。同时只许一份。">
+            <p className="dept-kicker">长期协议</p>
+            {state.supplyContract && liveContract ? (
+              <div className="spot-card on">
+                <header className="spot-top">
+                  <b>{materialName(state.supplyContract.material)} {state.supplyContract.monthlyQty} 件/月</b>
+                  <span>锁价 {money(state.supplyContract.unitPrice)} / 件</span>
+                </header>
+                <p className="spot-meta">
+                  剩余 {state.supplyContract.remainingMonths} 个月
+                  {state.supplyContract.prepaid > 0 ? ` · 预付 ${money(state.supplyContract.prepaid)}` : ''}
+                  {state.supplyContract.pendingQty > 0 ? ` · 待付到货 ${qty(state.supplyContract.pendingQty)}` : ''}
+                </p>
+                <div className="footer-actions" style={{ justifyContent: 'flex-start', marginTop: 8 }}>
+                  {state.supplyContract.pendingQty > 0 ? (
+                    <button className="btn small" disabled={!acting} onClick={() => dispatch({ type: 'COLLECT_CONTRACT' })}>
+                      收取到货 · 0 AP
+                    </button>
+                  ) : null}
+                  <button className="btn small ghost" disabled={!acting} onClick={() => dispatch({ type: 'CANCEL_CONTRACT' })}>
+                    提前解约
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="spot-lots" style={{ marginTop: 8 }}>
+                  {visibleMaterials.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className={contractMat === item.id ? 'chip on' : 'chip'}
+                      onClick={() => {
+                        setContractMat(item.id);
+                        setContractQty(contractQtyOptions(item.id)[0] ?? 1);
+                      }}
+                    >
+                      {item.name}
+                    </button>
+                  ))}
+                </div>
+                <div className="spot-lots" style={{ marginTop: 8 }}>
+                  {contractQtyOptions(contractMat).map((n) => (
+                    <button
+                      key={n}
+                      type="button"
+                      className={contractQty === n ? 'chip on' : 'chip'}
+                      onClick={() => setContractQty(n)}
+                    >
+                      {n} 件/月
+                    </button>
+                  ))}
+                </div>
+                <p className="hint" style={{ marginTop: 8 }}>
+                  锁价 {money(contractUnitPrice(state, contractMat))}/件 · 预付一个月 {money(contractSignCost)}
+                  {state.modifiers.contractApFree ? ' · 本月窗口不耗 AP' : ' · 耗 1 AP'}
+                  {state.month > LAST_CONTRACT_SIGN_MONTH ? ' · 剩余月份不足，不能新签' : ''}
+                </p>
+                <button
+                  className="btn small"
+                  disabled={!acting || Boolean(contractBlock)}
+                  onClick={() => dispatch({ type: 'SIGN_CONTRACT', material: contractMat, monthlyQty: contractQty })}
+                >
+                  签订长期协议
+                </button>
+                {contractBlock && acting ? <p className="hint">{contractBlock}</p> : null}
+              </>
+            )}
           </Actions>
           <Facts title="原料报价">
             <table className="sheet dark compact quote-sheet">
@@ -1073,6 +1224,7 @@ export function OperationsPage({
               </tbody>
             </table>
           </Facts>
+          <HireBar role="procurement" disabled={!canAct} onHire={setHireRole} />
         </Stage>
         )}
 
@@ -1130,7 +1282,7 @@ export function OperationsPage({
                 state={state}
                 track="product"
                 acting={acting}
-                onOpenProduct={() => dispatch({ type: 'OPEN_PRODUCT_RD' })}
+                onOpenProduct={(archetype) => dispatch({ type: 'OPEN_PRODUCT_RD', archetype })}
               />
               <RdLabCard
                 state={state}
@@ -1140,7 +1292,7 @@ export function OperationsPage({
               />
             </div>
             <p className="hint" style={{ marginTop: 12 }}>
-              产品课题 3 个月，BOM 随机生成；工艺课题 2 个月，招人或派人时选择知识产权。每人 +20% 成功率，上限 80%。有人值守才走表，招人不加速进度。
+              产品课题 3 个月，开题时自选简化、替代芯片或冲毛利；工艺课题 2 个月，招人或派人时选择知识产权。每人 +20% 成功率，上限 80%。有人值守才走表，招人不加速进度。
               {rdCapacityBonus(state) > 0 ? ` 已装备知识产权为本月产能 +${rdCapacityBonus(state)}。` : ''}
             </p>
           </Facts>
@@ -1308,7 +1460,7 @@ export function OperationsPage({
                   <b>编入{RD_TRACK_LABEL.product}</b>
                   <span>
                     {currentProductProject(state)?.name ??
-                      ((state.extraProducts?.length ?? 0) < MAX_RD_PRODUCTS ? '入职后随机开题' : '课题已结')}
+                      ((state.extraProducts?.length ?? 0) < MAX_RD_PRODUCTS ? '入职后在研发部开题' : '课题已结')}
                     {' · '}
                     成功率提升至 {pctLabel(rdTrackRate(state, 'product', 1))}
                   </span>
@@ -1426,6 +1578,39 @@ export function OperationsPage({
                   确认招聘
                 </button>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {playCard && (
+        <div className="overlay hire-overlay" onClick={() => setPlayCardUid(null)}>
+          <div className="modal hire-modal" onClick={(event) => event.stopPropagation()}>
+            <p className="kicker" style={{ color: '#8a7040' }}>
+              提案
+            </p>
+            <h2>落地「{cardById(playCard.defId).name}」</h2>
+            <p className="lead">选择一种原料。</p>
+            <div className="spot-lots">
+              {visibleMaterials.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className="chip"
+                  disabled={!canAct || state.cash < cardById(playCard.defId).cost}
+                  onClick={() => {
+                    dispatch({ type: 'PLAY_CARD', uid: playCard.uid, material: item.id });
+                    setPlayCardUid(null);
+                  }}
+                >
+                  {item.name}
+                </button>
+              ))}
+            </div>
+            <div className="footer-actions">
+              <button className="btn ghost" onClick={() => setPlayCardUid(null)}>
+                取消
+              </button>
             </div>
           </div>
         </div>

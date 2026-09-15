@@ -8,7 +8,9 @@ export type Phase =
   | 'report'
   | 'ended';
 
-export type Role = 'production' | 'management' | 'sales' | 'rd';
+export type Role = 'production' | 'management' | 'sales' | 'rd' | 'procurement';
+export type RdProductArchetype = 'simplify' | 'substitute' | 'margin';
+export type BuyChannel = 'spot' | 'trader';
 export type DeptId = 'ceo' | 'finance' | 'hr' | 'infra' | 'store' | 'rd' | 'sales';
 export type MaterialId = 'a' | 'b' | 'c' | 'd';
 export type ProductId = 'basic' | 'standard' | 'premium' | 'economy' | 'special' | 'rd1' | 'rd2';
@@ -28,6 +30,7 @@ export interface Staff {
   management: number;
   sales: number;
   rd: number;
+  procurement: number;
 }
 
 export interface Materials {
@@ -52,6 +55,17 @@ export interface ProductDef {
   basePrice: number;
   baseDemand: number;
   blurb: string;
+}
+
+export interface SupplyContract {
+  material: MaterialId;
+  monthlyQty: number;
+  unitPrice: number;
+  remainingMonths: number;
+  prepaid: number;
+  missed: number;
+  pendingQty: number;
+  pendingCost: number;
 }
 
 export interface MaterialDef {
@@ -178,6 +192,8 @@ export interface Modifiers {
   creditSaleRate: number;
   arTermExtra: number;
   stockAgeBias: number;
+  contractApFree: boolean;
+  contractPrepayDiscount: number;
 }
 
 export interface SettlementLine {
@@ -204,7 +220,7 @@ export interface RdReveal {
 
 export type RdAssign =
   | { kind: 'retry' }
-  | { kind: 'product' }
+  | { kind: 'product'; archetype?: RdProductArchetype }
   | { kind: 'tech'; ipId?: IpId }
   | { kind: 'idle' };
 
@@ -277,6 +293,7 @@ export interface MonthBooks {
   receivables: number;
   badDebtProvision: number;
   receivablesNet: number;
+  prepaid: number;
   fixedAssetCost: number;
   accumDep: number;
   fixedAssets: number;
@@ -329,6 +346,10 @@ export interface GameState {
   prevProductPrices: Partial<Record<ProductId, number>>;
   marketTrend: MarketTrend;
   materialSpot: Record<MaterialId, number>;
+  traderSpot: Record<MaterialId, number>;
+  prepaid: number;
+  supplyContract: SupplyContract | null;
+  quarterSpotBonus: Partial<Record<MaterialId, number>>;
   demand: Partial<Record<ProductId, number>>;
   unlockedProducts: ProductId[];
   materialDUnlocked: boolean;
@@ -394,14 +415,17 @@ export type GameAction =
   | { type: 'EXPAND_FACTORY' }
   | { type: 'HIRE'; role: Role; rdTrack?: RdTrack; ipId?: IpId }
   | { type: 'PICK_RD_TECH'; ipId: IpId }
-  | { type: 'OPEN_PRODUCT_RD' }
+  | { type: 'OPEN_PRODUCT_RD'; archetype: RdProductArchetype }
   | { type: 'ASSIGN_RD_REVEAL'; assign: RdAssign }
   | { type: 'BUY_MATERIAL'; material: MaterialId; qty: number }
-  | { type: 'BUY_MATERIALS'; items: { material: MaterialId; qty: number }[] }
+  | { type: 'BUY_MATERIALS'; items: { material: MaterialId; qty: number; channel?: BuyChannel }[] }
+  | { type: 'SIGN_CONTRACT'; material: MaterialId; monthlyQty: number }
+  | { type: 'COLLECT_CONTRACT' }
+  | { type: 'CANCEL_CONTRACT' }
   | { type: 'BORROW'; amount: number }
   | { type: 'REPAY'; amount: number }
   | { type: 'BUY_CARD'; index: number; replaceUid?: string }
-  | { type: 'PLAY_CARD'; uid: string }
+  | { type: 'PLAY_CARD'; uid: string; material?: MaterialId }
   | { type: 'GO_PRODUCE' }
   | { type: 'BACK_TO_ACTIONS' }
   | { type: 'TOGGLE_ORDER'; id: string }

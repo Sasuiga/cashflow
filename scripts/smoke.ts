@@ -1,5 +1,5 @@
-import { createInitialState, equityAccounts, factoryLayout, hireEffectLines, lowestUnlockedMargin, bomSpotCost, netAssetsOf, netProfitOf, orderCapLoads, purchaseQtyOptions, rdRevealOptions, reduce } from '../src/game/engine';
-import { RD_FAIL_BONUS, rdSuccessRate } from '../src/game/data';
+import { createInitialState, equityAccounts, factoryLayout, hireEffectLines, lowestUnlockedMargin, bomSpotCost, netAssetsOf, netProfitOf, orderCapLoads, purchaseQtyOptions, rdRevealOptions, reduce, traderOf, unitsNeeded } from '../src/game/engine';
+import { IP_LEAN_RATE, RD_FAIL_BONUS, rdSuccessRate } from '../src/game/data';
 import { goalById } from '../src/game/board';
 import { roundMoney } from '../src/game/format';
 import type { GameState } from '../src/game/types';
@@ -37,6 +37,7 @@ function checkBalance(state: GameState, label: string): void {
     state.cash +
       ar -
       (state.badDebtProvision ?? 0) +
+      (state.prepaid ?? 0) +
       inventory -
       (state.inventoryProvision ?? 0) +
       (state.machineGross ?? 0) +
@@ -77,6 +78,7 @@ function checkMarketQuotes(): void {
   assert(diffP < 0.05 || Math.abs(diffP - 0.2) < 1e-6, `基础款月度台阶应为 0 或 0.2，实际 ${diffP}`);
   assert((state.materialSpot?.a ?? 0) >= 4 && (state.materialSpot?.a ?? 0) <= 24, `钢材现货应在 4–24，实际 ${state.materialSpot?.a}`);
   assert((state.materialSpot?.c ?? 0) <= 6, `芯片现货应不超过 6，实际 ${state.materialSpot?.c}`);
+  assert((state.traderSpot?.a ?? 0) >= 4 && (state.traderSpot?.a ?? 0) <= 16, `钢材贸易商应在 4–16，实际 ${state.traderSpot?.a}`);
 }
 
 function checkSalesOrders(): void {
@@ -254,15 +256,17 @@ function checkRdLabs(): void {
   const productLines = hireEffectLines(state, 'rd', 'product');
   assert(productLines[0]?.includes('产品实验室'), `招研发应说明编入产品实验室，实际 ${productLines[0]}`);
   assert(productLines[0]?.includes('成功率'), `招研发应说明人数只影响成功率，实际 ${productLines[0]}`);
-  assert(productLines[1]?.includes('随机'), `开局产品课题应说明随机开题，实际 ${productLines[1]}`);
+  assert(productLines[1]?.includes('开题'), `开局产品课题应说明入职后开题，实际 ${productLines[1]}`);
   assert(!productLines.some((line) => line.includes('本次：')), `已开题信息不该在招聘说明里重复，实际 ${productLines.join(' / ')}`);
 
   const floor = lowestUnlockedMargin(state);
   state = reduce(state, { type: 'HIRE', role: 'rd', rdTrack: 'product' });
   assert(state.staff.rd === 1 && state.rdProductStaff === 1 && state.rdTechStaff === 0, '第一名研发应编入产品组');
   assert(state.rdProductProgress === 0, `入职不应推进进度，实际 ${state.rdProductProgress}`);
-  assert(state.rdProductDraft, '编入产品实验室后应随机开题');
-  assert(state.rdProductDraft?.name.endsWith('款'), `随机产品名应以款结尾，实际 ${state.rdProductDraft?.name}`);
+  assert(!state.rdProductDraft, '入职不应自动开题');
+  state = reduce(state, { type: 'OPEN_PRODUCT_RD', archetype: 'margin' });
+  assert(state.rdProductDraft, '选定方向后应生成课题');
+  assert(state.rdProductDraft?.name.endsWith('款'), `产品名应以款结尾，实际 ${state.rdProductDraft?.name}`);
   const hiredProductLines = hireEffectLines(state, 'rd', 'product');
   assert(
     !hiredProductLines.some((line) => line.includes('本次：') || line.includes('本月结算后')),
@@ -399,7 +403,51 @@ function play(): GameState {
   throw new Error('Loop exceeded');
 }
 
+function checkSupplyChannels(): void {
+  assert(IP_LEAN_RATE === 0.5, `节材应为五折，实际 ${IP_LEAN_RATE}`);
+  let state = confirmBoard(reduce(createInitialState(), { type: 'START_GAME' }));
+  state = reduce(state, { type: 'CONFIRM_BRIEFING' });
+  state = reduce(state, { type: 'ACK_EVENT' });
+  const traderA = traderOf(state, 'a');
+  assert(traderA >= 4 && traderA <= 16, `开局贸易商钢材应在 4–16，实际 ${traderA}`);
+  const beforeMat = state.materials.a;
+  const beforeCash = state.cash;
+  const beforeAp = state.ap;
+  const buyQty = Math.min(4, traderA);
+  state = reduce(state, { type: 'BUY_MATERIALS', items: [{ material: 'a', qty: buyQty, channel: 'trader' }] });
+  assert(state.materials.a === beforeMat + buyQty, `贸易商采购应入库 ${buyQty}，实际 ${state.materials.a - beforeMat}`);
+  assert(state.cash < beforeCash, '贸易商采购应付现');
+  assert(state.ap === beforeAp - 1, 'Q1 贸易商采购应耗 AP');
+
+  state = confirmBoard(reduce(createInitialState(), { type: 'START_GAME' }));
+  state = reduce(state, { type: 'CONFIRM_BRIEFING' });
+  state = reduce(state, { type: 'ACK_EVENT' });
+  const beforeSpot = { ...state.materialSpot };
+  const lines = hireEffectLines(state, 'procurement');
+  assert(lines[0]?.includes('现货'), `招采购应说明放宽额度，实际 ${lines[0]}`);
+  state = reduce(state, { type: 'HIRE', role: 'procurement' });
+  assert(state.staff.procurement === 1, '应招到 1 名采购');
+  const bumped = (['a', 'b', 'c'] as const).some((id) => (state.materialSpot[id] ?? 0) > (beforeSpot[id] ?? 0));
+  assert(bumped, '入职当月应放宽至少一种现货');
+
+  state = confirmBoard(reduce(createInitialState(), { type: 'START_GAME' }));
+  state = reduce(state, { type: 'CONFIRM_BRIEFING' });
+  state = reduce(state, { type: 'ACK_EVENT' });
+  const cash = state.cash;
+  const ap = state.ap;
+  state = reduce(state, { type: 'SIGN_CONTRACT', material: 'a', monthlyQty: 4 });
+  assert(state.supplyContract?.material === 'a', '应签下钢材协议');
+  assert(state.supplyContract?.remainingMonths === 3, '协议应覆盖未来 3 个月');
+  assert(state.prepaid > 0, '预付应记资产');
+  assert(state.cash < cash, '签约应付预付');
+  assert(state.ap === ap - 1, '签约应耗 1 AP');
+
+  const leanNeed = unitsNeeded({ ...createInitialState(), ownedIps: ['lean'] }, 'basic', 10);
+  assert(leanNeed.a === 10 && leanNeed.b === 5, `节材五折后 10 件基础款应为 10 钢 5 塑，实际 ${leanNeed.a}/${leanNeed.b}`);
+}
+
 checkOpeningAccounts();
+checkSupplyChannels();
 checkBoardVariety();
 checkMarketQuotes();
 checkSalesOrders();

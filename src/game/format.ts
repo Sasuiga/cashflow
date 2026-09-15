@@ -1,4 +1,4 @@
-import type { Bom, MaterialId, ProductId, RdTrack, Role } from './types';
+import type { Bom, MaterialId, ProductId, RdProductArchetype, RdTrack, Role } from './types';
 
 export const MONTH_NAMES = [
   '一月',
@@ -20,18 +20,32 @@ export const ROLE_LABEL: Record<Role, string> = {
   management: '管理',
   sales: '销售',
   rd: '研发',
+  procurement: '采购',
 };
 
 export const ROLE_HINT: Record<Role, string> = {
   production: '设备位内每人产能 +4，超出 +1',
   management: '每 2 人提升 1 点行动点上限',
   sales: '',
-  rd: '入职时选择产品实验室，或点选一项工艺再编入工艺实验室。产品课题的 BOM 随机生成；人数决定成功率。',
+  rd: '入职时选择产品实验室，或点选一项工艺再编入工艺实验室。产品开题时自选简化、替代芯片或冲毛利；人数决定成功率。',
+  procurement: '把供给做成引擎。入职当月放宽现货额度，每人提升每月现货上限。不改产品结构也能把料买够。',
 };
 
 export const RD_TRACK_LABEL: Record<RdTrack, string> = {
   product: '产品实验室',
   tech: '工艺实验室',
+};
+
+export const RD_ARCHETYPE_LABEL: Record<RdProductArchetype, string> = {
+  simplify: '简化结构',
+  substitute: '替代芯片',
+  margin: '冲毛利',
+};
+
+export const RD_ARCHETYPE_BLURB: Record<RdProductArchetype, string> = {
+  simplify: '同毛利、更省料。无芯片的改型按走量单出。',
+  substitute: '用钢材/塑料换掉芯片，毛利与亲本持平。',
+  margin: '随机 BOM，可能更复杂，毛利高于现有最低档。',
 };
 
 export function pctLabel(rate: number): string {
