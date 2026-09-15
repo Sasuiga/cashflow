@@ -72,6 +72,14 @@ export function bomLabel(bom: Bom): string {
   return parts.join(' + ') || '—';
 }
 
+const FACTORY_ORDINALS = ['一', '二', '三', '四', '五', '六', '七', '八', '九', '十'];
+
+export function factoryName(index: number): string {
+  const n = index + 1;
+  const label = n >= 1 && n <= FACTORY_ORDINALS.length ? FACTORY_ORDINALS[n - 1] : String(n);
+  return `${label}号产区`;
+}
+
 export function materialName(id: MaterialId): string {
   const map: Record<MaterialId, string> = {
     a: '钢材',

@@ -1,16 +1,21 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
+  CAP_OVERFLOW,
+  CAP_PER_WORKER,
   FACTORY_COST,
+  FACTORY_LIFE_MONTHS,
   FACTORY_UPKEEP,
   HAND_LIMIT,
   HIRE_COST,
   MACHINE_BASE_CAP,
   MACHINE_COST,
+  MACHINE_LIFE_MONTHS,
   MATERIALS,
   PRODUCTS,
   RD_THRESHOLD,
   RD_UNLOCKS,
   SALARY,
+  SLOTS_PER_FACTORY,
   WORKERS_PER_MACHINE,
   cardById,
   productById,
@@ -22,6 +27,7 @@ import {
   buyLineCost,
   capacityOf,
   creditSaleRateOf,
+  factoryLayout,
   finishedMaxAge,
   finishedProvisionOf,
   hireEffectLines,
@@ -42,13 +48,14 @@ import {
   spotOf,
   totalStaff,
 } from '../game/engine';
-import { MONTH_NAMES, ROLE_HINT, ROLE_LABEL, bomLabel, materialName, money, qty, roundMoney, signedMoney } from '../game/format';
+import { MONTH_NAMES, ROLE_HINT, ROLE_LABEL, bomLabel, factoryName, materialName, money, priceDelta, qty, roundMoney, signedMoney } from '../game/format';
 import { goalById, q3ProcurementFree } from '../game/board';
-import type { DeptId, GameAction, GameState, MaterialId, MonthOrder, Role } from '../game/types';
+import type { GameAction, GameState, MaterialId, MonthOrder, Role } from '../game/types';
 
 const ROLES: Role[] = ['production', 'management', 'sales', 'rd'];
 const LOAN = [2, 4, 8];
 const EXTRA = [0, 2, 4, 6];
+type PlantKind = 'machine' | 'factory';
 
 type StageId = 'ceo' | 'sales' | 'materials' | 'production' | 'rd' | 'treasury';
 
@@ -61,8 +68,33 @@ const DEPTS: { id: StageId; label: string }[] = [
   { id: 'treasury', label: '财务部' },
 ];
 
-function stageDone(state: GameState, ids: DeptId[]): string {
-  return ids.flatMap((id) => state.deptActs[id] ?? []).join('；');
+function Stage({
+  id,
+  title,
+  intro,
+  summary,
+  now,
+  children,
+}: {
+  id: StageId;
+  title: string;
+  intro?: string;
+  summary?: string;
+  now?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <section id={`stage-${id}`} className={['dept', now ? 'now' : ''].filter(Boolean).join(' ')}>
+      <header className="dept-head">
+        <div>
+          <h3>{title}</h3>
+          {intro ? <p className="dept-intro">{intro}</p> : null}
+          {summary ? <p className="dept-done">{summary}</p> : null}
+        </div>
+      </header>
+      <div className="dept-body">{children}</div>
+    </section>
+  );
 }
 
 function orderPreview(state: GameState, order: MonthOrder) {
@@ -91,38 +123,6 @@ function orderGapText(state: GameState, plan: ReturnType<typeof productionPlan>)
     if (short > 0) parts.push(`${mat.name} ${short}`);
   }
   return parts.length ? `缺口：${parts.join('、')}` : '缺口：无';
-}
-
-function Stage({
-  id,
-  title,
-  intro,
-  summary,
-  done,
-  now,
-  children,
-}: {
-  id: StageId;
-  title: string;
-  intro?: string;
-  summary?: string;
-  done?: string;
-  now?: boolean;
-  children: ReactNode;
-}) {
-  return (
-    <section id={`stage-${id}`} className={['dept', now ? 'now' : ''].filter(Boolean).join(' ')}>
-      <header className="dept-head">
-        <div>
-          <h3>{title}</h3>
-          {intro ? <p className="dept-intro">{intro}</p> : null}
-          {summary ? <p className="dept-done">{summary}</p> : null}
-          {done ? <p className="dept-done">{done}</p> : null}
-        </div>
-      </header>
-      <div className="dept-body">{children}</div>
-    </section>
-  );
 }
 
 function Facts({ children, title }: { children: ReactNode; title?: string }) {
@@ -161,6 +161,142 @@ function HireBar({
   );
 }
 
+function plantConfirmCopy(state: GameState, kind: PlantKind) {
+  if (kind === 'machine') {
+    const full = state.machines >= state.slots;
+    const next = { ...state, machines: state.machines + 1 };
+    return {
+      kicker: '产线',
+      title: '购买设备 1 台',
+      confirm: '确认购买',
+      instant: full
+        ? [`当前厂区机位已满（${state.machines}/${state.slots}），需先扩建厂区才能再买设备。`]
+        : [
+            `立刻到位，占用 1 个机位。无人值守也有基础产能 ${MACHINE_BASE_CAP}。`,
+            `最多再安置 ${WORKERS_PER_MACHINE} 名生产工，设备位内每人产能 +${CAP_PER_WORKER}。`,
+            `本次：产能 ${capacityOf(state)} → ${capacityOf(next)}，机位 ${state.machines}/${state.slots} → ${state.machines + 1}/${state.slots}。`,
+            `设备抵押融资上限 ${money(loanLimit(state.machines))} → ${money(loanLimit(state.machines + 1))}。`,
+          ],
+      ongoing: [`按 ${MACHINE_LIFE_MONTHS} 个月计提折旧。`, '不增加厂区月维护。'],
+      costs: [
+        { label: '设备款', value: money(MACHINE_COST), note: '当月现金支付，记入固定资产' },
+        { label: '行动点', value: '1 AP', note: '确认后立即消耗' },
+      ],
+      blocked: full
+        ? '厂区机位已满，请先扩建厂区。'
+        : state.cash < MACHINE_COST
+          ? '现金不够支付设备款。'
+          : undefined,
+      canConfirm: !full && state.cash >= MACHINE_COST,
+    };
+  }
+
+  const nextSlots = state.slots + SLOTS_PER_FACTORY;
+  const upkeepNow = state.factories * FACTORY_UPKEEP;
+  const upkeepNext = (state.factories + 1) * FACTORY_UPKEEP;
+  return {
+    kicker: '厂区',
+    title: '扩建厂区 1 座',
+    confirm: '确认扩建',
+    instant: [
+      `立刻新开一座产区，新增 ${SLOTS_PER_FACTORY} 个机位。新产区会出现在生产部标签里。`,
+      `本次：新增 ${factoryName(state.factories)}，机位 ${state.slots} → ${nextSlots}。`,
+    ],
+    ongoing: [
+      `每月厂区维护 +${money(FACTORY_UPKEEP)}（本次 ${money(upkeepNow)} → ${money(upkeepNext)}），结算时从现金扣除。`,
+      `按 ${FACTORY_LIFE_MONTHS} 个月计提折旧。`,
+    ],
+    costs: [
+      { label: '扩建费', value: money(FACTORY_COST), note: '当月现金支付，记入固定资产' },
+      { label: '行动点', value: '1 AP', note: '确认后立即消耗' },
+    ],
+    blocked: state.cash < FACTORY_COST ? '现金不够支付扩建费。' : undefined,
+    canConfirm: state.cash >= FACTORY_COST,
+  };
+}
+
+function PlantBoard({
+  plants,
+  openIndex,
+  extraCapacity,
+  missing,
+  onToggle,
+}: {
+  plants: ReturnType<typeof factoryLayout>;
+  openIndex: number;
+  extraCapacity: number;
+  missing: string[];
+  onToggle: (index: number) => void;
+}) {
+  return (
+    <div className="plant-list">
+      {plants.map((plant) => {
+        const open = openIndex === plant.index;
+        return (
+          <div key={plant.index} className={['plant-tab', open ? 'open' : ''].filter(Boolean).join(' ')}>
+            <button
+              type="button"
+              className="plant-tab-head"
+              aria-expanded={open}
+              onClick={() => onToggle(plant.index)}
+            >
+              <b>
+                {plant.name} · 产能占用 {plant.used}/{plant.cap}
+              </b>
+              <em>{open ? '收起' : '展开'}</em>
+            </button>
+            {open ? (
+              <div className="plant-tab-body">
+                <div className="plant-slots">
+                  {plant.machines.map((slot) =>
+                    slot.filled ? (
+                      <article key={slot.slot} className="plant-slot">
+                        <span className="suit">机位 {slot.slot}</span>
+                        <h4>{slot.slot}号机</h4>
+                        <div className="plant-crew" aria-hidden>
+                          {Array.from({ length: WORKERS_PER_MACHINE }, (_, i) => (
+                            <i key={i} className={i < slot.workers ? undefined : 'off'} />
+                          ))}
+                        </div>
+                        <p className="stat">工人 {slot.workers}/{WORKERS_PER_MACHINE} 人</p>
+                        <p className="stat">
+                          {slot.workers
+                            ? `基础 ${MACHINE_BASE_CAP} + ${slot.workers}×${CAP_PER_WORKER}`
+                            : `基础 ${MACHINE_BASE_CAP} · 无人值守`}
+                        </p>
+                        <p className="cap">{slot.cap}</p>
+                        <p className="stat">本机产能</p>
+                      </article>
+                    ) : (
+                      <article key={slot.slot} className="plant-slot empty">
+                        <span className="suit">机位 {slot.slot}</span>
+                        <h4>空机位</h4>
+                        <p className="stat">尚未安置设备</p>
+                      </article>
+                    ),
+                  )}
+                </div>
+                {plant.overflow > 0 ? (
+                  <p className="plant-note">
+                    超编 {plant.overflow} 人挂在本产区 · 每人产能 +{CAP_OVERFLOW}，合计 +{plant.overflow * CAP_OVERFLOW}
+                  </p>
+                ) : null}
+                {plant.index === 0 && extraCapacity !== 0 ? (
+                  <p className="plant-note">
+                    {extraCapacity > 0 ? `本月额外产能 +${extraCapacity}` : `本月事件影响产能 ${extraCapacity}`}
+                    ，已计入本产区占用。
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        );
+      })}
+      {missing.length > 0 ? <p className="hint">{missing.join('，')}</p> : null}
+    </div>
+  );
+}
+
 export function OperationsPage({
   state,
   dispatch,
@@ -179,6 +315,8 @@ export function OperationsPage({
   const [cart, setCart] = useState<Partial<Record<MaterialId, number>>>({});
   const [loanAmt, setLoanAmt] = useState(4);
   const [hireRole, setHireRole] = useState<Role | null>(null);
+  const [plantKind, setPlantKind] = useState<PlantKind | null>(null);
+  const [openPlant, setOpenPlant] = useState(0);
   const [settleOpen, setSettleOpen] = useState(false);
   const [pendingAdopt, setPendingAdopt] = useState<number | null>(null);
 
@@ -252,8 +390,7 @@ export function OperationsPage({
     cartItems.length > 0
       ? cartItems.map((line) => `${materialName(line.material)}${line.qty}件`).join('、')
       : '';
-  const workersMax = state.machines * WORKERS_PER_MACHINE;
-  const workerOverflow = Math.max(0, state.staff.production - workersMax);
+  const plants = factoryLayout(state, plan.capUsed);
 
   const briefing = (
     <aside className="exec-summary">
@@ -280,7 +417,7 @@ export function OperationsPage({
     <div className="ops">
       <div className="dept-stage" ref={paneRef}>
         {active === 'ceo' && (
-        <Stage id="ceo" title="经理室" done={stageDone(state, ['ceo'])}>
+        <Stage id="ceo" title="经理室">
           {briefing}
           <Facts>
             <div className="sheet-wrap">
@@ -443,10 +580,9 @@ export function OperationsPage({
           title="销售部"
           summary={
             orders.length
-              ? `销售人员${state.staff.sales}人 已接订单${accepted.length}/${orders.length}张`
-              : `销售人员${state.staff.sales}人 本月订单尚未开出`
+              ? `销售 ${state.staff.sales} 人 · 已接 ${accepted.length}/${orders.length} 张`
+              : `销售 ${state.staff.sales} 人 · 本月订单尚未开出`
           }
-          done={stageDone(state, ['sales'])}
           now={producing || acting}
         >
           <Actions>
@@ -504,7 +640,6 @@ export function OperationsPage({
         <Stage
           id="materials"
           title="采购部"
-          done={stageDone(state, ['store'])}
           now={acting}
         >
           <Actions>
@@ -590,6 +725,31 @@ export function OperationsPage({
             </div>
             {cartItems.length > 0 && state.cash < cartTotal && <p className="hint">现金不够支付本单。</p>}
           </Actions>
+          <Facts title="原料报价">
+            <table className="sheet dark compact quote-sheet">
+              <thead>
+                <tr>
+                  <th>原料</th>
+                  {state.month > 1 ? <th className="num">上期</th> : null}
+                  <th className="num">本期</th>
+                </tr>
+              </thead>
+              <tbody>
+                {visibleMaterials.map((item) => {
+                  const now = state.materialPrices[item.id] ?? 0;
+                  const prev = state.prevMaterialPrices?.[item.id] ?? now;
+                  const tone = state.month > 1 ? priceDelta(now, prev).tone : 'flat';
+                  return (
+                    <tr key={item.id}>
+                      <td>{item.name}</td>
+                      {state.month > 1 ? <td className="num muted">{money(prev)}</td> : null}
+                      <td className={tone === 'flat' ? 'num' : `num delta-${tone}`}>{money(now)}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </Facts>
         </Stage>
         )}
 
@@ -597,40 +757,17 @@ export function OperationsPage({
         <Stage
           id="production"
           title="生产部"
-          intro="厂区、设备和生产工决定产能。有余量可以超产入库。"
           summary={`产能 ${capacityOf(state)} · 设备 ${state.machines} 台 · 生产工 ${state.staff.production} 人`}
-          done={stageDone(state, ['infra'])}
           now={producing}
         >
           <Facts>
-            <div className="row">
-              <span>厂区 / 机位</span>
-              <span>
-                {state.factories} 座 · {state.machines}/{state.slots} 台在用
-              </span>
-            </div>
-            <div className="row">
-              <span>本月产能</span>
-              <span>
-                {capacityOf(state)}（设备 {state.machines}×{MACHINE_BASE_CAP}，生产工最多 {workersMax} 人上线
-                {workerOverflow ? `，超编 ${workerOverflow}` : ''}）
-              </span>
-            </div>
-            <div className="row">
-              <span>厂区月维护</span>
-              <span>{money(state.factories * FACTORY_UPKEEP)}</span>
-            </div>
-            <div className="row">
-              <span>生产工</span>
-              <span>{state.staff.production} 人</span>
-            </div>
-            <div className="row">
-              <span>产能占用</span>
-              <span>
-                {plan.capUsed} / {plan.capTotal}
-                {plan.missing.length ? ` · ${plan.missing.join('，')}` : ''}
-              </span>
-            </div>
+            <PlantBoard
+              plants={plants}
+              openIndex={openPlant >= plants.length ? plants.length - 1 : openPlant}
+              extraCapacity={state.modifiers.extraCapacity}
+              missing={plan.missing}
+              onToggle={(index) => setOpenPlant(openPlant === index ? -1 : index)}
+            />
             {products.some((item) => (state.finished[item.id] ?? 0) > 0) &&
               products
                 .filter((item) => (state.finished[item.id] ?? 0) > 0)
@@ -647,19 +784,20 @@ export function OperationsPage({
                   </div>
                 ))}
           </Facts>
+          <div className="hire-action plant-actions">
+            <button className="chip" disabled={!canAct} onClick={() => setHireRole('production')}>
+              招聘生产人员
+            </button>
+            <button className="chip" disabled={!canAct} onClick={() => setPlantKind('machine')}>
+              购买设备
+            </button>
+            <button className="chip" disabled={!canAct} onClick={() => setPlantKind('factory')}>
+              扩建厂区
+            </button>
+          </div>
           <Actions note={acting ? undefined : producing ? undefined : '事件结束后才能改编制和产线。'}>
-            <div className="action-grid">
-              <button className="action" disabled={!canAct} onClick={() => dispatch({ type: 'BUY_MACHINE' })}>
-                <b>购买设备 1台 · 耗 1 AP · 付现 {money(MACHINE_COST)}</b>
-                <small>基础产能 +{MACHINE_BASE_CAP}，最多安置 {WORKERS_PER_MACHINE} 名生产工。</small>
-              </button>
-              <button className="action" disabled={!canAct} onClick={() => dispatch({ type: 'EXPAND_FACTORY' })}>
-                <b>扩建厂区 1座 · 耗 1 AP · 付现 {money(FACTORY_COST)}</b>
-                <small>机位 +3，月维护 +{money(FACTORY_UPKEEP)}。</small>
-              </button>
-            </div>
             {(acting || producing) && products.length > 0 && (
-              <div className="dept-block" style={{ paddingTop: 12 }}>
+              <div className="dept-block" style={{ paddingTop: 0 }}>
                 <p className="dept-kicker">超产入库</p>
                 {products.map((item) => {
                   const extra = state.extraProduce?.[item.id] ?? 0;
@@ -698,7 +836,6 @@ export function OperationsPage({
               </div>
             )}
           </Actions>
-          <HireBar role="production" disabled={!canAct} onHire={setHireRole} />
         </Stage>
         )}
 
@@ -708,7 +845,6 @@ export function OperationsPage({
           title="研发部"
           intro="先看已有 BOM 和人手，再看项目进度。"
           summary={`${state.rdProgress} / ${RD_THRESHOLD} · ${state.staff.rd} 人`}
-          done={stageDone(state, ['rd'])}
         >
           <Facts>
             <div className="sheet-wrap">
@@ -773,7 +909,6 @@ export function OperationsPage({
               arGross > 0 ? `应收 ${money(arNet)}${overdue > 0 ? ` · 逾期 ${money(overdue)}` : ''}` : '本月还没有应收',
             ].join(' · ')
           }
-          done={stageDone(state, ['finance'])}
           now={state.debt > 0 || arGross > 0}
         >
           <Facts title="借款">
@@ -936,6 +1071,65 @@ export function OperationsPage({
                 确认招聘
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {plantKind && (
+        <div className="overlay hire-overlay" onClick={() => setPlantKind(null)}>
+          <div className="modal hire-modal" onClick={(event) => event.stopPropagation()}>
+            {(() => {
+              const copy = plantConfirmCopy(state, plantKind);
+              return (
+                <>
+                  <p className="kicker" style={{ color: '#8a7040' }}>
+                    {copy.kicker}
+                  </p>
+                  <h2>{copy.title}</h2>
+                  <p className="sheet-caption">即刻发生</p>
+                  <ul className="hire-points">
+                    {copy.instant.map((line) => (
+                      <li key={line}>{line}</li>
+                    ))}
+                  </ul>
+                  <p className="sheet-caption">后续持续</p>
+                  <ul className="hire-points">
+                    {copy.ongoing.map((line) => (
+                      <li key={line}>{line}</li>
+                    ))}
+                  </ul>
+                  <div className="hire-costs">
+                    {copy.costs.map((cost) => (
+                      <div key={cost.label}>
+                        <em>{cost.label}</em>
+                        <strong>{cost.value}</strong>
+                        <span>{cost.note}</span>
+                      </div>
+                    ))}
+                  </div>
+                  {copy.blocked ? <p className="hint">{copy.blocked}</p> : null}
+                  <div className="footer-actions">
+                    <button className="btn ghost" onClick={() => setPlantKind(null)}>
+                      取消
+                    </button>
+                    <button
+                      className="btn"
+                      disabled={!copy.canConfirm || !canAct}
+                      onClick={() => {
+                        if (plantKind === 'machine') dispatch({ type: 'BUY_MACHINE' });
+                        else {
+                          dispatch({ type: 'EXPAND_FACTORY' });
+                          setOpenPlant(state.factories);
+                        }
+                        setPlantKind(null);
+                      }}
+                    >
+                      {copy.confirm}
+                    </button>
+                  </div>
+                </>
+              );
+            })()}
           </div>
         </div>
       )}

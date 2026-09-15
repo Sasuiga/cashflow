@@ -835,6 +835,44 @@ h1,
   color: var(--gold-2);
 }
 
+.sheet.quote-sheet {
+  width: auto;
+  margin-top: 2px;
+}
+
+.sheet.quote-sheet th,
+.sheet.quote-sheet td {
+  padding: 8px 0;
+}
+
+.sheet.quote-sheet .num {
+  padding-left: 36px;
+}
+
+.sheet.quote-sheet .delta-up {
+  color: var(--rose);
+}
+
+.sheet.quote-sheet .delta-down {
+  color: var(--mint);
+}
+
+.sheet.quote-sheet tbody tr:last-child td {
+  color: var(--cream);
+}
+
+.sheet.quote-sheet tbody tr:last-child td.muted {
+  color: var(--cream-dim);
+}
+
+.sheet.quote-sheet tbody tr:last-child td.delta-up {
+  color: var(--rose);
+}
+
+.sheet.quote-sheet tbody tr:last-child td.delta-down {
+  color: var(--mint);
+}
+
 .flow-rail button .n {
   display: block;
   margin-bottom: 2px;
@@ -1006,6 +1044,172 @@ h1,
   padding: 10px 12px;
   font-size: 13px;
   text-align: center;
+}
+
+.plant-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.plant-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.plant-tab {
+  border: 1px solid var(--line);
+  background: var(--ink-2);
+}
+
+.plant-tab.open {
+  border-color: var(--line-strong);
+  box-shadow: inset 3px 0 0 var(--gold);
+  background: var(--panel-2);
+}
+
+.plant-tab-head {
+  width: 100%;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border: none;
+  background: transparent;
+  color: var(--cream);
+  text-align: left;
+  cursor: pointer;
+}
+
+.plant-tab-head b {
+  font-family: var(--serif);
+  font-size: 16px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.plant-tab.open .plant-tab-head b {
+  color: var(--gold);
+}
+
+.plant-tab-head em {
+  flex-shrink: 0;
+  font-style: normal;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  color: var(--cream-dim);
+}
+
+.plant-tab-body {
+  padding: 0 12px 14px;
+}
+
+.plant-slots {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.plant-slot {
+  min-height: 148px;
+  padding: 10px 8px 12px;
+  border: 1px solid rgba(42, 36, 22, 0.18);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.28), transparent 28%),
+    var(--paper);
+  color: var(--paper-ink);
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.16);
+  text-align: center;
+}
+
+.plant-slot.empty {
+  min-height: 148px;
+  background: rgba(243, 234, 212, 0.05);
+  border: 1px dashed rgba(212, 195, 154, 0.38);
+  box-shadow: none;
+  color: var(--cream-dim);
+}
+
+.plant-slot .suit {
+  display: block;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  color: #8a7040;
+}
+
+.plant-slot.empty .suit {
+  color: var(--cream-dim);
+}
+
+.plant-slot h4 {
+  font-family: var(--serif);
+  margin: 6px 0 8px;
+  font-size: 18px;
+}
+
+.plant-slot.empty h4 {
+  color: var(--cream-dim);
+}
+
+.plant-crew {
+  display: flex;
+  justify-content: center;
+  gap: 4px;
+  margin: 0 0 8px;
+}
+
+.plant-crew i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #c4a35a;
+}
+
+.plant-crew i.off {
+  background: transparent;
+  border: 1px solid #c4a35a;
+}
+
+.plant-slot .stat {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #6d5728;
+}
+
+.plant-slot.empty .stat {
+  color: var(--cream-dim);
+}
+
+.plant-slot .cap {
+  margin: 8px 0 2px;
+  font-family: var(--serif);
+  font-size: 22px;
+  line-height: 1;
+  color: #8a5a12;
+}
+
+.plant-note {
+  margin: 10px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--cream-dim);
+}
+
+.hire-modal .sheet-caption {
+  margin-top: 8px;
+}
+
+.hire-modal .sheet-caption:first-of-type {
+  margin-top: 4px;
+}
+
+.hire-modal .hire-points {
+  margin-top: 4px;
+  margin-bottom: 10px;
 }
 
 .hire-overlay {
@@ -1871,6 +2075,25 @@ h1,
 
   .card:hover {
     transform: none;
+  }
+
+  .plant-tab-head {
+    align-items: flex-start;
+    min-height: 44px;
+    padding: 12px;
+  }
+
+  .plant-slot {
+    min-height: 132px;
+    padding: 8px 4px 10px;
+  }
+
+  .plant-slot h4 {
+    font-size: 15px;
+  }
+
+  .plant-slot .cap {
+    font-size: 18px;
   }
 
   .panel {

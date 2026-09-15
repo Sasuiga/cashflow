@@ -59,7 +59,7 @@ import {
   quarterOf,
   trendWord,
 } from './board';
-import { MONTH_NAMES, ROLE_LABEL, materialName, money, productName, roundMoney } from './format';
+import { MONTH_NAMES, ROLE_LABEL, factoryName, materialName, money, productName, roundMoney } from './format';
 import type {
   CardInstance,
   DeptId,
@@ -290,6 +290,80 @@ export function capacityOf(state: GameState): number {
     overflow * CAP_OVERFLOW +
     state.modifiers.extraCapacity
   );
+}
+
+export interface FactoryMachineView {
+  slot: number;
+  filled: boolean;
+  workers: number;
+  cap: number;
+}
+
+export interface FactoryView {
+  index: number;
+  name: string;
+  machines: FactoryMachineView[];
+  machineCount: number;
+  workerCount: number;
+  overflow: number;
+  cap: number;
+  used: number;
+}
+
+export function factoryLayout(state: GameState, capUsed = 0): FactoryView[] {
+  const factories = Math.max(1, state.factories);
+  let machinesLeft = state.machines;
+  let workersLeft = state.staff.production;
+  const views: FactoryView[] = [];
+
+  for (let i = 0; i < factories; i++) {
+    const machineCount = Math.min(SLOTS_PER_FACTORY, Math.max(0, machinesLeft));
+    machinesLeft -= machineCount;
+    const machines: FactoryMachineView[] = [];
+    let workerCount = 0;
+    let cap = 0;
+    for (let slot = 0; slot < SLOTS_PER_FACTORY; slot++) {
+      if (slot < machineCount) {
+        const workers = Math.min(WORKERS_PER_MACHINE, Math.max(0, workersLeft));
+        workersLeft -= workers;
+        workerCount += workers;
+        const slotCap = MACHINE_BASE_CAP + workers * CAP_PER_WORKER;
+        cap += slotCap;
+        machines.push({ slot: slot + 1, filled: true, workers, cap: slotCap });
+      } else {
+        machines.push({ slot: slot + 1, filled: false, workers: 0, cap: 0 });
+      }
+    }
+    views.push({
+      index: i,
+      name: factoryName(i),
+      machines,
+      machineCount,
+      workerCount,
+      overflow: 0,
+      cap,
+      used: 0,
+    });
+  }
+
+  if (workersLeft > 0) {
+    const host = [...views].reverse().find((view) => view.machineCount > 0) ?? views[views.length - 1]!;
+    host.overflow = workersLeft;
+    host.cap += workersLeft * CAP_OVERFLOW;
+  }
+
+  const extra = state.modifiers.extraCapacity ?? 0;
+  if (extra !== 0 && views[0]) {
+    views[0].cap = Math.max(0, views[0].cap + extra);
+  }
+
+  let usedLeft = capUsed;
+  for (const view of views) {
+    view.used = Math.min(view.cap, usedLeft);
+    usedLeft -= view.used;
+  }
+
+  return views;
 }
 
 export function demandOf(state: GameState, id: ProductId): number {
@@ -720,8 +794,9 @@ function emptyDeptActs(): Record<DeptId, string[]> {
   return { ceo: [], finance: [], hr: [], infra: [], store: [], rd: [], sales: [] };
 }
 
-function noteDept(state: GameState, dept: DeptId, text: string): void {
+function noteDept(state: GameState, dept: DeptId, text: string, toLog = true): void {
   state.deptActs[dept] = [...state.deptActs[dept], text];
+  if (toLog) pushLog(state, text);
 }
 
 export function emptyLedger(): MonthLedger {
@@ -1602,7 +1677,7 @@ function playCardEffect(state: GameState, defId: string): string {
       break;
     case 'client': {
       const order = addMarketOrder(state, volumeProductOf(state), 8);
-      noteDept(state, 'sales', `大客户加单：${productName(order.productId)} ${order.qty} 件`);
+      noteDept(state, 'sales', `大客户加单：${productName(order.productId)} ${order.qty} 件`, false);
       return `渠道加了一张 ${productName(order.productId)} ${order.qty} 件的市场单。`;
     }
     case 'premiumPush':
@@ -1627,7 +1702,7 @@ function playCardEffect(state: GameState, defId: string): string {
       syncFinishedBooks(state);
       remeasureInventoryProvision(state);
       notePeakCash(state);
-      noteDept(state, 'store', `折价清库，成品按七折变现 ${money(cash)}`);
+      noteDept(state, 'store', `折价清库，成品按七折变现 ${money(cash)}`, false);
       return `成品账面 ${money(gross)} 按七折变现 ${money(cash)}，库龄清掉。`;
     }
     case 'collect': {
@@ -1635,14 +1710,14 @@ function playCardEffect(state: GameState, defId: string): string {
       const collected = collectReceivables(state, 1, true);
       remeasureBadDebt(state);
       if (collected <= 0) return '没有到期或逾期的应收账款可催。';
-      noteDept(state, 'finance', `催收到账 ${money(collected)}`);
+      noteDept(state, 'finance', `催收到账 ${money(collected)}`, false);
       return `催收到账 ${money(collected)}。`;
     }
     case 'creditPush': {
       state.modifiers.creditSaleRate = 1;
       state.modifiers.arTermExtra = Math.max(state.modifiers.arTermExtra, 1);
       const order = addMarketOrder(state, volumeProductOf(state), 6);
-      noteDept(state, 'sales', `赊销铺货加单：${productName(order.productId)} ${order.qty} 件`);
+      noteDept(state, 'sales', `赊销铺货加单：${productName(order.productId)} ${order.qty} 件`, false);
       return `加了一张 ${productName(order.productId)} ${order.qty} 件的单，货款全赊、账期拉长。`;
     }
     default:
@@ -2187,7 +2262,6 @@ function purchaseMaterials(state: GameState, items: { material: MaterialId; qty:
     pushLog(state, `集采折扣已使用（${off}% off）。`);
     state.modifiers.nextBuyDiscount = 0;
   }
-  pushLog(state, `${buyNote}。`);
   return state;
 }
 
@@ -2317,7 +2391,6 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
       state.machines += 1;
       state.machineGross = roundMoney((state.machineGross ?? 0) + MACHINE_COST);
       noteDept(state, 'infra', `购入设备 1台，花费 ${money(MACHINE_COST)}，产线现为 ${state.machines} 台`);
-      pushLog(state, `新设备到位。产线 ${state.machines} 台，抵押融资上限 ${money(loanLimit(state.machines))}。`);
       return state;
     }
 
@@ -2336,7 +2409,6 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
       state.factoryGross = roundMoney((state.factoryGross ?? 0) + FACTORY_COST);
       state.slots += SLOTS_PER_FACTORY;
       noteDept(state, 'infra', `扩建厂区 1座，花费 ${money(FACTORY_COST)}，机位现为 ${state.slots}`);
-      pushLog(state, `新厂区开工。机位 ${state.slots}，月维护上调。`);
       return state;
     }
 
@@ -2362,15 +2434,11 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
         rd: 'rd',
       };
       let hireNote = `招聘${ROLE_LABEL[action.role]} 1人。招聘费 ${money(HIRE_COST)} 已付，月薪 ${money(SALARY[action.role])} 计入应付职工薪酬`;
-      let hireLog = `新同事入职：${ROLE_LABEL[action.role]}。招聘费 ${money(HIRE_COST)}，月薪 ${money(SALARY[action.role])} 下月发放。编制 ${totalStaff(state.staff)} 人。`;
       if (action.role === 'sales') {
         const order = rollOneMarketOrder(state);
-        const brought = `${productName(order.productId)} ${order.qty} 件`;
-        hireNote += `。立刻带来${brought}`;
-        hireLog += `立刻带来${brought}。`;
+        hireNote += `。立刻带来${productName(order.productId)} ${order.qty} 件`;
       }
       noteDept(state, hireDept[action.role], hireNote);
-      pushLog(state, hireLog);
       return state;
     }
 
@@ -2397,10 +2465,10 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
       }
       receive(state, amount, 'borrow');
       const interest = monthlyInterest(state.debt);
-      noteDept(state, 'finance', `借入 ${money(amount)}，负债现为 ${money(state.debt)}`);
-      pushLog(
+      noteDept(
         state,
-        `放款 ${money(amount)}。负债 ${money(state.debt)} / 上限 ${money(loanLimit(state.machines))}。月末将计提财务费用 ${money(interest)}。`,
+        'finance',
+        `借入 ${money(amount)}，负债现为 ${money(state.debt)} / 上限 ${money(loanLimit(state.machines))}，月末将计提财务费用 ${money(interest)}`,
       );
       return state;
     }
@@ -2416,7 +2484,6 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
       state.debt = roundMoney(state.debt - amount);
       if (state.quarterStats) state.quarterStats.repaid = true;
       noteDept(state, 'finance', `偿还 ${money(amount)}，负债现为 ${money(state.debt)}`);
-      pushLog(state, `还款 ${money(amount)}。剩余负债 ${money(state.debt)}。`);
       return state;
     }
 
@@ -2441,8 +2508,7 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
       state.shop.splice(action.index, 1);
       state.cardsBoughtThisMonth = 1;
       const name = cardById(card.defId).name;
-      noteDept(state, 'ceo', `立项「${name}」，下月可落地`);
-      pushLog(state, `立项「${name}」。本月不耗现金和行动点，下月才能落地。`);
+      noteDept(state, 'ceo', `立项「${name}」，本月不耗现金和行动点，下月可落地`);
       return state;
     }
 
@@ -2468,7 +2534,7 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
       state.hand.splice(index, 1);
       const text = playCardEffect(state, held.defId);
       if (state.quarterStats) state.quarterStats.playedCard = true;
-      noteDept(state, 'ceo', `落地「${def.name}」：${def.playText}`);
+      noteDept(state, 'ceo', `落地「${def.name}」：${def.playText}`, false);
       pushLog(state, text);
       return state;
     }
@@ -2477,7 +2543,7 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
       if (state.phase !== 'actions') return prev;
       state.phase = 'produce';
       state.deptActs.infra = state.deptActs.infra.filter((line) => !line.startsWith('转入排产'));
-      noteDept(state, 'infra', '转入排产');
+      noteDept(state, 'infra', '转入排产', false);
       return state;
 
     case 'BACK_TO_ACTIONS':
@@ -2495,7 +2561,7 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
         state.acceptedOrderIds = accepted.filter((id) => id !== action.id);
         clampExtraProduce(state);
         state.deptActs.sales = state.deptActs.sales.filter((line) => !line.startsWith('接单'));
-        noteDept(state, 'sales', `放下${productName(order.productId)} ${order.qty} 件`);
+        noteDept(state, 'sales', `放下${productName(order.productId)} ${order.qty} 件`, false);
         return state;
       }
       if (!canAcceptOrder(state, action.id)) {
@@ -2504,7 +2570,7 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
       }
       state.acceptedOrderIds = [...accepted, action.id];
       state.deptActs.sales = state.deptActs.sales.filter((line) => !line.startsWith('接单') && !line.startsWith('放下'));
-      noteDept(state, 'sales', `接单${productName(order.productId)} ${order.qty} 件`);
+      noteDept(state, 'sales', `接单${productName(order.productId)} ${order.qty} 件`, false);
       return state;
     }
 
@@ -2517,7 +2583,7 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
       state.extraProduce = { ...extra, [action.productId]: Math.min(qty, max) };
       state.deptActs.infra = state.deptActs.infra.filter((line) => !line.startsWith('超产'));
       if ((state.extraProduce[action.productId] ?? 0) > 0) {
-        noteDept(state, 'infra', `超产${productName(action.productId)} ${state.extraProduce[action.productId]} 件入库`);
+        noteDept(state, 'infra', `超产${productName(action.productId)} ${state.extraProduce[action.productId]} 件入库`, false);
       }
       return state;
     }
