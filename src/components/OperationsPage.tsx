@@ -23,6 +23,7 @@ import {
 import {
   arOverdueOf,
   bomBookCost,
+  bomCost,
   buyCartCost,
   buyLineCost,
   capacityOf,
@@ -793,6 +794,31 @@ export function OperationsPage({
           title="采购部"
           now={acting}
         >
+          <Facts>
+            <div className="sheet-wrap">
+              <table className="sheet dark compact bom-sheet">
+                <thead>
+                  <tr>
+                    <th>已有产品</th>
+                    <th className="num">账面成本</th>
+                    <th className="num">本期采购</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {products.map((item) => (
+                    <tr key={item.id}>
+                      <td>
+                        {item.tier} · {item.name}
+                        <span className="bom-recipe">{bomLabel(item.bom)}</span>
+                      </td>
+                      <td className="num">{money(bomBookCost(state, item.id))}</td>
+                      <td className="num">{money(bomCost(state, item.id))}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Facts>
           <Actions>
             <div className="spot-list">
               {visibleMaterials.map((item) => {
@@ -811,36 +837,36 @@ export function OperationsPage({
                       <b>{item.name}</b>
                       <span>{money(state.materialPrices[item.id])} / 件</span>
                     </header>
-                    <p className="spot-meta">
-                      <span>库存 {qty(stock)}</span>
-                      <span className={soldOut ? 'bad' : 'good'}>{soldOut ? '现货售罄' : `现货 ${qty(remaining)}`}</span>
-                    </p>
+                    <div className="spot-row">
+                      <p className="spot-meta">
+                        <span>库存 {qty(stock)}</span>
+                        <span className={soldOut ? 'bad' : 'good'}>{soldOut ? '现货售罄' : `现货 ${qty(remaining)}`}</span>
+                      </p>
+                      {soldOut ? null : (
+                        <div className="spot-lots">
+                          {steps.map((n) => (
+                            <button
+                              key={n}
+                              type="button"
+                              className={pick === n ? 'chip on' : 'chip'}
+                              disabled={!acting}
+                              onClick={() =>
+                                setCart((prev) => ({ ...prev, [item.id]: pick === n ? 0 : n }))
+                              }
+                            >
+                              {n === remaining ? `全 ${n}` : n}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </div>
                     {aged ? (
                       <p className="spot-age">
                         库龄 {age} 个月
                         {provision > 0 ? ` · 跌价准备 ${money(provision)}` : ''}
                       </p>
                     ) : null}
-                    {soldOut ? (
-                      <p className="spot-empty">本月额度已尽</p>
-                    ) : (
-                      <div className="spot-lots" style={{ gridTemplateColumns: `repeat(${steps.length}, minmax(0, 1fr))` }}>
-                        {steps.map((n) => (
-                          <button
-                            key={n}
-                            type="button"
-                            className={pick === n ? 'chip on' : 'chip'}
-                            disabled={!acting}
-                            onClick={() =>
-                              setCart((prev) => ({ ...prev, [item.id]: pick === n ? 0 : n }))
-                            }
-                          >
-                            {n === remaining ? `全 ${n}` : n}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                    <p className="spot-pay">{pick > 0 ? `付现 ${money(line)}` : ' '}</p>
+                    {pick > 0 ? <p className="spot-pay">付现 {money(line)}</p> : null}
                   </article>
                 );
               })}
@@ -950,33 +976,10 @@ export function OperationsPage({
         <Stage
           id="rd"
           title="研发部"
-          intro="先看已有 BOM 和人手，再看项目进度。"
           summary={`${state.rdProgress} / ${RD_THRESHOLD} · ${state.staff.rd} 人`}
         >
           <Facts>
-            <div className="sheet-wrap">
-              <table className="sheet dark">
-                <thead>
-                  <tr>
-                    <th>已有产品</th>
-                    <th>BOM</th>
-                    <th className="num">单件料本</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {products.map((item) => (
-                    <tr key={item.id}>
-                      <td>
-                        {item.tier} · {item.name}
-                      </td>
-                      <td>{bomLabel(item.bom)}</td>
-                      <td className="num">{money(bomBookCost(state, item.id))}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-            <div className="row" style={{ marginTop: 12 }}>
+            <div className="row">
               <span>研发人员</span>
               <span>{state.staff.rd} 人</span>
             </div>
