@@ -1287,6 +1287,10 @@ h1,
   color: var(--cream-dim);
 }
 
+.schedule-stock {
+  margin-top: 14px;
+}
+
 .job-list,
 .stock-jobs {
   display: flex;

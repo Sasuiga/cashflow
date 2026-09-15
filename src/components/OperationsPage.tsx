@@ -323,6 +323,7 @@ function ScheduleBoard({
   const orderCap = loads.reduce((sum, load) => sum + load.cap, 0);
   const over = plan.capUsed > plan.capTotal;
   const fill = plan.capTotal > 0 ? Math.min(100, (plan.capUsed / plan.capTotal) * 100) : 0;
+  const [openStock, setOpenStock] = useState(false);
 
   return (
     <section className="schedule-board">
@@ -388,50 +389,59 @@ function ScheduleBoard({
         </div>
       </div>
 
-      <div className="schedule-pane">
-        <header>
-          <p className="dept-kicker">备货入库</p>
-          <span>备货占用 {extraCap}</span>
-        </header>
-        <div className="stock-jobs">
-          {products.map((item) => {
-            const extra = state.extraProduce?.[item.id] ?? 0;
-            const max = maxExtraProduce(state, item.id);
-            const stock = state.finished[item.id] ?? 0;
-            const age = finishedMaxAge(state, item.id);
-            const provision = finishedProvisionOf(state, item.id);
-            return (
-              <article key={item.id} className={['job', extra > 0 ? 'on' : ''].filter(Boolean).join(' ')}>
-                <div>
-                  <span className="suit">{item.tier}</span>
-                  <h4>{item.name}</h4>
-                  <p className="stat">
-                    库存 {qty(stock)}
-                    {age >= 2 ? ` · 库龄 ${age} 个月` : ''}
-                    {provision > 0 ? ` · 跌价 ${money(provision)}` : ''}
-                  </p>
-                </div>
-                <div className="job-cap">
-                  <strong>{extra}</strong>
-                  <span>产能占用</span>
-                </div>
-                <div className="stock-lots">
-                  {EXTRA.map((n) => (
-                    <button
-                      key={n}
-                      type="button"
-                      className={extra === n ? 'chip on' : 'chip'}
-                      disabled={!canEdit || (n > 0 && n > Math.max(extra, max))}
-                      onClick={() => onExtra(item.id, n)}
-                    >
-                      {n === 0 ? '不备货' : `+${n}`}
-                    </button>
-                  ))}
-                </div>
-              </article>
-            );
-          })}
-        </div>
+      <div className={['plant-tab', 'schedule-stock', openStock ? 'open' : ''].filter(Boolean).join(' ')}>
+        <button
+          type="button"
+          className="plant-tab-head"
+          aria-expanded={openStock}
+          onClick={() => setOpenStock((open) => !open)}
+        >
+          <b>备货入库 · 产能占用 {extraCap}</b>
+          <em>{openStock ? '收起' : '展开'}</em>
+        </button>
+        {openStock ? (
+          <div className="plant-tab-body">
+            <div className="stock-jobs">
+              {products.map((item) => {
+                const extra = state.extraProduce?.[item.id] ?? 0;
+                const max = maxExtraProduce(state, item.id);
+                const stock = state.finished[item.id] ?? 0;
+                const age = finishedMaxAge(state, item.id);
+                const provision = finishedProvisionOf(state, item.id);
+                return (
+                  <article key={item.id} className={['job', extra > 0 ? 'on' : ''].filter(Boolean).join(' ')}>
+                    <div>
+                      <span className="suit">{item.tier}</span>
+                      <h4>{item.name}</h4>
+                      <p className="stat">
+                        库存 {qty(stock)}
+                        {age >= 2 ? ` · 库龄 ${age} 个月` : ''}
+                        {provision > 0 ? ` · 跌价 ${money(provision)}` : ''}
+                      </p>
+                    </div>
+                    <div className="job-cap">
+                      <strong>{extra}</strong>
+                      <span>产能占用</span>
+                    </div>
+                    <div className="stock-lots">
+                      {EXTRA.map((n) => (
+                        <button
+                          key={n}
+                          type="button"
+                          className={extra === n ? 'chip on' : 'chip'}
+                          disabled={!canEdit || (n > 0 && n > Math.max(extra, max))}
+                          onClick={() => onExtra(item.id, n)}
+                        >
+                          {n === 0 ? '不备货' : `+${n}`}
+                        </button>
+                      ))}
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          </div>
+        ) : null}
       </div>
 
       {producing ? (
@@ -467,7 +477,7 @@ export function OperationsPage({
   const [loanAmt, setLoanAmt] = useState(4);
   const [hireRole, setHireRole] = useState<Role | null>(null);
   const [plantKind, setPlantKind] = useState<PlantKind | null>(null);
-  const [openPlant, setOpenPlant] = useState(0);
+  const [openPlant, setOpenPlant] = useState(-1);
   const [settleOpen, setSettleOpen] = useState(false);
   const [pendingAdopt, setPendingAdopt] = useState<number | null>(null);
 
@@ -940,7 +950,7 @@ export function OperationsPage({
           <Facts>
             <PlantBoard
               plants={plants}
-              openIndex={openPlant >= plants.length ? plants.length - 1 : openPlant}
+              openIndex={openPlant >= plants.length ? -1 : openPlant}
               extraCapacity={state.modifiers.extraCapacity}
               onToggle={(index) => setOpenPlant(openPlant === index ? -1 : index)}
             />
