@@ -3,6 +3,13 @@ import { goalById } from '../src/game/board';
 import { roundMoney } from '../src/game/format';
 import type { GameState } from '../src/game/types';
 
+function confirmBoard(state: GameState): GameState {
+  const id = (state.challengePoolIds ?? [])[0];
+  if (!id) throw new Error('Board pool empty');
+  if (!state.challengeDraft.includes(id)) state = reduce(state, { type: 'TOGGLE_BOARD_GOAL', id });
+  return reduce(state, { type: 'CONFIRM_BOARD' });
+}
+
 function assert(cond: boolean, message: string): void {
   if (!cond) throw new Error(message);
 }
@@ -49,10 +56,8 @@ function checkBoardVariety(): void {
 function checkMarketQuotes(): void {
   let state = reduce(createInitialState(), { type: 'START_GAME' });
   assert(typeof state.marketTrend?.materials.a === 'number', '开季应写下行情定调');
-  const ids = (state.challengePoolIds ?? []).slice(0, 2);
-  assert(ids.length === 2, '开局应发出四选二议题');
-  for (const id of ids) state = reduce(state, { type: 'TOGGLE_BOARD_GOAL', id });
-  state = reduce(state, { type: 'CONFIRM_BOARD' });
+  assert((state.challengePoolIds ?? []).length === 4, '开局应发出四条挑战议题');
+  state = confirmBoard(state);
   assert(state.phase === 'briefing', '确认目标后应进入月报');
   const diffA = Math.abs(state.materialPrices.a - state.prevMaterialPrices.a);
   assert(diffA < 0.05 || Math.abs(diffA - 0.1) < 1e-6, `钢材月度台阶应为 0 或 0.1，实际 ${diffA}`);
@@ -67,10 +72,7 @@ function checkMarketQuotes(): void {
 function checkSalesOrders(): void {
   const opened = reduce(createInitialState(), { type: 'START_GAME' });
   assert(opened.staff.sales === 0, `开局应无销售人员，实际 ${opened.staff.sales}`);
-  const ids = (opened.challengePoolIds ?? []).slice(0, 2);
-  let state = opened;
-  for (const id of ids) state = reduce(state, { type: 'TOGGLE_BOARD_GOAL', id });
-  state = reduce(state, { type: 'CONFIRM_BOARD' });
+  let state = confirmBoard(opened);
   state = reduce(state, { type: 'CONFIRM_BRIEFING' });
   state = reduce(state, { type: 'ACK_EVENT' });
   const orders = state.monthOrders ?? [];
@@ -122,10 +124,7 @@ function checkFactoryLayout(): void {
 }
 
 function checkSpotPurchase(): void {
-  let state = reduce(createInitialState(), { type: 'START_GAME' });
-  const ids = (state.challengePoolIds ?? []).slice(0, 2);
-  for (const id of ids) state = reduce(state, { type: 'TOGGLE_BOARD_GOAL', id });
-  state = reduce(state, { type: 'CONFIRM_BOARD' });
+  let state = confirmBoard(reduce(createInitialState(), { type: 'START_GAME' }));
   state = reduce(state, { type: 'CONFIRM_BRIEFING' });
   state = reduce(state, { type: 'ACK_EVENT' });
   const volumes = (state.monthOrders ?? []).filter((order) => order.productId === 'basic' || order.productId === 'economy');
@@ -149,10 +148,7 @@ function checkSpotPurchase(): void {
 }
 
 function checkProposals(): void {
-  let state = reduce(createInitialState(), { type: 'START_GAME' });
-  const ids = (state.challengePoolIds ?? []).slice(0, 2);
-  for (const id of ids) state = reduce(state, { type: 'TOGGLE_BOARD_GOAL', id });
-  state = reduce(state, { type: 'CONFIRM_BOARD' });
+  let state = confirmBoard(reduce(createInitialState(), { type: 'START_GAME' }));
   assert(state.shop.length === 3, '确认目标后应出示三份本月提案');
   state = reduce(state, { type: 'CONFIRM_BRIEFING' });
   state = reduce(state, { type: 'ACK_EVENT' });
@@ -202,13 +198,7 @@ function settleFirstMonth(): GameState {
       return state;
     }
     if (state.phase === 'board') {
-      const pool = (state.challengePoolIds ?? []).filter((id) => id.startsWith(`q${state.quarter}-`));
-      const ids = pool.slice(0, 2);
-      if (ids.length < 2) throw new Error(`Board pool too small: ${pool.join(',')}`);
-      for (const id of ids) {
-        if (!state.challengeDraft.includes(id)) state = reduce(state, { type: 'TOGGLE_BOARD_GOAL', id });
-      }
-      state = reduce(state, { type: 'CONFIRM_BOARD' });
+      state = confirmBoard(state);
       continue;
     }
     if (state.phase === 'briefing') {
@@ -244,16 +234,14 @@ function play(): GameState {
     if (state.phase === 'ended') return state;
     if (state.phase === 'board') {
       const fallback = {
-        1: ['q1-sold30', 'q1-stock'],
-        2: ['q2-machine', 'q2-staff6'],
-        3: ['q3-rd', 'q3-sales'],
-        4: ['q4-flagship', 'q4-nodebt'],
+        1: ['q1-sold30'],
+        2: ['q2-machine'],
+        3: ['q3-rd'],
+        4: ['q4-flagship'],
       }[state.quarter]!;
       const pool = (state.challengePoolIds ?? []).filter((id) => id.startsWith(`q${state.quarter}-`));
-      const ids = (pool.length >= 2 ? pool : fallback).slice(0, 2);
-      for (const id of ids) {
-        if (!state.challengeDraft.includes(id)) state = reduce(state, { type: 'TOGGLE_BOARD_GOAL', id });
-      }
+      const id = (pool[0] ?? fallback[0])!;
+      if (!state.challengeDraft.includes(id)) state = reduce(state, { type: 'TOGGLE_BOARD_GOAL', id });
       state = reduce(state, { type: 'CONFIRM_BOARD' });
       continue;
     }

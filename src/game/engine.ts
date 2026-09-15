@@ -42,6 +42,7 @@ import {
 import { ACHIEVEMENTS } from './achievements';
 import {
   BASIC_PENALTY,
+  CHALLENGE_PICK,
   CHALLENGE_POINTS,
   CLIMATES,
   QUARTER_LABEL,
@@ -2369,14 +2370,14 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
       if (pool.length > 0 && !pool.includes(id)) return prev;
       if (state.challengeDraft.includes(id)) {
         state.challengeDraft = state.challengeDraft.filter((item) => item !== id);
-      } else if (state.challengeDraft.length < 2) {
-        state.challengeDraft = [...state.challengeDraft, id];
+      } else {
+        state.challengeDraft = [id];
       }
       return state;
     }
 
     case 'CONFIRM_BOARD': {
-      if (state.phase !== 'board' || state.challengeDraft.length !== 2) return prev;
+      if (state.phase !== 'board' || state.challengeDraft.length !== CHALLENGE_PICK) return prev;
       state.challengeGoalIds = [...state.challengeDraft];
       prepareMonth(state);
       syncMonthWages(state);

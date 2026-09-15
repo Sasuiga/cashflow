@@ -21,6 +21,7 @@ export type GoalAxis =
 
 export const BASIC_PENALTY = 5;
 export const CHALLENGE_POINTS = 5;
+export const CHALLENGE_PICK = 1;
 
 export interface ClimateDef {
   id: ClimateId;
@@ -102,6 +103,47 @@ export function trendWord(dir: TrendDir): string {
   if (dir > 0) return '看涨';
   if (dir < 0) return '看跌';
   return '持稳';
+}
+
+function demandWord(dir: TrendDir): string {
+  if (dir > 0) return '偏旺';
+  if (dir < 0) return '偏弱';
+  return '持稳';
+}
+
+function quotaWord(dir: TrendDir): string {
+  if (dir > 0) return '偏紧';
+  if (dir < 0) return '偏松';
+  return '持稳';
+}
+
+function clampTrend(dir: number): TrendDir {
+  if (dir > 0) return 1;
+  if (dir < 0) return -1;
+  return 0;
+}
+
+function collapseTrend(parts: { name: string; dir: TrendDir }[], word: (dir: TrendDir) => string): string {
+  if (parts.length === 0) return '暂无';
+  const first = parts[0]!.dir;
+  if (parts.every((item) => item.dir === first)) return word(first);
+  return parts.map((item) => `${item.name}${word(item.dir)}`).join(' · ');
+}
+
+function demandDirOf(climateId: ClimateId, productId: ProductId): TrendDir {
+  if (climateId === 'channel' && (productId === 'basic' || productId === 'economy')) return 1;
+  if (climateId === 'chip' && (productId === 'standard' || productId === 'premium')) return -1;
+  return 0;
+}
+
+function quotaDirOf(climateId: ClimateId, materialId: MaterialId, priceTrend: TrendDir): TrendDir {
+  let dir = 0;
+  if (materialId === 'a' && climateId === 'steel') dir += 1;
+  if ((materialId === 'a' || materialId === 'b') && climateId === 'channel') dir -= 1;
+  if (materialId === 'c' && climateId === 'chip') dir += 1;
+  if (priceTrend > 0) dir += 1;
+  if (priceTrend < 0) dir -= 1;
+  return clampTrend(dir);
 }
 
 export function emptyMarketTrend() {
@@ -192,17 +234,37 @@ export function monthMarketLog(state: GameState): string {
   return `${state.month} 月行情：${marketTrendLog(state)}${quotedMoveLog(state)}`;
 }
 
-export function marketDigest(state: GameState): string {
-  const climate = climateById(state.climateId);
-  const parts = [`本季定调：${marketToneLine(state)}。`, climate.briefing, quotedMoveLog(state)];
-  const spots = MATERIALS.filter((mat) => mat.id !== 'd' || state.materialDUnlocked).map((mat) => {
-    const qty = Math.max(0, state.materialSpot?.[mat.id] ?? 0);
-    return `${mat.name}${qty}件`;
-  });
-  if (spots.length > 0) {
-    parts.push(`本月现货额度：${spots.join('、')}，月末作废，高级料更紧。`);
-  }
-  return parts.join('');
+export function quarterOutlook(state: GameState): {
+  materials: string;
+  products: string;
+  demand: string;
+  quota: string;
+} {
+  const trend = state.marketTrend ?? emptyMarketTrend();
+  const climateId = state.climateId;
+  const materials = MATERIALS.filter((mat) => mat.id !== 'd' || state.materialDUnlocked);
+  const unlocked = PRODUCTS.filter((item) => state.unlockedProducts.includes(item.id));
+  return {
+    materials: collapseTrend(
+      materials.map((mat) => ({ name: mat.name, dir: trend.materials[mat.id] ?? 0 })),
+      trendWord,
+    ),
+    products: collapseTrend(
+      unlocked.map((item) => ({ name: item.name, dir: trend.products[item.id] ?? 0 })),
+      trendWord,
+    ),
+    demand: collapseTrend(
+      unlocked.map((item) => ({ name: item.name, dir: demandDirOf(climateId, item.id) })),
+      demandWord,
+    ),
+    quota: collapseTrend(
+      materials.map((mat) => ({
+        name: mat.name,
+        dir: quotaDirOf(climateId, mat.id, trend.materials[mat.id] ?? 0),
+      })),
+      quotaWord,
+    ),
+  };
 }
 
 export function emptyQuarterStats(

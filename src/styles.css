@@ -1690,6 +1690,16 @@ button.job:hover {
   line-height: 1.6;
 }
 
+.quarter-outlook {
+  margin: 0 0 18px;
+  font-size: 14px;
+  line-height: 1.75;
+}
+
+.quarter-outlook p {
+  margin: 0;
+}
+
 .choice {
   width: 100%;
   text-align: left;
@@ -1747,6 +1757,8 @@ button.job:hover {
 
 .briefing-digest {
   font-size: 14px;
+  white-space: pre-line;
+  line-height: 1.75;
 }
 
 .sheet {

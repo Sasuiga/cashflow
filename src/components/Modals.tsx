@@ -1,7 +1,7 @@
 import { MATERIALS, PRODUCTS, eventById } from '../game/data';
 import { booksForView, netProfitOf, operatingCashOf } from '../game/engine';
 import { MONTH_NAMES, money, priceDelta, signedMoney } from '../game/format';
-import { QUARTER_LABEL, climateById, currentBasicGoal, currentChallengePool, marketDigest, marketToneLine } from '../game/board';
+import { QUARTER_LABEL, CHALLENGE_PICK, climateById, currentBasicGoal, currentChallengePool, quarterOutlook } from '../game/board';
 import type { GameState } from '../game/types';
 
 export function BoardModal({
@@ -17,7 +17,8 @@ export function BoardModal({
   const basic = currentBasicGoal(state);
   const pool = currentChallengePool(state);
   const picked = new Set(state.challengeDraft);
-  const ready = state.challengeDraft.length === 2;
+  const ready = state.challengeDraft.length === CHALLENGE_PICK;
+  const outlook = quarterOutlook(state);
   return (
     <div className="overlay">
       <div className="modal">
@@ -31,25 +32,23 @@ export function BoardModal({
             <p>{state.boardMinutes}</p>
           </div>
         )}
-        <p className="lead">{climate.headline}</p>
-        <p className="sheet-caption">本季市场基调 · {climate.name}</p>
+        <p className="sheet-caption">本季定调 · {climate.name}</p>
         <p className="lead" style={{ marginTop: 0 }}>
-          {climate.briefing}
+          {climate.headline}月度事件可能扭转定调。
         </p>
-        <p className="sheet-caption">本季行情定调</p>
-        <p className="lead" style={{ marginTop: 0 }}>
-          {marketToneLine(state)}。月度事件可能扭转定调。
-        </p>
+        <div className="quarter-outlook">
+          <p>原料价格：{outlook.materials}。</p>
+          <p>成品价格：{outlook.products}。</p>
+          <p>成品需求：{outlook.demand}。</p>
+          <p>到货配额：{outlook.quota}。</p>
+        </div>
         <div className="event-impact">
           <b>基本目标 · 未达成扣 5 分</b>
           <p>
             {basic.name}。{basic.desc}
           </p>
         </div>
-        <p className="sheet-caption">挑战目标 · 本季四选二 · 兑现各 5 分</p>
-        <p className="lead event-hint" style={{ marginTop: 0 }}>
-          基本目标和挑战议题每季重抽，四条挑战分属不同经营方向。
-        </p>
+        <p className="sheet-caption">挑战目标 · 本季四选一 · 兑现 5 分</p>
         {pool.map((goal) => {
           const on = picked.has(goal.id);
           return (
@@ -66,7 +65,7 @@ export function BoardModal({
             </button>
           );
         })}
-        <p className="lead event-hint">{ready ? '两条挑战目标已选定。' : '选定两条挑战目标。'}</p>
+        <p className="lead event-hint">{ready ? '挑战目标已选定。' : '选定一条挑战目标。'}</p>
         <div className="footer-actions">
           <button className="btn" disabled={!ready} onClick={onConfirm}>
             确认本季目标
@@ -84,8 +83,7 @@ export function BriefingModal({ state, onConfirm }: { state: GameState; onConfir
     <div className="overlay">
       <div className="modal briefing-modal">
         <h2>{MONTH_NAMES[state.month - 1]} · 行业月报</h2>
-        <p className="lead briefing-digest">{marketDigest(state)}</p>
-        <p className="sheet-caption">原料报价 · 万元/件 · 本月现货月末作废</p>
+        <p className="sheet-caption">原料供应</p>
         <div className="sheet-wrap briefing-sheet">
         <table className="sheet compact">
           <thead>

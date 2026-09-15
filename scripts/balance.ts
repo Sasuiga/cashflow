@@ -7,16 +7,14 @@ function play(style: 'idle' | 'expand' | 'lean', seed: number): GameState {
     if (state.phase === 'ended') return state;
     if (state.phase === 'board') {
       const fallback = {
-        1: ['q1-sold30', 'q1-stock'],
-        2: ['q2-machine', 'q2-staff6'],
-        3: ['q3-rd', 'q3-sales'],
-        4: ['q4-flagship', 'q4-nodebt'],
+        1: ['q1-sold30'],
+        2: ['q2-machine'],
+        3: ['q3-rd'],
+        4: ['q4-flagship'],
       }[state.quarter]!;
       const pool = (state.challengePoolIds ?? []).filter((id) => id.startsWith(`q${state.quarter}-`));
-      const ids = (pool.length >= 2 ? pool : fallback).slice(0, 2);
-      for (const id of ids) {
-        if (!state.challengeDraft.includes(id)) state = reduce(state, { type: 'TOGGLE_BOARD_GOAL', id });
-      }
+      const id = (pool[0] ?? fallback[0])!;
+      if (!state.challengeDraft.includes(id)) state = reduce(state, { type: 'TOGGLE_BOARD_GOAL', id });
       state = reduce(state, { type: 'CONFIRM_BOARD' });
       continue;
     }
