@@ -367,6 +367,22 @@ function emptyMats(): Materials {
   return { a: 0, b: 0, c: 0, d: 0 };
 }
 
+function emptySpot(): Record<MaterialId, number> {
+  return { a: 0, b: 0, c: 0, d: 0 };
+}
+
+export function spotOf(state: GameState, id: MaterialId): number {
+  return Math.max(0, state.materialSpot?.[id] ?? 0);
+}
+
+export function purchaseQtyOptions(remaining: number): number[] {
+  if (remaining <= 0) return [];
+  const ladder = remaining >= 10 ? [5, 10, 20, 40] : remaining >= 5 ? [2, 5, 10] : [1, 2];
+  const steps = ladder.filter((n) => n <= remaining);
+  if (!steps.includes(remaining)) steps.push(remaining);
+  return steps.sort((a, b) => a - b);
+}
+
 export function volumeProductOf(state: GameState): ProductId {
   return state.unlockedProducts.includes('economy') ? 'economy' : (state.unlockedProducts[0] ?? 'basic');
 }
@@ -451,12 +467,17 @@ function syncDemandFromOrders(state: GameState): void {
 }
 
 function orderSizePool(productId: ProductId, sales: number, channel: boolean): number[] {
-  if (productId === 'basic' || productId === 'economy') {
-    if (sales >= 2 || channel) return [4, 6, 8];
-    return [4, 6];
-  }
-  if (productId === 'standard') return sales >= 2 || channel ? [2, 4, 6] : [2, 4];
-  return sales >= 2 ? [1, 2, 3] : [1, 2];
+  const boosted = sales >= 2 || channel;
+  if (productId === 'basic' || productId === 'economy') return boosted ? [10, 12, 16] : [8, 10, 12];
+  if (productId === 'standard') return boosted ? [4, 6] : [3, 4];
+  return boosted ? [1, 2] : [1];
+}
+
+function sizeAfterDemand(qty: number, productId: ProductId, extra: number): number {
+  const volume = productId === 'basic' || productId === 'economy';
+  if (extra <= -6) return Math.max(volume ? 6 : 1, qty - (volume ? 4 : 1));
+  if (extra >= 8) return qty + (volume ? 4 : 1);
+  return qty;
 }
 
 function weightedProducts(state: GameState): ProductId[] {
@@ -502,16 +523,23 @@ function rollMonthOrders(state: GameState): void {
   }
 
   const volume = volumeProductOf(state);
-  pushOrder(state, { productId: volume, qty: 4, kind: 'market', penalty: 0 });
+  const volumeQty = sizeAfterDemand(
+    pick(orderSizePool(volume, state.staff.sales, channel)),
+    volume,
+    state.modifiers.extraDemand ?? 0,
+  );
+  pushOrder(state, { productId: volume, qty: volumeQty, kind: 'market', penalty: 0 });
 
   const pool = weightedProducts(state);
   let guard = 0;
   while ((state.monthOrders?.length ?? 0) < count && guard < 12) {
     guard += 1;
     const productId = pick(pool);
-    let qty = pick(orderSizePool(productId, state.staff.sales, channel));
-    if ((state.modifiers.extraDemand ?? 0) <= -6) qty = Math.max(1, qty - 2);
-    if ((state.modifiers.extraDemand ?? 0) >= 8) qty += 2;
+    const qty = sizeAfterDemand(
+      pick(orderSizePool(productId, state.staff.sales, channel)),
+      productId,
+      state.modifiers.extraDemand ?? 0,
+    );
     const dup = (state.monthOrders ?? []).some((item) => item.productId === productId && item.qty === qty && item.kind === 'market');
     if (dup && guard < 8) continue;
     pushOrder(state, { productId, qty, kind: 'market', penalty: 0 });
@@ -532,9 +560,11 @@ function rollOneMarketOrder(state: GameState): MonthOrder {
   let qty = 4;
   for (let guard = 0; guard < 8; guard += 1) {
     productId = pick(pool);
-    qty = pick(orderSizePool(productId, state.staff.sales, channel));
-    if ((state.modifiers.extraDemand ?? 0) <= -6) qty = Math.max(1, qty - 2);
-    if ((state.modifiers.extraDemand ?? 0) >= 8) qty += 2;
+    qty = sizeAfterDemand(
+      pick(orderSizePool(productId, state.staff.sales, channel)),
+      productId,
+      state.modifiers.extraDemand ?? 0,
+    );
     const dup = (state.monthOrders ?? []).some(
       (item) => item.productId === productId && item.qty === qty && item.kind === 'market',
     );
@@ -1294,6 +1324,35 @@ function rollMarket(state: GameState): void {
   }
 }
 
+function rollSpotQty(id: MaterialId, state: GameState): number {
+  if (id === 'd' && !state.materialDUnlocked) return 0;
+  const climate = state.climateId;
+  const trend = state.marketTrend?.materials[id] ?? 0;
+  let pool: number[];
+  if (id === 'a') pool = climate === 'steel' ? [6, 8, 10] : climate === 'channel' ? [12, 16, 20] : [8, 10, 12, 16];
+  else if (id === 'b') pool = climate === 'channel' ? [8, 10, 12] : [6, 8, 10, 12];
+  else if (id === 'c') pool = climate === 'chip' ? [1, 2] : [2, 3, 4];
+  else pool = [1, 2];
+  let qty = pick(pool);
+  if (trend > 0) qty -= id === 'c' || id === 'd' ? 1 : 4;
+  if (trend < 0) qty += id === 'c' || id === 'd' ? 1 : 4;
+  if (id === 'a' || id === 'b') return clamp(qty, 4, 24);
+  if (id === 'c') return clamp(qty, 0, 6);
+  return clamp(qty, 0, 3);
+}
+
+function rollMaterialSpot(state: GameState): void {
+  const next = emptySpot();
+  for (const id of MATERIAL_IDS) next[id] = rollSpotQty(id, state);
+  state.materialSpot = next;
+}
+
+function adjustSpot(state: GameState, id: MaterialId, delta: number): number {
+  if (!state.materialSpot) state.materialSpot = emptySpot();
+  state.materialSpot[id] = Math.max(0, (state.materialSpot[id] ?? 0) + delta);
+  return state.materialSpot[id];
+}
+
 function eventEligible(state: GameState, event: EventDef): boolean {
   if (event.minMonth && state.month < event.minMonth) return false;
   if (event.channelOnly && state.climateId !== 'channel') return false;
@@ -1363,6 +1422,7 @@ function prepareMonth(state: GameState): void {
   state.maxAp = maxApFor(state.staff);
   state.ap = state.maxAp;
   rollMarket(state);
+  rollMaterialSpot(state);
   state.eventId = pickEvent(state);
   state.eventNote = null;
   state.phase = 'briefing';
@@ -1579,8 +1639,10 @@ function applyEvent(state: GameState): void {
       state.materialPrices.a = boundMaterialPrice('a', before * mult);
       setMaterialTrend(state, 'a', 1);
       const lost = takeMaterial(state, 'a', cut);
+      const left = adjustSpot(state, 'a', -cut);
       bits.push(`钢材报价上调 ${quotedPct(before, state.materialPrices.a)}%，现为 ${money(state.materialPrices.a)}/件`);
       bits.push(`本季钢材定调改为${trendWord(1)}`);
+      bits.push(`本月钢材现货额度砍至 ${left}`);
       if (lost > 0) bits.push(`到货配额被砍，钢材库存 -${lost}`);
       break;
     }
@@ -1591,8 +1653,10 @@ function applyEvent(state: GameState): void {
       state.materialPrices.b = boundMaterialPrice('b', before * mult);
       setMaterialTrend(state, 'b', 1);
       const lost = takeMaterial(state, 'b', cut);
+      const left = adjustSpot(state, 'b', -cut);
       bits.push(`塑料报价上调 ${quotedPct(before, state.materialPrices.b)}%，现为 ${money(state.materialPrices.b)}/件`);
       bits.push(`本季塑料定调改为${trendWord(1)}`);
+      bits.push(`本月塑料现货额度砍至 ${left}`);
       if (lost > 0) bits.push(`到货配额被砍，塑料库存 -${lost}`);
       break;
     }
@@ -1664,8 +1728,10 @@ function applyEvent(state: GameState): void {
       state.materialPrices.c = boundMaterialPrice('c', before * mult);
       setMaterialTrend(state, 'c', 1);
       const lost = takeMaterial(state, 'c', cut);
+      const left = adjustSpot(state, 'c', -cut);
       bits.push(`芯片报价上调 ${quotedPct(before, state.materialPrices.c)}%，现为 ${money(state.materialPrices.c)}/件`);
       bits.push(`本季芯片定调改为${trendWord(1)}`);
+      bits.push(`本月芯片现货额度砍至 ${left}`);
       if (lost > 0) bits.push(`配额被收，库存芯片 -${lost}`);
       break;
     }
@@ -1720,7 +1786,7 @@ function applyEvent(state: GameState): void {
       break;
     }
     case 'rushStandard': {
-      const qty = shockOf(shock, 4, 6, 8);
+      const qty = shockOf(shock, 2, 3, 4);
       const penalty = shockOf(shock, 3, 4, 6);
       state.pendingDeal = {
         productId: 'standard',
@@ -1852,11 +1918,14 @@ function applyEvent(state: GameState): void {
     }
     case 'chipAlloc': {
       const qty = shockOf(shock, 1, 2, 3);
+      const extra = shockOf(shock, 1, 1, 2);
       const before = state.materialPrices.c;
       grantMaterial(state, 'c', qty);
+      const left = adjustSpot(state, 'c', extra);
       moveMaterialPrice(state, 'c', -1);
       setMaterialTrend(state, 'c', -1);
       bits.push(`芯片配额到货 ${qty} 件，已按市价入库`);
+      bits.push(`本月芯片现货额度 +${extra}，剩余 ${left}`);
       if (state.materialPrices.c !== before) {
         bits.push(`芯片报价落到 ${money(state.materialPrices.c)}/件`);
       }
@@ -1972,6 +2041,7 @@ export function createInitialState(): GameState {
     prevMaterialPrices: { a: 0.4, b: 0.4, c: 1, d: 2 },
     prevProductPrices: { basic: 1.5, standard: 4, premium: 6 },
     marketTrend: emptyMarketTrend(),
+    materialSpot: { a: 0, b: 0, c: 0, d: 0 },
     demand: { basic: 20, standard: 10, premium: 5 },
     unlockedProducts: ['basic', 'standard', 'premium'],
     materialDUnlocked: false,
@@ -2040,7 +2110,23 @@ function purchaseMaterials(state: GameState, items: { material: MaterialId; qty:
       return state;
     }
   }
-  const total = buyCartCost(state, lines);
+  if (!state.materialSpot) state.materialSpot = emptySpot();
+  const leftover = { ...state.materialSpot };
+  const filled: { material: MaterialId; qty: number; asked: number }[] = [];
+  for (const line of lines) {
+    const qty = Math.min(line.qty, leftover[line.material] ?? 0);
+    if (qty <= 0) continue;
+    leftover[line.material] = (leftover[line.material] ?? 0) - qty;
+    filled.push({ material: line.material, qty, asked: line.qty });
+  }
+  if (filled.length === 0) {
+    pushLog(state, '本月现货不足，采购未成交。');
+    return state;
+  }
+  const total = buyCartCost(
+    state,
+    filled.map((line) => ({ material: line.material, qty: line.qty })),
+  );
   if (state.cash < total) {
     pushLog(state, '采购金额超过现金。');
     return state;
@@ -2050,7 +2136,8 @@ function purchaseMaterials(state: GameState, items: { material: MaterialId; qty:
     return state;
   }
   const parts: string[] = [];
-  for (const line of lines) {
+  let bought = 0;
+  for (const line of filled) {
     const cost = buyLineCost(state, line.material, line.qty);
     pay(state, cost, 'buy');
     state.materialLayers[line.material] = addLayer(
@@ -2059,10 +2146,13 @@ function purchaseMaterials(state: GameState, items: { material: MaterialId; qty:
       cost,
       state.month,
     );
-    parts.push(`${materialName(line.material)}${line.qty}件 ${money(cost)}`);
+    state.materialSpot[line.material] = leftover[line.material] ?? 0;
+    bought += line.qty;
+    const short = line.qty < line.asked ? `（现货只够 ${line.qty} 件）` : '';
+    parts.push(`${materialName(line.material)}${line.qty}件 ${money(cost)}${short}`);
   }
   if (state.quarterStats) {
-    state.quarterStats.boughtQty = (state.quarterStats.boughtQty ?? 0) + lines.reduce((sum, line) => sum + line.qty, 0);
+    state.quarterStats.boughtQty = (state.quarterStats.boughtQty ?? 0) + bought;
   }
   syncMaterialBooks(state);
   const off = Math.round(state.modifiers.nextBuyDiscount * 100);
@@ -2126,6 +2216,12 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
   }
   if (!state.prevMaterialPrices) state.prevMaterialPrices = { ...state.materialPrices };
   if (!state.prevProductPrices) state.prevProductPrices = { ...state.productPrices };
+  if (!state.materialSpot) {
+    state.materialSpot = emptySpot();
+    if (state.phase === 'briefing' || state.phase === 'event' || state.phase === 'actions' || state.phase === 'produce') {
+      rollMaterialSpot(state);
+    }
+  }
 
   switch (action.type) {
     case 'TOGGLE_BOARD_GOAL': {

@@ -176,6 +176,13 @@ export function marketDigest(state: GameState): string {
   const parts = [`本季定调：${marketToneLine(state)}。`, climate.briefing];
   parts.push(matMoves.length > 0 ? `原料方面，${matMoves.join('，')}。` : '原料报价较上月没有明显台阶。');
   parts.push(productMoves.length > 0 ? `成品这边，${productMoves.join('，')}。` : '成品市价较上月没有明显台阶。');
+  const spots = MATERIALS.filter((mat) => mat.id !== 'd' || state.materialDUnlocked).map((mat) => {
+    const qty = Math.max(0, state.materialSpot?.[mat.id] ?? 0);
+    return `${mat.name}${qty}件`;
+  });
+  if (spots.length > 0) {
+    parts.push(`本月现货额度：${spots.join('、')}，月末作废，高级料更紧。`);
+  }
   return parts.join('');
 }
 

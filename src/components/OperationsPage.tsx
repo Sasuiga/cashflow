@@ -37,7 +37,9 @@ import {
   productionPlan,
   receivablesGross,
   receivablesNet,
+  purchaseQtyOptions,
   sellPriceOf,
+  spotOf,
   totalStaff,
 } from '../game/engine';
 import { MONTH_NAMES, ROLE_HINT, ROLE_LABEL, bomLabel, materialName, money, qty, roundMoney, signedMoney } from '../game/format';
@@ -45,7 +47,6 @@ import { QUARTER_LABEL, climateById, goalById, marketToneLine, q3ProcurementFree
 import type { DeptId, GameAction, GameState, MaterialId, MonthOrder, Role } from '../game/types';
 
 const ROLES: Role[] = ['production', 'management', 'sales', 'rd'];
-const QTY = [10, 20, 40];
 const LOAN = [2, 4, 8];
 const EXTRA = [0, 2, 4, 6];
 
@@ -76,6 +77,7 @@ function orderPreview(state: GameState, order: MonthOrder) {
     cash: roundMoney(revenue - credit),
     stock: state.finished[order.productId] ?? 0,
     unitMat,
+    unitGross: roundMoney(price - unitMat),
     gross: roundMoney(revenue - order.qty * unitMat),
   };
 }
@@ -155,7 +157,7 @@ export function OperationsPage({
   const canBuy = acting && (canAct || buyApFree);
   const visibleMaterials = MATERIALS.filter((item) => item.id !== 'd' || state.materialDUnlocked);
   const cartItems = visibleMaterials
-    .map((item) => ({ material: item.id, qty: cart[item.id] ?? 0 }))
+    .map((item) => ({ material: item.id, qty: Math.min(cart[item.id] ?? 0, spotOf(state, item.id)) }))
     .filter((line) => line.qty > 0);
   const cartTotal = buyCartCost(state, cartItems);
   const cartOk = cartItems.length > 0 && state.cash >= cartTotal;
@@ -204,9 +206,8 @@ export function OperationsPage({
   const basicGoal = state.basicGoalId ? goalById(state.basicGoalId) : null;
   const challengeGoals = (state.challengeGoalIds ?? []).map((id) => goalById(id));
   const materialSummary = visibleMaterials
-    .filter((item) => state.materials[item.id] > 0)
-    .map((item) => `${item.name} ${qty(state.materials[item.id])}`)
-    .join(' · ') || '原料库存为空';
+    .map((item) => `${item.name}库${qty(state.materials[item.id])} / 现货${spotOf(state, item.id)}`)
+    .join(' · ') || '本月暂无原料现货';
   const orders = state.monthOrders ?? [];
   const accepted = state.acceptedOrderIds ?? [];
   const plan = productionPlan(state);
@@ -406,7 +407,7 @@ export function OperationsPage({
         <Stage
           id="sales"
           title="销售部"
-          intro="招募销售立刻多一张本月订单。整张交得出才接，接单不耗行动点。"
+          intro="走量单件数大、占产能、现销好看；高端单毛利厚，但芯片现货紧，当月往往买不齐。整张交得出才接，接单不耗行动点。"
           summary={
             orders.length
               ? `已接 ${accepted.length}/${orders.length} 张 · 销售 ${state.staff.sales} 人`
@@ -455,6 +456,9 @@ export function OperationsPage({
                         <span>库存 {view.stock}</span>
                         <span>单价 {money(view.price)}</span>
                         <span>单件料本 {money(view.unitMat)}</span>
+                        <span>单件毛利 {money(view.unitGross)}</span>
+                        <span>毛利 {money(view.gross)}</span>
+                        <span>占产能 {order.qty}</span>
                         <span>营业收入 {money(view.revenue)}</span>
                         <span>现销 {money(view.cash)}</span>
                         <span>赊销 {money(view.credit)}</span>
@@ -474,7 +478,7 @@ export function OperationsPage({
         <Stage
           id="materials"
           title="采购部"
-          intro="勾选要买的料，确认后一次付现、耗 1 AP。"
+          intro="本月现货额度随机，料越高级越紧，月末作废不结转。想接高端单，得提前备货。"
           summary={materialSummary}
           done={stageDone(state, ['store'])}
           now={acting}
@@ -486,6 +490,7 @@ export function OperationsPage({
                   <tr>
                     <th>原料</th>
                     <th className="num">库存</th>
+                    <th className="num">本月现货</th>
                     <th className="num">报价</th>
                     <th className="num">账面成本</th>
                     {showAgeCols && <th className="num">最长库龄</th>}
@@ -497,12 +502,15 @@ export function OperationsPage({
                 <tbody>
                   {visibleMaterials.map((item) => {
                     const age = materialMaxAge(state, item.id);
-                    const pick = cart[item.id] ?? 0;
+                    const remaining = spotOf(state, item.id);
+                    const pick = Math.min(cart[item.id] ?? 0, remaining);
                     const line = buyLineCost(state, item.id, pick);
+                    const steps = purchaseQtyOptions(remaining);
                     return (
                       <tr key={item.id}>
                         <td>{item.name}</td>
                         <td className="num">{qty(state.materials[item.id])}</td>
+                        <td className="num">{remaining > 0 ? qty(remaining) : '售罄'}</td>
                         <td className="num">{money(state.materialPrices[item.id])} / 件</td>
                         <td className="num">{money(state.materialCost?.[item.id] ?? 0)}</td>
                         {showAgeCols && (
@@ -519,7 +527,7 @@ export function OperationsPage({
                             >
                               0
                             </button>
-                            {QTY.map((n) => (
+                            {steps.map((n) => (
                               <button
                                 key={n}
                                 type="button"
@@ -549,8 +557,8 @@ export function OperationsPage({
             note={
               acting
                 ? buyApFree
-                  ? '第三、四季度采购不耗行动点，仍要付现。'
-                  : undefined
+                  ? '第三、四季度采购不耗行动点，仍要付现。本月没买完的额度月底作废。'
+                  : '本月没买完的额度月底作废，高级料更宜提前备货。'
                 : '事件结束后才能采购。'
             }
           >

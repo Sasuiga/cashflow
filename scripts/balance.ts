@@ -38,17 +38,26 @@ function play(style: 'idle' | 'expand' | 'lean', seed: number): GameState {
       }
       if (style !== 'lean') {
         if (canBuy && state.cash >= 8) {
-          state = reduce(state, { type: 'BUY_MATERIAL', material: 'a', qty: 20 });
+          const qty = Math.min(20, state.materialSpot?.a ?? 0);
+          if (qty > 0) state = reduce(state, { type: 'BUY_MATERIAL', material: 'a', qty });
         }
         if (canBuy && state.cash >= 8) {
-          state = reduce(state, { type: 'BUY_MATERIAL', material: 'b', qty: 10 });
+          const qty = Math.min(10, state.materialSpot?.b ?? 0);
+          if (qty > 0) state = reduce(state, { type: 'BUY_MATERIAL', material: 'b', qty });
         }
-        if (canBuy && state.cash >= 12) {
-          state = reduce(state, { type: 'BUY_MATERIAL', material: 'c', qty: 10 });
+        if (canBuy && state.cash >= 4) {
+          const qty = Math.min(4, state.materialSpot?.c ?? 0);
+          if (qty > 0) state = reduce(state, { type: 'BUY_MATERIAL', material: 'c', qty });
         }
       } else if (canBuy && state.cash >= 6) {
-        if ((state.materials.a ?? 0) < 16) state = reduce(state, { type: 'BUY_MATERIAL', material: 'a', qty: 10 });
-        if (canBuy && (state.materials.b ?? 0) < 8) state = reduce(state, { type: 'BUY_MATERIAL', material: 'b', qty: 10 });
+        if ((state.materials.a ?? 0) < 16) {
+          const qty = Math.min(10, state.materialSpot?.a ?? 0);
+          if (qty > 0) state = reduce(state, { type: 'BUY_MATERIAL', material: 'a', qty });
+        }
+        if (canBuy && (state.materials.b ?? 0) < 8) {
+          const qty = Math.min(10, state.materialSpot?.b ?? 0);
+          if (qty > 0) state = reduce(state, { type: 'BUY_MATERIAL', material: 'b', qty });
+        }
       }
       state = reduce(state, { type: 'GO_PRODUCE' });
       continue;

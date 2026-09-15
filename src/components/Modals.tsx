@@ -85,7 +85,7 @@ export function BriefingModal({ state, onConfirm }: { state: GameState; onConfir
       <div className="modal briefing-modal">
         <h2>{MONTH_NAMES[state.month - 1]} · 行业月报</h2>
         <p className="lead briefing-digest">{marketDigest(state)}</p>
-        <p className="sheet-caption">原料报价 · 万元/件</p>
+        <p className="sheet-caption">原料报价 · 万元/件 · 本月现货月末作废</p>
         <div className="sheet-wrap briefing-sheet">
         <table className="sheet compact">
           <thead>
@@ -93,17 +93,20 @@ export function BriefingModal({ state, onConfirm }: { state: GameState; onConfir
               <th>品种</th>
               <th className="num">报价</th>
               <th className="num">较上月</th>
+              <th className="num">本月现货</th>
             </tr>
           </thead>
           <tbody>
             {visibleMaterials.map((item) => {
               const price = state.materialPrices[item.id];
               const delta = priceDelta(price, state.prevMaterialPrices?.[item.id] ?? item.basePrice);
+              const spot = Math.max(0, state.materialSpot?.[item.id] ?? 0);
               return (
                 <tr key={item.id}>
                   <td>{item.name}</td>
                   <td className="num">{money(price)}</td>
                   <td className={`num delta-${delta.tone}`}>{delta.text}</td>
+                  <td className="num">{spot}</td>
                 </tr>
               );
             })}

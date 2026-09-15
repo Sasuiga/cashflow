@@ -60,6 +60,35 @@ function checkMarketQuotes(): void {
   const prevBasic = state.prevProductPrices.basic ?? 1.5;
   const diffP = Math.abs(basic - prevBasic);
   assert(diffP < 0.05 || Math.abs(diffP - 0.2) < 1e-6, `基础款月度台阶应为 0 或 0.2，实际 ${diffP}`);
+  assert((state.materialSpot?.a ?? 0) >= 4 && (state.materialSpot?.a ?? 0) <= 24, `钢材现货应在 4–24，实际 ${state.materialSpot?.a}`);
+  assert((state.materialSpot?.c ?? 0) <= 6, `芯片现货应不超过 6，实际 ${state.materialSpot?.c}`);
+}
+
+function checkSpotPurchase(): void {
+  let state = reduce(createInitialState(), { type: 'START_GAME' });
+  const ids = (state.challengePoolIds ?? []).slice(0, 2);
+  for (const id of ids) state = reduce(state, { type: 'TOGGLE_BOARD_GOAL', id });
+  state = reduce(state, { type: 'CONFIRM_BOARD' });
+  state = reduce(state, { type: 'CONFIRM_BRIEFING' });
+  state = reduce(state, { type: 'ACK_EVENT' });
+  const volumes = (state.monthOrders ?? []).filter((order) => order.productId === 'basic' || order.productId === 'economy');
+  const premiums = (state.monthOrders ?? []).filter((order) => order.productId === 'premium' || order.productId === 'special');
+  assert(volumes.length >= 1, '每月应保底一张走量单');
+  assert(
+    volumes.every((order) => order.qty >= 6),
+    `走量单件数应明显大于高端，实际 ${volumes.map((order) => order.qty).join(',')}`,
+  );
+  if (premiums.length > 0) {
+    assert(
+      premiums.every((order) => order.qty <= 3),
+      `旗舰单不应走量，实际 ${premiums.map((order) => order.qty).join(',')}`,
+    );
+  }
+  const beforeA = state.materials.a;
+  const spotA = state.materialSpot?.a ?? 0;
+  state = reduce(state, { type: 'BUY_MATERIAL', material: 'a', qty: spotA + 20 });
+  assert(state.materials.a === beforeA + spotA, `采购不得超过本月现货，库存 ${state.materials.a} 期望 ${beforeA + spotA}`);
+  assert((state.materialSpot?.a ?? 0) === 0, '买完后钢材现货应扣尽');
 }
 
 function checkOpeningAccounts(): void {
@@ -157,10 +186,12 @@ function play(): GameState {
     }
     if (state.phase === 'actions') {
       if (state.ap > 0 && state.cash > 80) {
-        state = reduce(state, { type: 'BUY_MATERIAL', material: 'a', qty: 20 });
+        const qty = Math.min(20, state.materialSpot?.a ?? 0);
+        if (qty > 0) state = reduce(state, { type: 'BUY_MATERIAL', material: 'a', qty });
       }
       if (state.ap > 0 && state.cash > 80) {
-        state = reduce(state, { type: 'BUY_MATERIAL', material: 'b', qty: 10 });
+        const qty = Math.min(10, state.materialSpot?.b ?? 0);
+        if (qty > 0) state = reduce(state, { type: 'BUY_MATERIAL', material: 'b', qty });
       }
       if (state.cardsUnlocked && !state.shopDrawn) {
         state = reduce(state, { type: 'DRAW_SHOP' });
@@ -203,6 +234,7 @@ function play(): GameState {
 checkOpeningAccounts();
 checkBoardVariety();
 checkMarketQuotes();
+checkSpotPurchase();
 settleFirstMonth();
 
 const result = play();

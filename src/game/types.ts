@@ -292,6 +292,7 @@ export interface GameState {
   prevMaterialPrices: Record<MaterialId, number>;
   prevProductPrices: Partial<Record<ProductId, number>>;
   marketTrend: MarketTrend;
+  materialSpot: Record<MaterialId, number>;
   demand: Partial<Record<ProductId, number>>;
   unlockedProducts: ProductId[];
   materialDUnlocked: boolean;
