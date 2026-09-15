@@ -1,4 +1,5 @@
-import { createInitialState, equityAccounts, factoryLayout, hireEffectLines, netAssetsOf, netProfitOf, orderCapLoads, purchaseQtyOptions, reduce } from '../src/game/engine';
+import { createInitialState, equityAccounts, factoryLayout, hireEffectLines, lowestUnlockedMargin, bomSpotCost, netAssetsOf, netProfitOf, orderCapLoads, purchaseQtyOptions, reduce } from '../src/game/engine';
+import { rdSuccessRate } from '../src/game/data';
 import { goalById } from '../src/game/board';
 import { roundMoney } from '../src/game/format';
 import type { GameState } from '../src/game/types';
@@ -227,11 +228,88 @@ function settleFirstMonth(): GameState {
   throw new Error('Did not reach first settlement');
 }
 
+function checkRdLabs(): void {
+  assert(rdSuccessRate(0) === 0, '无人时成功率应为 0');
+  assert(rdSuccessRate(1) === 0.2, '1 人成功率应为 20%');
+  assert(rdSuccessRate(4) === 0.8, '4 人成功率应为 80% 上限');
+  assert(rdSuccessRate(6) === 0.8, '超过 4 人仍应封顶 80%');
+  assert(rdSuccessRate(1, 0.1) === 0.3, '失败经验应抬高小团队成功率');
+  assert(rdSuccessRate(4, 0.1) === 0.8, '失败经验不能突破 80% 上限');
+
+  let state = confirmBoard(reduce(createInitialState(), { type: 'START_GAME' }));
+  state = reduce(state, { type: 'CONFIRM_BRIEFING' });
+  state = reduce(state, { type: 'ACK_EVENT' });
+  assert(state.phase === 'actions', '应进入行动阶段');
+  const cash = state.cash;
+  const ap = state.ap;
+  const productLines = hireEffectLines(state, 'rd', 'product');
+  assert(productLines[0]?.includes('产品实验室'), `招研发应说明编入产品实验室，实际 ${productLines[0]}`);
+  assert(productLines[0]?.includes('成功率'), `招研发应说明人数只影响成功率，实际 ${productLines[0]}`);
+  assert(productLines[1]?.includes('随机'), `开局产品课题应说明随机开题，实际 ${productLines[1]}`);
+  assert(!productLines.some((line) => line.includes('本次：')), `已开题信息不该在招聘说明里重复，实际 ${productLines.join(' / ')}`);
+
+  const floor = lowestUnlockedMargin(state);
+  state = reduce(state, { type: 'HIRE', role: 'rd', rdTrack: 'product' });
+  assert(state.staff.rd === 1 && state.rdProductStaff === 1 && state.rdTechStaff === 0, '第一名研发应编入产品组');
+  assert(state.rdProductProgress === 0, `入职不应推进进度，实际 ${state.rdProductProgress}`);
+  assert(state.rdProductDraft, '编入产品实验室后应随机开题');
+  assert(state.rdProductDraft?.name.endsWith('款'), `随机产品名应以款结尾，实际 ${state.rdProductDraft?.name}`);
+  const hiredProductLines = hireEffectLines(state, 'rd', 'product');
+  assert(
+    !hiredProductLines.some((line) => line.includes('本次：') || line.includes('本月结算后')),
+    `已开题信息不该在招聘说明里重复，实际 ${hiredProductLines.join(' / ')}`,
+  );
+  const draftCost = bomSpotCost(state, state.rdProductDraft!.bom);
+  const draftMargin = roundMoney(state.rdProductDraft!.basePrice - draftCost);
+  assert(draftMargin > floor, `新 BOM 毛利应高于现有最低档 ${floor}，实际 ${draftMargin}`);
+  assert(state.cash === roundMoney(cash - 2), '招聘费应为 2 万');
+  assert(state.ap === ap - 1, '招聘应消耗 1 AP');
+
+  state = reduce(state, { type: 'HIRE', role: 'rd', rdTrack: 'tech', ipId: 'jig' });
+  assert(state.rdProductStaff === 1 && state.rdTechStaff === 1, '第二名研发应编入工艺组');
+  assert(state.rdTechProgress === 0, `工艺入职不应推进进度，实际 ${state.rdTechProgress}`);
+  assert(state.rdTechProjectId === 'jig', '第一次编入工艺组时应选定工装夹具');
+
+  state = reduce(state, { type: 'GO_PRODUCE' });
+  for (const order of state.monthOrders ?? []) {
+    const next = reduce(state, { type: 'TOGGLE_ORDER', id: order.id });
+    if (next !== state) state = next;
+  }
+  state = reduce(state, { type: 'SETTLE' });
+  assert(state.phase === 'report', '一月结算后应出报告');
+  assert(state.rdProductProgress === 1, `一月结算后产品进度应为 1/3，实际 ${state.rdProductProgress}`);
+  assert(state.rdTechProgress === 1, `一月结算后工艺进度应为 1/2，实际 ${state.rdTechProgress}`);
+  assert((state.pendingRdReveals ?? []).length === 0, '满周期前不应弹出研发成果');
+  while ((state.pendingRdReveals ?? []).length > 0) {
+    state = reduce(state, { type: 'ACK_RD_REVEAL' });
+  }
+  state = reduce(state, { type: 'NEXT_MONTH' });
+  if (state.phase === 'board') state = confirmBoard(state);
+  if (state.phase === 'briefing') state = reduce(state, { type: 'CONFIRM_BRIEFING' });
+  if (state.phase === 'event') state = reduce(state, { type: 'ACK_EVENT' });
+  state = reduce(state, { type: 'GO_PRODUCE' });
+  for (const order of state.monthOrders ?? []) {
+    const next = reduce(state, { type: 'TOGGLE_ORDER', id: order.id });
+    if (next !== state) state = next;
+  }
+  state = reduce(state, { type: 'SETTLE' });
+  assert(state.rdProductProgress === 2, `二月结算后产品进度应为 2/3，实际 ${state.rdProductProgress}`);
+  assert(state.rdTechProgress === 0, '工艺 2 个月周期应在二月结算时掷骰并清零进度');
+  assert((state.pendingRdReveals ?? []).some((item) => item.track === 'tech'), '二月结算应弹出工艺研发成果');
+  while ((state.pendingRdReveals ?? []).length > 0) {
+    state = reduce(state, { type: 'ACK_RD_REVEAL' });
+  }
+}
+
 function play(): GameState {
   let state = reduce(createInitialState(), { type: 'START_GAME' });
   let bounced = false;
   for (let i = 0; i < 120; i += 1) {
     if (state.phase === 'ended') return state;
+    if ((state.pendingRdReveals ?? []).length > 0) {
+      state = reduce(state, { type: 'ACK_RD_REVEAL' });
+      continue;
+    }
     if (state.phase === 'board') {
       const fallback = {
         1: ['q1-sold30'],
@@ -291,6 +369,9 @@ function play(): GameState {
       continue;
     }
     if (state.phase === 'report') {
+      while ((state.pendingRdReveals ?? []).length > 0) {
+        state = reduce(state, { type: 'ACK_RD_REVEAL' });
+      }
       state = reduce(state, { type: 'NEXT_MONTH' });
       continue;
     }
@@ -307,6 +388,7 @@ checkPurchaseLots();
 checkFactoryLayout();
 checkSpotPurchase();
 checkProposals();
+checkRdLabs();
 settleFirstMonth();
 
 const result = play();

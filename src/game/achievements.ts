@@ -13,6 +13,7 @@ export const ACHIEVEMENTS: AchievementDef[] = [
   { id: 'factory2', name: '开第二厂', desc: '厂区不少于 2 座。' },
   { id: 'rd1', name: '实验室亮灯', desc: '招到第一名研发人员。' },
   { id: 'newProduct', name: '产品上新', desc: '研发出新产品。' },
+  { id: 'patent', name: '第一件装备', desc: '拿到第一项知识产权。' },
   { id: 'cash500', name: '现金过半百', desc: '现金达到 ¥50.0万。' },
   { id: 'net1000', name: '百万身家', desc: '净资产达到 ¥100.0万。' },
   { id: 'loan', name: '加杠杆', desc: '账上出现负债。' },

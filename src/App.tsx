@@ -1,7 +1,7 @@
 import { useReducer } from 'react';
 import { Board } from './components/Board';
 import { EndScreen } from './components/EndScreen';
-import { BriefingModal, BoardModal, EventModal, ReportModal } from './components/Modals';
+import { BriefingModal, BoardModal, EventModal, RdRevealModal, ReportModal } from './components/Modals';
 import { TitleScreen } from './components/TitleScreen';
 import { createInitialState, reduce } from './game/engine';
 
@@ -29,7 +29,10 @@ export function App() {
           {state.phase === 'event' && (
             <EventModal state={state} onAck={() => dispatch({ type: 'ACK_EVENT' })} />
           )}
-          {state.phase === 'report' && (
+          {state.pendingRdReveals?.length > 0 && (
+            <RdRevealModal state={state} onAck={() => dispatch({ type: 'ACK_RD_REVEAL' })} />
+          )}
+          {state.phase === 'report' && !(state.pendingRdReveals?.length > 0) && (
             <ReportModal
               state={state}
               onNext={() => dispatch({ type: 'NEXT_MONTH' })}

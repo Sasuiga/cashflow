@@ -1503,6 +1503,209 @@ button.job:hover {
   background: var(--gold);
 }
 
+.rd-labs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.rd-lab {
+  text-align: left;
+  border: 1px solid var(--line);
+  background: var(--ink-2);
+  color: var(--cream);
+  padding: 12px 14px;
+}
+
+.rd-lab.on {
+  border-color: rgba(224, 180, 90, 0.45);
+}
+
+.rd-lab .suit {
+  letter-spacing: 0.14em;
+  font-size: 11px;
+  color: var(--gold);
+}
+
+.rd-lab h4 {
+  margin: 6px 0 4px;
+  font-family: var(--serif);
+  font-size: 20px;
+  font-weight: 650;
+}
+
+.rd-lab-blurb,
+.rd-lab .stat {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--cream-dim);
+}
+
+.rd-lab-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 8px 0 6px;
+  font-size: 13px;
+}
+
+.rd-chance {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 0 8px;
+}
+
+.rd-chance i {
+  width: 10px;
+  height: 10px;
+  border: 1px solid var(--line-strong);
+  background: transparent;
+}
+
+.rd-chance i.on {
+  background: var(--gold);
+  border-color: var(--gold);
+}
+
+.rd-chance em {
+  margin-left: 4px;
+  font-style: normal;
+  font-size: 12px;
+  color: var(--cream-dim);
+}
+
+.ip-rack {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.ip-plate {
+  min-height: 108px;
+  border: 1px dashed rgba(212, 195, 154, 0.38);
+  background: rgba(243, 234, 212, 0.04);
+  padding: 10px 10px 12px;
+}
+
+.ip-plate .suit {
+  letter-spacing: 0.12em;
+  font-size: 10px;
+  color: var(--cream-dim);
+}
+
+.ip-plate h4 {
+  margin: 6px 0 6px;
+  font-family: var(--serif);
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.ip-plate p {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--cream-dim);
+}
+
+.ip-plate.next {
+  border-style: solid;
+  border-color: rgba(224, 180, 90, 0.4);
+}
+
+.ip-plate.on {
+  border-style: solid;
+  border-color: var(--gold);
+  background:
+    linear-gradient(180deg, rgba(224, 180, 90, 0.14), rgba(31, 39, 28, 0.2)),
+    var(--ink-2);
+}
+
+.ip-plate.on .suit {
+  color: var(--gold);
+}
+
+.ip-plate.on p {
+  color: var(--cream);
+}
+
+.ip-plate.pick {
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  width: 100%;
+}
+
+.ip-plate.pick:hover {
+  border-style: solid;
+  border-color: rgba(224, 180, 90, 0.7);
+}
+
+.rd-hire-picks {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 4px 0 16px;
+}
+
+.rd-hire-tech .sheet-caption {
+  margin: 0 0 8px;
+}
+
+.rd-hire-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.rd-hire-pick {
+  text-align: left;
+  border: 1px solid #d4c39a;
+  background: #f7efd8;
+  color: var(--paper-ink);
+  padding: 12px 14px;
+}
+
+.rd-hire-pick:hover:not(:disabled) {
+  border-color: #b8892d;
+}
+
+.rd-hire-pick:disabled {
+  opacity: 0.45;
+}
+
+.rd-hire-pick .suit {
+  letter-spacing: 0.14em;
+  font-size: 11px;
+  color: #8a7040;
+}
+
+.rd-hire-pick b {
+  display: block;
+  margin: 4px 0 4px;
+  font-family: var(--serif);
+  font-size: 18px;
+}
+
+.rd-hire-pick span {
+  display: block;
+  font-size: 13px;
+  color: #6d5a38;
+}
+
+.rd-hire-pick ul {
+  margin: 10px 0 0;
+  padding-left: 16px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.rd-overlay {
+  z-index: 16;
+}
+
 .layout {
   display: grid;
   grid-template-columns: 320px 1fr;
@@ -1932,8 +2135,18 @@ button.job:hover {
   .page-grid.journal,
   .achieve-grid,
   .dept-grid,
-  .action-grid {
+  .action-grid,
+  .rd-labs,
+  .rd-hire-picks {
     grid-template-columns: 1fr;
+  }
+
+  .rd-hire-row {
+    grid-template-columns: 1fr;
+  }
+
+  .ip-rack {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .flow-rail {

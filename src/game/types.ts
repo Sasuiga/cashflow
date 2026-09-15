@@ -11,7 +11,9 @@ export type Phase =
 export type Role = 'production' | 'management' | 'sales' | 'rd';
 export type DeptId = 'ceo' | 'finance' | 'hr' | 'infra' | 'store' | 'rd' | 'sales';
 export type MaterialId = 'a' | 'b' | 'c' | 'd';
-export type ProductId = 'basic' | 'standard' | 'premium' | 'economy' | 'special';
+export type ProductId = 'basic' | 'standard' | 'premium' | 'economy' | 'special' | 'rd1' | 'rd2';
+export type RdTrack = 'product' | 'tech';
+export type IpId = 'jig' | 'yield' | 'spec' | 'lean' | 'auto';
 export type CardSuit = Role;
 export type EndKind = 'bankrupt' | 'finished';
 export type TrendDir = -1 | 0 | 1;
@@ -184,6 +186,27 @@ export interface SettlementLine {
   tone?: 'good' | 'bad' | 'mute';
 }
 
+export interface IpDef {
+  id: IpId;
+  name: string;
+  blurb: string;
+  effect: string;
+}
+
+export interface RdReveal {
+  track: RdTrack;
+  success: boolean;
+  title: string;
+  body: string;
+  chance: number;
+  staff: number;
+}
+
+export interface LaunchOrder {
+  productId: ProductId;
+  qty: number;
+}
+
 export interface SettlementReport {
   month: number;
   productName: string;
@@ -297,8 +320,20 @@ export interface GameState {
   demand: Partial<Record<ProductId, number>>;
   unlockedProducts: ProductId[];
   materialDUnlocked: boolean;
-  rdProgress: number;
+  rdProductStaff: number;
+  rdTechStaff: number;
+  rdProductProgress: number;
+  rdTechProgress: number;
   rdUnlockIndex: number;
+  rdIpIndex: number;
+  rdTechProjectId: IpId | null;
+  extraProducts: ProductDef[];
+  rdProductDraft: ProductDef | null;
+  rdProductFailBonus: number;
+  rdTechFailBonus: number;
+  ownedIps: IpId[];
+  pendingRdReveals: RdReveal[];
+  pendingLaunchOrders: LaunchOrder[];
   shop: CardInstance[];
   cardsBoughtThisMonth: number;
   hand: CardInstance[];
@@ -345,7 +380,10 @@ export type GameAction =
   | { type: 'ACK_EVENT' }
   | { type: 'BUY_MACHINE' }
   | { type: 'EXPAND_FACTORY' }
-  | { type: 'HIRE'; role: Role }
+  | { type: 'HIRE'; role: Role; rdTrack?: RdTrack; ipId?: IpId }
+  | { type: 'PICK_RD_TECH'; ipId: IpId }
+  | { type: 'OPEN_PRODUCT_RD' }
+  | { type: 'ACK_RD_REVEAL' }
   | { type: 'BUY_MATERIAL'; material: MaterialId; qty: number }
   | { type: 'BUY_MATERIALS'; items: { material: MaterialId; qty: number }[] }
   | { type: 'BORROW'; amount: number }

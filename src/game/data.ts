@@ -1,4 +1,4 @@
-import type { CardDef, EventDef, MaterialDef, MaterialId, ProductDef, Role } from './types';
+import type { Bom, CardDef, EventDef, IpDef, IpId, MaterialDef, MaterialId, ProductDef, ProductId, RdTrack, Role } from './types';
 
 export const TOTAL_MONTHS = 12;
 export const HAND_LIMIT = 5;
@@ -30,7 +30,16 @@ export const SALARY: Record<Role, number> = {
   sales: 1,
   rd: 1.5,
 };
-export const RD_THRESHOLD = 2;
+export const PRODUCT_RD_MONTHS = 3;
+export const TECH_RD_MONTHS = 2;
+export const RD_SUCCESS_PER_HEAD = 0.2;
+export const RD_SUCCESS_CAP = 0.8;
+export const RD_FAIL_BONUS = 0.1;
+export const IP_YIELD_EVERY = 5;
+export const IP_PRICE_BONUS = 0.08;
+export const IP_JIG_CAPACITY = 4;
+export const IP_AUTO_PER_MACHINE = 2;
+export const IP_LEAN_RATE = 0.1;
 
 export function inventoryWriteDownRate(ageMonths: number): number {
   if (ageMonths >= 6) return 0.7;
@@ -91,10 +100,38 @@ export const PRODUCTS: ProductDef[] = [
     baseDemand: 5,
     blurb: '高单价、低需求。芯片行情好时溢价更明显。',
   },
+];
+
+export const MAX_RD_PRODUCTS = 2;
+
+export const RD_NAME_STEMS = [
+  '轻量',
+  '紧凑',
+  '家用',
+  '户外',
+  '加固',
+  '节能',
+  '迅装',
+  '便携',
+  '耐磨',
+  '静音',
+  '快装',
+  '薄壁',
+  '加厚',
+  '防潮',
+  '民用',
+  '出口',
+  '工矿',
+  '冷链',
+  '精工',
+  '迅达',
+];
+
+export const LEGACY_RD_PRODUCTS: ProductDef[] = [
   {
     id: 'economy',
     name: '经济款',
-    tier: '研发',
+    tier: '走量',
     bom: { a: 1, b: 1 },
     basePrice: 1.5,
     baseDemand: 20,
@@ -103,7 +140,7 @@ export const PRODUCTS: ProductDef[] = [
   {
     id: 'special',
     name: '特种款',
-    tier: '研发',
+    tier: '高端',
     bom: { b: 1, d: 1 },
     basePrice: 5,
     baseDemand: 8,
@@ -111,10 +148,59 @@ export const PRODUCTS: ProductDef[] = [
   },
 ];
 
-export const RD_UNLOCKS: Array<{ product?: 'economy' | 'special'; unlockD?: boolean; note: string }> = [
-  { product: 'economy', note: '研发交付：经济款上市，BOM 仅需钢材 + 塑料。' },
-  { unlockD: true, product: 'special', note: '研发交付：特种合金开线，特种款可投产。' },
+export interface ProductCatalogSource {
+  extraProducts?: ProductDef[];
+  rdProductDraft?: ProductDef | null;
+  unlockedProducts?: ProductId[];
+}
+
+export const IP_CATALOG: IpDef[] = [
+  {
+    id: 'jig',
+    name: '工装夹具',
+    blurb: '定位更稳，产线少一次对刀。',
+    effect: '永久产能 +4',
+  },
+  {
+    id: 'yield',
+    name: '良率专利',
+    blurb: '抽检口径收紧，报废变成库存。',
+    effect: '每产出 5 件，额外入库 1 件',
+  },
+  {
+    id: 'spec',
+    name: '工艺标准',
+    blurb: '客户按新标准给溢价。',
+    effect: '售价永久 +8%',
+  },
+  {
+    id: 'lean',
+    name: '节材配方',
+    blurb: '下料损耗被压住，批量越大越省。',
+    effect: '生产耗料按九折计',
+  },
+  {
+    id: 'auto',
+    name: '自研工装',
+    blurb: '换型不用再靠老师傅找节拍。',
+    effect: '每台设备基础产能 +2',
+  },
 ];
+
+export function rdCycleOf(track: RdTrack): number {
+  return track === 'product' ? PRODUCT_RD_MONTHS : TECH_RD_MONTHS;
+}
+
+export function rdSuccessRate(staff: number, failBonus = 0): number {
+  const raw = Math.max(0, staff) * RD_SUCCESS_PER_HEAD + Math.max(0, failBonus);
+  return Math.round(Math.min(RD_SUCCESS_CAP, raw) * 100) / 100;
+}
+
+export function ipById(id: IpId): IpDef {
+  const found = IP_CATALOG.find((item) => item.id === id);
+  if (!found) throw new Error(`Unknown IP ${id}`);
+  return found;
+}
 
 export const CARDS: CardDef[] = [
   {
@@ -170,8 +256,8 @@ export const CARDS: CardDef[] = [
     name: '实验室通宵',
     suit: 'rd',
     cost: 1,
-    blurb: '立刻推进 1 点研发进度。',
-    playText: '样品在天亮前跑通，研发进度 +1。',
+    blurb: '立刻给进行中的课题推进 1 个月。',
+    playText: '样品在天亮前跑通，课题进度 +1 个月。',
   },
   {
     id: 'bridge',
@@ -559,10 +645,56 @@ export const EVENTS: EventDef[] = [
 
 export const MATERIAL_IDS: MaterialId[] = ['a', 'b', 'c', 'd'];
 
-export function productById(id: string): ProductDef {
-  const found = PRODUCTS.find((item) => item.id === id);
-  if (!found) throw new Error(`Unknown product ${id}`);
-  return found;
+export function bomKey(bom: Bom): string {
+  return MATERIAL_IDS.map((id) => `${id}:${bom[id] ?? 0}`).join('|');
+}
+
+export function isVolumeProduct(def: ProductDef): boolean {
+  return def.tier === '低端' || def.tier === '走量' || def.baseDemand >= 16;
+}
+
+export function isPremiumProduct(def: ProductDef): boolean {
+  return def.tier === '高端' || def.id === 'premium' || def.id === 'special';
+}
+
+export function catalogOf(state: ProductCatalogSource): ProductDef[] {
+  const list: ProductDef[] = [...PRODUCTS];
+  const seen = new Set(list.map((item) => item.id));
+  for (const item of state.extraProducts ?? []) {
+    if (seen.has(item.id)) continue;
+    list.push(item);
+    seen.add(item.id);
+  }
+  const draft = state.rdProductDraft;
+  if (draft && !seen.has(draft.id)) {
+    list.push(draft);
+    seen.add(draft.id);
+  }
+  for (const item of LEGACY_RD_PRODUCTS) {
+    if (!(state.unlockedProducts ?? []).includes(item.id) || seen.has(item.id)) continue;
+    list.push(item);
+    seen.add(item.id);
+  }
+  return list;
+}
+
+export function unlockedCatalog(state: ProductCatalogSource): ProductDef[] {
+  const unlocked = new Set(state.unlockedProducts ?? []);
+  return catalogOf(state).filter((item) => unlocked.has(item.id));
+}
+
+export function productFrom(catalog: ProductDef[], id: string): ProductDef {
+  const found = catalog.find((item) => item.id === id);
+  if (found) return found;
+  const legacy = LEGACY_RD_PRODUCTS.find((item) => item.id === id);
+  if (legacy) return legacy;
+  const core = PRODUCTS.find((item) => item.id === id);
+  if (core) return core;
+  throw new Error(`Unknown product ${id}`);
+}
+
+export function productById(id: string, catalog?: ProductDef[]): ProductDef {
+  return productFrom(catalog ?? [...PRODUCTS, ...LEGACY_RD_PRODUCTS], id);
 }
 
 export function cardById(id: string): CardDef {

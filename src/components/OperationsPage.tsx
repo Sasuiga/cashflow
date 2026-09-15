@@ -11,14 +11,15 @@ import {
   MACHINE_COST,
   MACHINE_LIFE_MONTHS,
   MATERIALS,
-  PRODUCTS,
-  RD_THRESHOLD,
-  RD_UNLOCKS,
+  IP_CATALOG,
+  MAX_RD_PRODUCTS,
+  PRODUCT_RD_MONTHS,
+  TECH_RD_MONTHS,
+  catalogOf,
   SALARY,
   SLOTS_PER_FACTORY,
   WORKERS_PER_MACHINE,
   cardById,
-  productById,
 } from '../game/data';
 import {
   arOverdueOf,
@@ -28,6 +29,11 @@ import {
   buyLineCost,
   capacityOf,
   creditSaleRateOf,
+  availableTechIps,
+  canOpenProductRd,
+  canPickTechProject,
+  currentProductProject,
+  currentTechProject,
   factoryLayout,
   finishedMaxAge,
   finishedProvisionOf,
@@ -42,6 +48,11 @@ import {
   monthOutlook,
   orderCapLoads,
   productionPlan,
+  productOf,
+  rdCapacityBonus,
+  rdTrackProgress,
+  rdTrackRate,
+  rdTrackStaff,
   receivablesGross,
   receivablesNet,
   purchaseQtyOptions,
@@ -50,9 +61,9 @@ import {
   spotOf,
   totalStaff,
 } from '../game/engine';
-import { MONTH_NAMES, ROLE_HINT, ROLE_LABEL, bomLabel, factoryName, materialName, money, priceDelta, qty, roundMoney, signedMoney } from '../game/format';
+import { MONTH_NAMES, RD_TRACK_LABEL, ROLE_HINT, ROLE_LABEL, bomLabel, factoryName, materialName, money, pctLabel, priceDelta, qty, roundMoney, signedMoney } from '../game/format';
 import { goalById, q3ProcurementFree } from '../game/board';
-import type { GameAction, GameState, MaterialId, MonthOrder, ProductId, Role } from '../game/types';
+import type { GameAction, GameState, IpId, MaterialId, MonthOrder, ProductDef, ProductId, RdTrack, Role } from '../game/types';
 
 const ROLES: Role[] = ['production', 'management', 'sales', 'rd'];
 const LOAN = [2, 4, 8];
@@ -159,6 +170,136 @@ function HireBar({
       <button className="chip" disabled={disabled} onClick={() => onHire(role)}>
         招聘{ROLE_LABEL[role]}人员
       </button>
+    </div>
+  );
+}
+
+function RdLabCard({
+  state,
+  track,
+  acting,
+  onOpenProduct,
+}: {
+  state: GameState;
+  track: RdTrack;
+  acting: boolean;
+  onOpenProduct?: () => void;
+}) {
+  const staff = rdTrackStaff(state, track);
+  const progress = rdTrackProgress(state, track);
+  const cycle = track === 'product' ? PRODUCT_RD_MONTHS : TECH_RD_MONTHS;
+  const rate = rdTrackRate(state, track);
+  const product = track === 'product' ? currentProductProject(state) : null;
+  const tech = track === 'tech' ? currentTechProject(state) : null;
+  const hasProject = Boolean(product || tech);
+  const remainProduct = MAX_RD_PRODUCTS - (state.extraProducts?.length ?? 0);
+  const remainTech = availableTechIps(state).length;
+  const idleName =
+    track === 'product'
+      ? remainProduct > 0
+        ? '未开题'
+        : '课题已结'
+      : remainTech > 0
+        ? '点选工艺开题'
+        : '课题已结';
+  const idleBlurb =
+    track === 'product'
+      ? remainProduct > 0
+        ? '派人后随机生成 BOM 和名称，毛利保证高于现有最低档。'
+        : '两档量产课题已经做完。'
+      : remainTech > 0
+        ? '从下方科技树点选一项知识产权，再派人攻关。'
+        : '工艺专利已经齐了。';
+  const projectName = product?.name ?? tech?.name ?? idleName;
+  const blurb = product?.blurb ?? tech?.blurb ?? idleBlurb;
+  const fill = hasProject
+    ? Math.min(100, (progress / cycle) * 100)
+    : (track === 'product' ? remainProduct <= 0 : remainTech <= 0)
+      ? 100
+      : 0;
+  const pips = [1, 2, 3, 4];
+  return (
+    <article className={['rd-lab', staff > 0 ? 'on' : ''].filter(Boolean).join(' ')}>
+      <span className="suit">{RD_TRACK_LABEL[track]}</span>
+      <h4>{projectName}</h4>
+      <p className="rd-lab-blurb">{blurb}</p>
+      <div className="rd-bar" aria-hidden>
+        <i style={{ width: `${fill}%` }} />
+      </div>
+      <div className="rd-lab-meta">
+        <span>
+          研发周期 {progress}/{cycle} 月
+        </span>
+        <span className={staff > 0 ? 'good' : undefined}>成功率 {pctLabel(rate)}</span>
+      </div>
+      <div className="rd-chance" aria-label={`成功率 ${pctLabel(rate)}`}>
+        {pips.map((n) => (
+          <i key={n} className={staff >= n ? 'on' : undefined} />
+        ))}
+        <em>{staff} 人在岗</em>
+      </div>
+      {track === 'product' && acting && canOpenProductRd(state) ? (
+        <button type="button" className="chip" style={{ marginTop: 10 }} onClick={onOpenProduct}>
+          随机开题
+        </button>
+      ) : null}
+      {staff <= 0 ? (
+        <p className="stat">实验室无人，本月结算不推进。</p>
+      ) : !hasProject ? (
+        <p className="stat">
+          {track === 'product'
+            ? remainProduct > 0
+              ? '在岗等待开题，本月结算不推进。'
+              : '量产课题已经做完。'
+            : remainTech > 0
+              ? '在岗等待点选工艺，本月结算不推进。'
+              : '工艺专利已经齐了。'}
+        </p>
+      ) : progress >= cycle ? (
+        <p className="stat">本月将按成功率结算课题。</p>
+      ) : progress + 1 >= cycle ? (
+        <p className="stat">本月结算将按成功率判定课题。</p>
+      ) : null}
+    </article>
+  );
+}
+
+function IpRack({
+  state,
+  acting,
+  onPick,
+}: {
+  state: GameState;
+  acting: boolean;
+  onPick: (id: IpId) => void;
+}) {
+  const owned = new Set(state.ownedIps ?? []);
+  return (
+    <div className="ip-rack">
+      {IP_CATALOG.map((ip) => {
+        const got = owned.has(ip.id);
+        const current = !got && state.rdTechProjectId === ip.id;
+        const pickable = acting && !got && canPickTechProject(state, ip.id);
+        const className = ['ip-plate', got ? 'on' : '', current ? 'next' : '', pickable ? 'pick' : '']
+          .filter(Boolean)
+          .join(' ');
+        const body = (
+          <>
+            <span className="suit">{got ? '已装备' : current ? '在研' : pickable ? '可选' : '待研'}</span>
+            <h4>{ip.name}</h4>
+            <p>{ip.effect}</p>
+          </>
+        );
+        return pickable ? (
+          <button key={ip.id} type="button" className={className} onClick={() => onPick(ip.id)}>
+            {body}
+          </button>
+        ) : (
+          <article key={ip.id} className={className}>
+            {body}
+          </article>
+        );
+      })}
     </div>
   );
 }
@@ -310,7 +451,7 @@ function ScheduleBoard({
 }: {
   state: GameState;
   plan: ReturnType<typeof productionPlan>;
-  products: typeof PRODUCTS;
+  products: ProductDef[];
   loads: ReturnType<typeof orderCapLoads>;
   canEdit: boolean;
   producing: boolean;
@@ -351,7 +492,7 @@ function ScheduleBoard({
           ) : (
             loads.map((load) => {
               const order = (state.monthOrders ?? []).find((item) => item.id === load.orderId);
-              const item = productById(load.productId);
+              const item = productOf(state, load.productId);
               const body = (
                 <>
                   <div>
@@ -500,10 +641,7 @@ export function OperationsPage({
   const savedInterest = roundMoney(currentInterest - afterRepayInterest);
   const canBorrow = canAct && borrowAmt > 0;
   const canRepay = acting && repayAmt > 0;
-  const nextUnlock = RD_UNLOCKS[state.rdUnlockIndex];
-  const nextProduct = nextUnlock?.product ? productById(nextUnlock.product) : null;
-  const waitPoints = Math.max(0, RD_THRESHOLD - state.rdProgress);
-  const products = PRODUCTS.filter((item) => state.unlockedProducts.includes(item.id));
+  const products = catalogOf(state).filter((item) => state.unlockedProducts.includes(item.id));
   const cardWeights = ROLES.map((role) => ({
     role,
     weight: 1 + state.staff[role] * 0.85,
@@ -535,7 +673,7 @@ export function OperationsPage({
   const acceptedOrders = orders.filter((order) => accepted.includes(order.id));
   const acceptedViews = acceptedOrders.map((order) => ({
     order,
-    item: productById(order.productId),
+    item: productOf(state, order.productId),
     view: orderPreview(state, order),
   }));
   const extraLines = products
@@ -755,7 +893,7 @@ export function OperationsPage({
                   const on = accepted.includes(order.id);
                   const trial = productionPlan(state, on ? accepted : [...accepted, order.id], state.extraProduce ?? {});
                   const can = on || trial.ok;
-                  const item = productById(order.productId);
+                  const item = productOf(state, order.productId);
                   return (
                     <button
                       key={order.id}
@@ -986,22 +1124,35 @@ export function OperationsPage({
         <Stage
           id="rd"
           title="研发部"
-          summary={`研发 ${state.staff.rd} 人 · 进度 ${state.rdProgress}/${RD_THRESHOLD}`}
+          summary={`产品组 ${rdTrackStaff(state, 'product')} 人 · 工艺组 ${rdTrackStaff(state, 'tech')} 人 · 知识产权 ${(state.ownedIps ?? []).length}/${IP_CATALOG.length}`}
         >
           <Facts>
-            <div className="rd-bar" aria-hidden>
-              <i style={{ width: `${Math.min(100, (state.rdProgress / RD_THRESHOLD) * 100)}%` }} />
+            <div className="rd-labs">
+              <RdLabCard
+                state={state}
+                track="product"
+                acting={acting}
+                onOpenProduct={() => dispatch({ type: 'OPEN_PRODUCT_RD' })}
+              />
+              <RdLabCard state={state} track="tech" acting={acting} />
             </div>
-            <p className="hint">
-              {state.staff.rd <= 0
-                ? '实验室无人，本月结算不推进研发。'
-                : nextProduct
-                  ? `下一档：${nextProduct.name}。还需 ${waitPoints} 点，按现有人手约 ${Math.ceil(waitPoints / state.staff.rd)} 个月。`
-                  : nextUnlock?.unlockD
-                    ? '下一档将开特种合金线。'
-                    : '量产项目已经做完，团队在做工艺微调。'}
+            <p className="hint" style={{ marginTop: 12 }}>
+              产品课题 3 个月，BOM 随机生成；工艺课题 2 个月，第一次派人时可自选知识产权。每人 +20% 成功率，上限 80%。有人值守才走表，招人不加速进度。
+              {rdCapacityBonus(state) > 0 ? ` 已装备知识产权为本月产能 +${rdCapacityBonus(state)}。` : ''}
             </p>
           </Facts>
+          <Facts title="知识产权">
+            <IpRack
+              state={state}
+              acting={acting}
+              onPick={(ipId) => dispatch({ type: 'PICK_RD_TECH', ipId })}
+            />
+          </Facts>
+          {(state.extraProducts?.length ?? 0) > 0 && (
+            <Facts title="已交付产品">
+              <p className="hint">{(state.extraProducts ?? []).map((item) => item.name).join('、')}</p>
+            </Facts>
+          )}
           <HireBar role="rd" disabled={!canAct} onHire={setHireRole} />
         </Stage>
         )}
@@ -1143,11 +1294,105 @@ export function OperationsPage({
             </p>
             <h2>招聘{ROLE_LABEL[hireRole]} 1 人</h2>
             {ROLE_HINT[hireRole] ? <p className="lead">{ROLE_HINT[hireRole]}</p> : null}
-            <ul className="hire-points">
-              {hireEffectLines(state, hireRole).map((line) => (
-                <li key={line}>{line}</li>
-              ))}
-            </ul>
+            {hireRole === 'rd' ? (
+              <div className="rd-hire-picks">
+                <button
+                  type="button"
+                  className="rd-hire-pick"
+                  disabled={state.cash < HIRE_COST || !canAct}
+                  onClick={() => {
+                    dispatch({ type: 'HIRE', role: 'rd', rdTrack: 'product' });
+                    setHireRole(null);
+                  }}
+                >
+                  <span className="suit">{RD_TRACK_LABEL.product}</span>
+                  <b>编入{RD_TRACK_LABEL.product}</b>
+                  <span>
+                    {currentProductProject(state)?.name ??
+                      ((state.extraProducts?.length ?? 0) < MAX_RD_PRODUCTS ? '入职后随机开题' : '课题已结')}
+                    {' · '}
+                    成功率提升至 {pctLabel(rdTrackRate(state, 'product', 1))}
+                  </span>
+                  <ul>
+                    {hireEffectLines(state, 'rd', 'product')
+                      .slice(0, -1)
+                      .map((line) => (
+                        <li key={line}>{line}</li>
+                      ))}
+                  </ul>
+                </button>
+                {currentTechProject(state) ? (
+                  <button
+                    type="button"
+                    className="rd-hire-pick"
+                    disabled={state.cash < HIRE_COST || !canAct}
+                    onClick={() => {
+                      dispatch({ type: 'HIRE', role: 'rd', rdTrack: 'tech' });
+                      setHireRole(null);
+                    }}
+                  >
+                    <span className="suit">{RD_TRACK_LABEL.tech}</span>
+                    <b>编入{RD_TRACK_LABEL.tech}</b>
+                    <span>
+                      {currentTechProject(state)?.name}
+                      {' · '}
+                      成功率提升至 {pctLabel(rdTrackRate(state, 'tech', 1))}
+                    </span>
+                    <ul>
+                      {hireEffectLines(state, 'rd', 'tech')
+                        .slice(0, -1)
+                        .map((line) => (
+                          <li key={line}>{line}</li>
+                        ))}
+                    </ul>
+                  </button>
+                ) : (
+                  <div className="rd-hire-tech">
+                    <p className="sheet-caption">选择工艺课题并编入</p>
+                    <div className="rd-hire-row">
+                      {availableTechIps(state).length === 0 ? (
+                        <button
+                          type="button"
+                          className="rd-hire-pick"
+                          disabled={state.cash < HIRE_COST || !canAct}
+                          onClick={() => {
+                            dispatch({ type: 'HIRE', role: 'rd', rdTrack: 'tech' });
+                            setHireRole(null);
+                          }}
+                        >
+                          <span className="suit">{RD_TRACK_LABEL.tech}</span>
+                          <b>编入工艺实验室</b>
+                          <span>工艺专利已经齐了 · 成功率提升至 {pctLabel(rdTrackRate(state, 'tech', 1))}</span>
+                        </button>
+                      ) : (
+                        availableTechIps(state).map((ip) => (
+                          <button
+                            key={ip.id}
+                            type="button"
+                            className="rd-hire-pick"
+                            disabled={state.cash < HIRE_COST || !canAct}
+                            onClick={() => {
+                              dispatch({ type: 'HIRE', role: 'rd', rdTrack: 'tech', ipId: ip.id });
+                              setHireRole(null);
+                            }}
+                          >
+                            <span className="suit">{ip.effect}</span>
+                            <b>{ip.name}</b>
+                            <span>{ip.blurb}</span>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <ul className="hire-points">
+                {hireEffectLines(state, hireRole).map((line) => (
+                  <li key={line}>{line}</li>
+                ))}
+              </ul>
+            )}
             <div className="hire-costs">
               <div>
                 <em>招聘费</em>
@@ -1170,16 +1415,18 @@ export function OperationsPage({
               <button className="btn ghost" onClick={() => setHireRole(null)}>
                 取消
               </button>
-              <button
-                className="btn"
-                disabled={state.cash < HIRE_COST || !canAct}
-                onClick={() => {
-                  dispatch({ type: 'HIRE', role: hireRole });
-                  setHireRole(null);
-                }}
-              >
-                确认招聘
-              </button>
+              {hireRole === 'rd' ? null : (
+                <button
+                  className="btn"
+                  disabled={state.cash < HIRE_COST || !canAct}
+                  onClick={() => {
+                    dispatch({ type: 'HIRE', role: hireRole });
+                    setHireRole(null);
+                  }}
+                >
+                  确认招聘
+                </button>
+              )}
             </div>
           </div>
         </div>

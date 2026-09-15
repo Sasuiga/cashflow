@@ -1,4 +1,4 @@
-import type { Bom, MaterialId, ProductId, Role } from './types';
+import type { Bom, MaterialId, ProductId, RdTrack, Role } from './types';
 
 export const MONTH_NAMES = [
   '一月',
@@ -26,8 +26,17 @@ export const ROLE_HINT: Record<Role, string> = {
   production: '设备位内每人产能 +4，超出 +1',
   management: '每 2 人提升 1 点行动点上限',
   sales: '',
-  rd: '结算时每人推进 1 点，满 2 点解锁',
+  rd: '入职时选择产品实验室，或点选一项工艺再编入工艺实验室。产品课题的 BOM 随机生成；人数决定成功率。',
 };
+
+export const RD_TRACK_LABEL: Record<RdTrack, string> = {
+  product: '产品实验室',
+  tech: '工艺实验室',
+};
+
+export function pctLabel(rate: number): string {
+  return `${Math.round(rate * 100)}%`;
+}
 
 export function roundMoney(value: number): number {
   return Math.round(value * 10) / 10;
@@ -90,15 +99,19 @@ export function materialName(id: MaterialId): string {
   return map[id];
 }
 
-export function productName(id: ProductId): string {
-  const map: Record<ProductId, string> = {
+export function productName(id: ProductId, catalog?: Array<{ id: string; name: string }>): string {
+  const named = catalog?.find((item) => item.id === id)?.name;
+  if (named) return named;
+  const map: Record<string, string> = {
     basic: '基础款',
     standard: '标准款',
     premium: '旗舰款',
     economy: '经济款',
     special: '特种款',
+    rd1: '自研一款',
+    rd2: '自研二款',
   };
-  return map[id];
+  return map[id] ?? id;
 }
 
 export function priceDelta(current: number, previous: number): { text: string; tone: 'up' | 'down' | 'flat' } {

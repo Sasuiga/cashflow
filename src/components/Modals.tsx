@@ -1,6 +1,6 @@
-import { MATERIALS, PRODUCTS, eventById } from '../game/data';
+import { MATERIALS, catalogOf, eventById } from '../game/data';
 import { booksForView, netProfitOf, operatingCashOf } from '../game/engine';
-import { MONTH_NAMES, money, priceDelta, signedMoney } from '../game/format';
+import { MONTH_NAMES, RD_TRACK_LABEL, money, pctLabel, priceDelta, signedMoney } from '../game/format';
 import { QUARTER_LABEL, CHALLENGE_PICK, climateById, currentBasicGoal, currentChallengePool, quarterOutlook } from '../game/board';
 import type { GameState } from '../game/types';
 
@@ -77,7 +77,7 @@ export function BoardModal({
 
 export function BriefingModal({ state, onConfirm }: { state: GameState; onConfirm: () => void }) {
   const visibleMaterials = MATERIALS.filter((item) => item.id !== 'd' || state.materialDUnlocked);
-  const products = PRODUCTS.filter((item) => state.unlockedProducts.includes(item.id));
+  const products = catalogOf(state).filter((item) => state.unlockedProducts.includes(item.id));
   return (
     <div className="overlay">
       <div className="modal briefing-modal">
@@ -233,6 +233,39 @@ export function ReportModal({ state, onNext }: { state: GameState; onNext: () =>
         <div className="footer-actions">
           <button className="btn" onClick={onNext}>
             {state.endKind ? '查看结局' : '进入下月'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function RdRevealModal({ state, onAck }: { state: GameState; onAck: () => void }) {
+  const reveal = state.pendingRdReveals[0];
+  if (!reveal) return null;
+  const tone = reveal.success ? 'good' : 'bad';
+  return (
+    <div className="overlay rd-overlay">
+      <div className="modal">
+        <p className="kicker" style={{ color: reveal.success ? '#3d6b52' : '#8a3d2f' }}>
+          研发成果 · {RD_TRACK_LABEL[reveal.track]}
+        </p>
+        <h2>{reveal.title}</h2>
+        <p className="lead">{reveal.body}</p>
+        <div className={`event-impact tone-${tone}`}>
+          <b>{reveal.success ? '已入账' : '未过关'}</b>
+          <p>
+            {reveal.staff} 人在岗，成功率 {pctLabel(reveal.chance)}。
+            {reveal.success
+              ? reveal.track === 'product'
+                ? '新产品已开线，销售部会接到对应订单。'
+                : '知识产权已装备到产线，持续生效，不资本化。'
+              : '进度清零，班底保留，下次成功率 +10%。'}
+          </p>
+        </div>
+        <div className="footer-actions">
+          <button className="btn" onClick={onAck}>
+            {reveal.success ? '收入囊中' : '继续课题'}
           </button>
         </div>
       </div>

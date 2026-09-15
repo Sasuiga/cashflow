@@ -27,17 +27,31 @@ import {
   MACHINE_LIFE_MONTHS,
   MATERIALS,
   MATERIAL_IDS,
-  PRODUCTS,
-  RD_THRESHOLD,
-  RD_UNLOCKS,
+  MAX_RD_PRODUCTS,
+  RD_NAME_STEMS,
+  RD_FAIL_BONUS,
+  IP_CATALOG,
+  IP_YIELD_EVERY,
+  IP_PRICE_BONUS,
+  IP_JIG_CAPACITY,
+  IP_AUTO_PER_MACHINE,
+  IP_LEAN_RATE,
   SALARY,
   SLOTS_PER_FACTORY,
   TOTAL_MONTHS,
   WORKERS_PER_MACHINE,
+  bomKey,
   cardById,
+  catalogOf,
   eventById,
+  ipById,
+  isPremiumProduct,
+  isVolumeProduct,
   materialById,
-  productById,
+  productFrom,
+  rdCycleOf,
+  rdSuccessRate,
+  unlockedCatalog,
 } from './data';
 import { ACHIEVEMENTS } from './achievements';
 import {
@@ -60,20 +74,25 @@ import {
   quarterOf,
   trendWord,
 } from './board';
-import { MONTH_NAMES, ROLE_LABEL, factoryName, materialName, money, productName, roundMoney } from './format';
+import { MONTH_NAMES, RD_TRACK_LABEL, ROLE_LABEL, bomLabel, factoryName, materialName, money, pctLabel, productName, roundMoney } from './format';
 import type {
+  Bom,
   CardInstance,
   DeptId,
   EventDef,
   GameAction,
   GameState,
+  IpId,
   MaterialId,
   Materials,
   Modifiers,
   MonthBooks,
   MonthLedger,
   MonthOrder,
+  ProductDef,
   ProductId,
+  RdReveal,
+  RdTrack,
   ReceivableLot,
   Role,
   SettlementLine,
@@ -99,6 +118,27 @@ function pick<T>(list: T[]): T {
   return list[Math.floor(Math.random() * list.length)]!;
 }
 
+function shuffled<T>(list: T[]): T[] {
+  const copy = [...list];
+  for (let i = copy.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [copy[i], copy[j]] = [copy[j]!, copy[i]!];
+  }
+  return copy;
+}
+
+export function productOf(state: GameState, id: ProductId): ProductDef {
+  return productFrom(catalogOf(state), id);
+}
+
+function skuName(state: GameState, id: ProductId): string {
+  try {
+    return productOf(state, id).name;
+  } catch {
+    return productName(id);
+  }
+}
+
 type Shock = 'light' | 'mid' | 'heavy';
 
 function rollShock(month: number): Shock {
@@ -121,8 +161,8 @@ function boundMaterialPrice(id: MaterialId, price: number): number {
   return roundPrice(clamp(price, roundMoney(base * 0.5), roundMoney(base * 2)));
 }
 
-function boundProductPrice(id: ProductId, price: number): number {
-  const base = productById(id).basePrice;
+function boundProductPrice(state: GameState, id: ProductId, price: number): number {
+  const base = productOf(state, id).basePrice;
   return roundPrice(clamp(price, roundMoney(base * 0.5), roundMoney(base * 1.5)));
 }
 
@@ -134,9 +174,9 @@ function moveMaterialPrice(state: GameState, id: MaterialId, ticks: number): voi
 
 function moveProductPrice(state: GameState, id: ProductId, ticks: number): void {
   if (!ticks) return;
-  const base = productById(id).basePrice;
+  const base = productOf(state, id).basePrice;
   const current = state.productPrices[id] ?? base;
-  state.productPrices[id] = boundProductPrice(id, current + priceTick(base) * ticks);
+  state.productPrices[id] = boundProductPrice(state, id, current + priceTick(base) * ticks);
 }
 
 function moveAllProductPrices(state: GameState, ticks: number): void {
@@ -166,7 +206,7 @@ function trendStep(dir: TrendDir): -1 | 0 | 1 {
 
 function ensureMarketTrend(state: GameState): void {
   if (!state.marketTrend?.materials) {
-    state.marketTrend = dealMarketTrend(state.climateId, state.unlockedProducts, state.materialDUnlocked);
+    state.marketTrend = dealMarketTrend(state.climateId, state.unlockedProducts, state.materialDUnlocked, catalogOf(state));
   }
   if (!state.marketTrend.products) state.marketTrend.products = {};
 }
@@ -209,6 +249,103 @@ export function totalStaff(staff: Staff): number {
   return staff.production + staff.management + staff.sales + staff.rd;
 }
 
+export function hasIp(state: GameState, id: IpId): boolean {
+  return (state.ownedIps ?? []).includes(id);
+}
+
+export function rdCapacityBonus(state: GameState): number {
+  let bonus = 0;
+  if (hasIp(state, 'jig')) bonus += IP_JIG_CAPACITY;
+  if (hasIp(state, 'auto')) bonus += state.machines * IP_AUTO_PER_MACHINE;
+  return bonus;
+}
+
+export function yieldExtraOf(qty: number, state: GameState): number {
+  if (!hasIp(state, 'yield') || qty <= 0) return 0;
+  return Math.floor(qty / IP_YIELD_EVERY);
+}
+
+export function rdTrackStaff(state: GameState, track: RdTrack): number {
+  return track === 'product' ? state.rdProductStaff ?? 0 : state.rdTechStaff ?? 0;
+}
+
+export function rdTrackProgress(state: GameState, track: RdTrack): number {
+  return track === 'product' ? state.rdProductProgress ?? 0 : state.rdTechProgress ?? 0;
+}
+
+export function rdTrackFailBonus(state: GameState, track: RdTrack): number {
+  return track === 'product' ? state.rdProductFailBonus ?? 0 : state.rdTechFailBonus ?? 0;
+}
+
+export function rdTrackRate(state: GameState, track: RdTrack, extraStaff = 0): number {
+  return rdSuccessRate(rdTrackStaff(state, track) + extraStaff, rdTrackFailBonus(state, track));
+}
+
+export function currentProductProject(state: GameState) {
+  return state.rdProductDraft ?? null;
+}
+
+export function currentTechProject(state: GameState) {
+  const id = state.rdTechProjectId;
+  if (!id || hasIp(state, id)) return null;
+  return ipById(id);
+}
+
+export function availableTechIps(state: GameState) {
+  const owned = new Set(state.ownedIps ?? []);
+  return IP_CATALOG.filter((item) => !owned.has(item.id));
+}
+
+export function canOpenProductRd(state: GameState): boolean {
+  return (
+    !state.rdProductDraft &&
+    (state.extraProducts?.length ?? 0) < MAX_RD_PRODUCTS &&
+    rdTrackStaff(state, 'product') > 0
+  );
+}
+
+export function canPickTechProject(state: GameState, ipId?: IpId): boolean {
+  if (ipId && hasIp(state, ipId)) return false;
+  const current = state.rdTechProjectId;
+  if (!current) return true;
+  if (ipId && current === ipId) return true;
+  return rdTrackProgress(state, 'tech') <= 0;
+}
+
+export function rdHasProject(state: GameState, track: RdTrack): boolean {
+  return track === 'product' ? Boolean(currentProductProject(state)) : Boolean(currentTechProject(state));
+}
+
+export function unitsNeeded(state: GameState, id: ProductId, qty: number): Materials {
+  const bom = productOf(state, id).bom;
+  const factor = hasIp(state, 'lean') ? 1 - IP_LEAN_RATE : 1;
+  const out = emptyMats();
+  for (const key of MATERIAL_IDS) {
+    const raw = (bom[key] ?? 0) * qty;
+    if (raw <= 0) continue;
+    out[key] = factor === 1 ? raw : Math.max(qty > 0 ? 1 : 0, Math.round(raw * factor));
+  }
+  return out;
+}
+
+function ensureRdState(state: GameState): void {
+  if (typeof state.rdProductStaff !== 'number') state.rdProductStaff = state.staff.rd ?? 0;
+  if (typeof state.rdTechStaff !== 'number') state.rdTechStaff = 0;
+  if (typeof state.rdProductProgress !== 'number') state.rdProductProgress = 0;
+  if (typeof state.rdTechProgress !== 'number') state.rdTechProgress = 0;
+  if (typeof state.rdUnlockIndex !== 'number') state.rdUnlockIndex = 0;
+  if (typeof state.rdIpIndex !== 'number') state.rdIpIndex = 0;
+  if (!state.rdTechProjectId) state.rdTechProjectId = null;
+  if (!Array.isArray(state.extraProducts)) state.extraProducts = [];
+  if (state.rdProductDraft === undefined) state.rdProductDraft = null;
+  if (typeof state.rdProductFailBonus !== 'number') state.rdProductFailBonus = 0;
+  if (typeof state.rdTechFailBonus !== 'number') state.rdTechFailBonus = 0;
+  if (!Array.isArray(state.ownedIps)) state.ownedIps = [];
+  if (!Array.isArray(state.pendingRdReveals)) state.pendingRdReveals = [];
+  if (!Array.isArray(state.pendingLaunchOrders)) state.pendingLaunchOrders = [];
+  state.staff.rd = Math.max(0, (state.rdProductStaff ?? 0) + (state.rdTechStaff ?? 0));
+}
+
 export function maxApFor(staff: Staff): number {
   return BASE_AP + Math.floor(staff.management / 2);
 }
@@ -217,7 +354,7 @@ function orderCountFor(sales: number): number {
   return BASE_MONTH_ORDERS + Math.floor(Math.max(0, sales) / 2);
 }
 
-export function hireEffectLines(state: GameState, role: Role): string[] {
+export function hireEffectLines(state: GameState, role: Role, rdTrack: RdTrack = 'product'): string[] {
   const card = `${ROLE_LABEL[role]}人员越多，本月提案越容易出现${ROLE_LABEL[role]}类方案。`;
   if (role === 'production') {
     const next = { ...state, staff: { ...state.staff, production: state.staff.production + 1 } };
@@ -254,14 +391,26 @@ export function hireEffectLines(state: GameState, role: Role): string[] {
       card,
     ];
   }
-  const from = state.staff.rd;
-  const to = from + 1;
-  const remain = Math.max(0, RD_THRESHOLD - state.rdProgress);
-  return [
-    `本月结算按在职人数推进，每人 +1 点；累计 ${RD_THRESHOLD} 点解锁一档产品或特种料。`,
-    `本次入职：本月推进 ${from} → ${to} 点。当前进度 ${state.rdProgress}/${RD_THRESHOLD}，距下一档 ${remain} 点。`,
-    card,
+  const track = rdTrack;
+  const project = track === 'product' ? currentProductProject(state) : currentTechProject(state);
+  const productOpen = (state.extraProducts?.length ?? 0) < MAX_RD_PRODUCTS;
+  const techOpen = availableTechIps(state).length > 0;
+  const lines = [
+    `编入${RD_TRACK_LABEL[track]}。人数只影响成功率（每人 20%，上限 80%）。有人值守时每月结算推进 1 个月。`,
   ];
+  if (!project) {
+    lines.push(
+      track === 'product'
+        ? productOpen
+          ? '入职后随机立项新产品（原料结构和名称随机，毛利高于现有最低档）。'
+          : '产品课题已经做完，新人加入后做工艺微调。'
+        : techOpen
+          ? '入职时选择要攻关的知识产权。选定后 2 个月一轮。'
+          : '工艺专利已经齐了，新人加入后做持续改善。',
+    );
+  }
+  lines.push(card);
+  return lines;
 }
 
 export function buyLineCost(state: GameState, material: MaterialId, qty: number): number {
@@ -289,7 +438,8 @@ export function capacityOf(state: GameState): number {
     state.machines * MACHINE_BASE_CAP +
     capped * CAP_PER_WORKER +
     overflow * CAP_OVERFLOW +
-    state.modifiers.extraCapacity
+    state.modifiers.extraCapacity +
+    rdCapacityBonus(state)
   );
 }
 
@@ -353,7 +503,7 @@ export function factoryLayout(state: GameState, capUsed = 0): FactoryView[] {
     host.cap += workersLeft * CAP_OVERFLOW;
   }
 
-  const extra = state.modifiers.extraCapacity ?? 0;
+  const extra = (state.modifiers.extraCapacity ?? 0) + rdCapacityBonus(state);
   if (extra !== 0 && views[0]) {
     views[0].cap = Math.max(0, views[0].cap + extra);
   }
@@ -416,21 +566,36 @@ export interface ProductionPlan {
 
 export function sellPriceOf(state: GameState, id: ProductId): number {
   const base = state.productPrices[id] ?? 0;
-  return roundPrice(base * (1 + state.modifiers.priceBonus));
+  const ip = hasIp(state, 'spec') ? IP_PRICE_BONUS : 0;
+  return roundPrice(base * (1 + state.modifiers.priceBonus + ip));
 }
 
 export function bomCost(state: GameState, id: ProductId): number {
-  const bom = productById(id).bom;
+  return bomSpotCost(state, productOf(state, id).bom);
+}
+
+export function bomSpotCost(state: GameState, bom: Bom): number {
   let cost = 0;
   for (const key of MATERIAL_IDS) {
     const need = bom[key] ?? 0;
-    cost += need * state.materialPrices[key];
+    cost += need * (state.materialPrices[key] ?? 0);
   }
   return roundPrice(cost);
 }
 
+export function listedGrossOf(state: GameState, id: ProductId): number {
+  const price = state.productPrices[id] ?? productOf(state, id).basePrice;
+  return roundMoney(price - bomCost(state, id));
+}
+
+export function lowestUnlockedMargin(state: GameState): number {
+  const ids = state.unlockedProducts ?? [];
+  if (!ids.length) return 0;
+  return Math.min(...ids.map((id) => listedGrossOf(state, id)));
+}
+
 export function bomBookCost(state: GameState, id: ProductId): number {
-  const bom = productById(id).bom;
+  const bom = productOf(state, id).bom;
   let cost = 0;
   for (const key of MATERIAL_IDS) {
     const need = bom[key] ?? 0;
@@ -471,10 +636,10 @@ export function operatingCashOf(ledger: MonthLedger): number {
 }
 
 export function maxProduce(state: GameState, id: ProductId): number {
-  const bom = productById(id).bom;
+  const unit = unitsNeeded(state, id, 1);
   let limit = capacityOf(state);
   for (const key of MATERIAL_IDS) {
-    const need = bom[key] ?? 0;
+    const need = unit[key] ?? 0;
     if (need > 0) limit = Math.min(limit, Math.floor(state.materials[key] / need));
   }
   return Math.max(0, limit);
@@ -516,7 +681,9 @@ export function materialCrateSize(id: MaterialId): number {
 }
 
 export function volumeProductOf(state: GameState): ProductId {
-  return state.unlockedProducts.includes('economy') ? 'economy' : (state.unlockedProducts[0] ?? 'basic');
+  const unlocked = unlockedCatalog(state);
+  if (!unlocked.length) return 'basic';
+  return unlocked.reduce((best, item) => (item.baseDemand > best.baseDemand ? item : best), unlocked[0]!).id;
 }
 
 export function productionPlan(
@@ -544,9 +711,9 @@ export function productionPlan(
     const qty = extraQty + Math.max(0, need - stock);
     produce[id] = qty;
     capUsed += qty;
-    const bom = productById(id).bom;
+    const bomNeed = unitsNeeded(state, id, qty);
     for (const key of MATERIAL_IDS) {
-      materialNeed[key] = roundMoney(materialNeed[key] + (bom[key] ?? 0) * qty);
+      materialNeed[key] = roundMoney(materialNeed[key] + (bomNeed[key] ?? 0));
     }
   }
   const capTotal = capacityOf(state);
@@ -579,10 +746,10 @@ export function maxExtraProduce(state: GameState, productId: ProductId): number 
   extra[productId] = 0;
   const plan = productionPlan(state, state.acceptedOrderIds ?? [], extra);
   const capLeft = Math.max(0, plan.capTotal - plan.capUsed);
-  const bom = productById(productId).bom;
+  const unitNeed = unitsNeeded(state, productId, 1);
   let byMat = capLeft;
   for (const key of MATERIAL_IDS) {
-    const unit = bom[key] ?? 0;
+    const unit = unitNeed[key] ?? 0;
     if (unit <= 0) continue;
     const left = Math.max(0, (state.materials[key] ?? 0) - (plan.materialNeed[key] ?? 0));
     byMat = Math.min(byMat, Math.floor(left / unit));
@@ -598,15 +765,16 @@ function syncDemandFromOrders(state: GameState): void {
   state.demand = demand;
 }
 
-function orderSizePool(productId: ProductId, channel: boolean): number[] {
+function orderSizePool(state: GameState, productId: ProductId, channel: boolean): number[] {
   const boosted = channel;
-  if (productId === 'basic' || productId === 'economy') return boosted ? [10, 12, 16] : [8, 10, 12];
-  if (productId === 'standard') return boosted ? [4, 6] : [3, 4];
-  return boosted ? [1, 2] : [1];
+  const def = productOf(state, productId);
+  if (isVolumeProduct(def)) return boosted ? [10, 12, 16] : [8, 10, 12];
+  if (isPremiumProduct(def)) return boosted ? [1, 2] : [1];
+  return boosted ? [4, 6] : [3, 4];
 }
 
-function sizeAfterDemand(qty: number, productId: ProductId, extra: number): number {
-  const volume = productId === 'basic' || productId === 'economy';
+function sizeAfterDemand(state: GameState, qty: number, productId: ProductId, extra: number): number {
+  const volume = isVolumeProduct(productOf(state, productId));
   if (extra <= -6) return Math.max(volume ? 6 : 1, qty - (volume ? 4 : 1));
   if (extra >= 8) return qty + (volume ? 4 : 1);
   return qty;
@@ -615,12 +783,12 @@ function sizeAfterDemand(qty: number, productId: ProductId, extra: number): numb
 function weightedProducts(state: GameState): ProductId[] {
   const climate = climateById(state.climateId).id;
   const copies: ProductId[] = [];
-  for (const id of state.unlockedProducts) {
-    let weight = id === 'basic' || id === 'economy' ? 3 : id === 'standard' ? 2 : 1;
-    if (state.staff.sales >= 2 && (id === 'premium' || id === 'special')) weight += 1;
-    if (climate === 'chip' && (id === 'standard' || id === 'premium')) weight = Math.max(1, weight - 1);
-    if (climate === 'channel' && (id === 'basic' || id === 'economy')) weight += 1;
-    for (let i = 0; i < weight; i += 1) copies.push(id);
+  for (const def of unlockedCatalog(state)) {
+    let weight = isVolumeProduct(def) ? 3 : isPremiumProduct(def) ? 1 : 2;
+    if (state.staff.sales >= 2 && isPremiumProduct(def)) weight += 1;
+    if (climate === 'chip' && ((def.bom.c ?? 0) > 0 || isPremiumProduct(def))) weight = Math.max(1, weight - 1);
+    if (climate === 'channel' && isVolumeProduct(def)) weight += 1;
+    for (let i = 0; i < weight; i += 1) copies.push(def.id);
   }
   return copies.length ? copies : ['basic'];
 }
@@ -656,7 +824,8 @@ function rollMonthOrders(state: GameState): void {
 
   const volume = volumeProductOf(state);
   const volumeQty = sizeAfterDemand(
-    pick(orderSizePool(volume, channel)),
+    state,
+    pick(orderSizePool(state, volume, channel)),
     volume,
     state.modifiers.extraDemand ?? 0,
   );
@@ -668,14 +837,19 @@ function rollMonthOrders(state: GameState): void {
     guard += 1;
     const productId = pick(pool);
     const qty = sizeAfterDemand(
-      pick(orderSizePool(productId, channel)),
+      state,
+      pick(orderSizePool(state, productId, channel)),
       productId,
       state.modifiers.extraDemand ?? 0,
     );
     const dup = (state.monthOrders ?? []).some((item) => item.productId === productId && item.qty === qty && item.kind === 'market');
     if (dup && guard < 8) continue;
-    pushOrder(state, { productId, qty, kind: 'market', penalty: 0 });
+  pushOrder(state, { productId, qty, kind: 'market', penalty: 0 });
   }
+  for (const launch of state.pendingLaunchOrders ?? []) {
+    pushOrder(state, { productId: launch.productId, qty: launch.qty, kind: 'market', penalty: 0 });
+  }
+  state.pendingLaunchOrders = [];
   syncDemandFromOrders(state);
 }
 
@@ -693,7 +867,8 @@ function rollOneMarketOrder(state: GameState): MonthOrder {
   for (let guard = 0; guard < 8; guard += 1) {
     productId = pick(pool);
     qty = sizeAfterDemand(
-      pick(orderSizePool(productId, channel)),
+      state,
+      pick(orderSizePool(state, productId, channel)),
       productId,
       state.modifiers.extraDemand ?? 0,
     );
@@ -722,7 +897,7 @@ export function monthOutlook(state: GameState): string {
   const plan = productionPlan(state);
   const contract = orders.find((item) => item.kind === 'contract');
   if (contract && !(state.acceptedOrderIds ?? []).includes(contract.id)) {
-    return `合同 ${productName(contract.productId)} ${contract.qty} 件未接。已接 ${accepted}/${orders.length} 张，产能 ${plan.capUsed}/${plan.capTotal}。`;
+    return `合同 ${skuName(state, contract.productId)} ${contract.qty} 件未接。已接 ${accepted}/${orders.length} 张，产能 ${plan.capUsed}/${plan.capTotal}。`;
   }
   return `订单 ${orders.length} 张，已接 ${accepted} 张。产能 ${plan.capUsed}/${plan.capTotal}。`;
 }
@@ -1054,6 +1229,7 @@ export function checkAchievements(state: GameState): void {
   if (state.factories >= 2) unlockAchievement(state, 'factory2');
   if (state.staff.rd >= 1) unlockAchievement(state, 'rd1');
   if (state.unlockedProducts.length > 3) unlockAchievement(state, 'newProduct');
+  if ((state.ownedIps ?? []).length > 0) unlockAchievement(state, 'patent');
   if (state.cash >= 50) unlockAchievement(state, 'cash500');
   if (netAssetsOf(state) >= 100) unlockAchievement(state, 'net1000');
   if (state.debt > 0) unlockAchievement(state, 'loan');
@@ -1117,7 +1293,7 @@ function beginQuarter(state: GameState, quarter: 1 | 2 | 3 | 4): void {
   const climate = pick(pool);
   state.climateId = climate.id;
   state.usedClimateIds = [...state.usedClimateIds, climate.id];
-  state.marketTrend = dealMarketTrend(climate.id, state.unlockedProducts, state.materialDUnlocked);
+  state.marketTrend = dealMarketTrend(climate.id, state.unlockedProducts, state.materialDUnlocked, catalogOf(state));
   state.basicGoalId = dealBasicGoal(quarter, climate.id).id;
   state.challengePoolIds = dealChallengePool(quarter, climate.id).map((goal) => goal.id);
   state.challengeGoalIds = [];
@@ -1445,8 +1621,7 @@ function rollMarket(state: GameState): void {
     }
     moveMaterialPrice(state, mat.id, trendStep(state.marketTrend.materials[mat.id] ?? 0));
   }
-  for (const product of PRODUCTS) {
-    if (!state.unlockedProducts.includes(product.id)) continue;
+  for (const product of unlockedCatalog(state)) {
     moveProductPrice(state, product.id, trendStep(state.marketTrend.products[product.id] ?? 0));
   }
 }
@@ -1555,12 +1730,12 @@ function prepareMonth(state: GameState): void {
 }
 
 function consumeBom(state: GameState, id: ProductId, count: number): number {
-  const bom = productById(id).bom;
+  const need = unitsNeeded(state, id, count);
   let cost = 0;
   for (const key of MATERIAL_IDS) {
-    const need = (bom[key] ?? 0) * count;
-    if (need <= 0) continue;
-    const lost = takeMaterialCost(state, key, need);
+    const qty = need[key] ?? 0;
+    if (qty <= 0) continue;
+    const lost = takeMaterialCost(state, key, qty);
     cost = roundMoney(cost + lost.cost);
   }
   return cost;
@@ -1643,34 +1818,213 @@ function pnlSettlementLines(ledger: MonthLedger, reserve: number): SettlementLin
   return lines;
 }
 
-function applyRd(state: GameState): string | null {
-  if (state.staff.rd <= 0) return null;
-  state.rdProgress += state.staff.rd;
-  if (state.rdProgress < RD_THRESHOLD) {
-    return `研发推进 ${state.staff.rd} 点，进度 ${state.rdProgress}/${RD_THRESHOLD}。`;
+function setRdProgress(state: GameState, track: RdTrack, value: number): void {
+  if (track === 'product') state.rdProductProgress = Math.max(0, value);
+  else state.rdTechProgress = Math.max(0, value);
+}
+
+function setRdFailBonus(state: GameState, track: RdTrack, value: number): void {
+  if (track === 'product') state.rdProductFailBonus = value;
+  else state.rdTechFailBonus = value;
+}
+
+function launchQtyOf(state: GameState, productId: ProductId): number {
+  const def = productOf(state, productId);
+  if (isVolumeProduct(def)) return 10;
+  if (isPremiumProduct(def)) return 3;
+  return 6;
+}
+
+function grantLaunchOrders(state: GameState, productId: ProductId): void {
+  const qty = launchQtyOf(state, productId);
+  if (state.phase === 'actions') {
+    addMarketOrder(state, productId, qty);
+    return;
   }
-  if (state.rdUnlockIndex >= RD_UNLOCKS.length) {
-    state.rdProgress = RD_THRESHOLD;
-    return '实验室已无下一档量产项目，团队在做工艺微调。';
-  }
-  state.rdProgress -= RD_THRESHOLD;
-  const unlock = RD_UNLOCKS[state.rdUnlockIndex]!;
-  state.rdUnlockIndex += 1;
-  if (unlock.unlockD) {
+  state.pendingLaunchOrders = [...(state.pendingLaunchOrders ?? []), { productId, qty }];
+}
+
+function climateTrendFor(state: GameState, def: ProductDef) {
+  const climate = climateById(state.climateId);
+  if (climate.productTrend[def.id] != null) return climate.productTrend[def.id] ?? 0;
+  if (isVolumeProduct(def)) return climate.productTrend.basic ?? climate.productTrend.economy ?? 0;
+  if (isPremiumProduct(def)) return climate.productTrend.premium ?? climate.productTrend.special ?? 0;
+  return climate.productTrend.standard ?? 0;
+}
+
+function applyProductDef(state: GameState, def: ProductDef): void {
+  if ((def.bom.d ?? 0) > 0 && !state.materialDUnlocked) {
     state.materialDUnlocked = true;
     ensureMarketTrend(state);
     state.marketTrend.materials.d = climateById(state.climateId).materialTrend.d ?? 0;
   }
-  if (unlock.product && !state.unlockedProducts.includes(unlock.product)) {
-    state.unlockedProducts.push(unlock.product);
-    const def = productById(unlock.product);
-    state.productPrices[unlock.product] = def.basePrice;
-    state.prevProductPrices = { ...(state.prevProductPrices ?? {}), [unlock.product]: def.basePrice };
-    ensureMarketTrend(state);
-    state.marketTrend.products[unlock.product] = climateById(state.climateId).productTrend[unlock.product] ?? 0;
-    state.demand[unlock.product] = state.demand[unlock.product] ?? 0;
+  if (state.unlockedProducts.includes(def.id)) return;
+  state.unlockedProducts.push(def.id);
+  state.productPrices[def.id] = def.basePrice;
+  state.prevProductPrices = { ...(state.prevProductPrices ?? {}), [def.id]: def.basePrice };
+  ensureMarketTrend(state);
+  state.marketTrend.products[def.id] = climateTrendFor(state, def);
+  state.demand[def.id] = state.demand[def.id] ?? 0;
+  grantLaunchOrders(state, def.id);
+}
+
+export function rollRdProduct(state: GameState): ProductDef {
+  const catalog = catalogOf(state);
+  const usedNames = new Set(catalog.map((item) => item.name));
+  const usedBoms = new Set(catalog.map((item) => bomKey(item.bom)));
+  const allowD = state.materialDUnlocked || Math.random() < 0.35;
+  const pool: MaterialId[] = allowD ? ['a', 'b', 'c', 'd'] : ['a', 'b', 'c'];
+  let bom: Bom = { a: 2 };
+  for (let attempt = 0; attempt < 32; attempt += 1) {
+    const next: Bom = {};
+    const count = 1 + Math.floor(Math.random() * Math.min(3, pool.length));
+    for (const id of shuffled(pool).slice(0, count)) {
+      next[id] = 1 + Math.floor(Math.random() * 3);
+    }
+    const total = MATERIAL_IDS.reduce((sum, id) => sum + (next[id] ?? 0), 0);
+    if (total < 2) continue;
+    if (usedBoms.has(bomKey(next))) continue;
+    bom = next;
+    break;
   }
-  return unlock.note;
+  const cost = bomSpotCost(state, bom);
+  const floor = lowestUnlockedMargin(state);
+  const bump = 0.1 + Math.floor(Math.random() * 4) * 0.1;
+  const price = roundPrice(cost + floor + bump);
+  const usesD = (bom.d ?? 0) > 0;
+  const usesC = (bom.c ?? 0) > 0;
+  let tier = '走量';
+  let demand = 16 + Math.floor(Math.random() * 5);
+  if (usesD || price >= 5) {
+    tier = '高端';
+    demand = 5 + Math.floor(Math.random() * 4);
+  } else if (usesC || price >= 3) {
+    tier = '普通';
+    demand = 8 + Math.floor(Math.random() * 5);
+  }
+  const stems = RD_NAME_STEMS.filter((stem) => !usedNames.has(`${stem}款`));
+  const stem = stems.length ? pick(stems) : `改型${(state.extraProducts?.length ?? 0) + 1}`;
+  const name = stem.endsWith('款') ? stem : `${stem}款`;
+  const slot = (state.extraProducts?.length ?? 0) === 0 ? 'rd1' : 'rd2';
+  const margin = roundMoney(price - cost);
+  const blurb = `BOM ${bomLabel(bom)}。立项毛利 ${money(margin)}/件，高于现有最低档 ${money(floor)}。`;
+  return { id: slot, name, tier, bom, basePrice: price, baseDemand: demand, blurb };
+}
+
+function resolveRd(state: GameState, track: RdTrack): string {
+  const staff = rdTrackStaff(state, track);
+  const chance = rdTrackRate(state, track);
+  const success = Math.random() < chance;
+  setRdProgress(state, track, 0);
+  if (track === 'product') {
+    const draft = currentProductProject(state);
+    if (!draft) return '量产课题已经做完。';
+    if (success) {
+      applyProductDef(state, draft);
+      state.extraProducts = [...(state.extraProducts ?? []), draft];
+      state.rdProductDraft = null;
+      state.rdUnlockIndex += 1;
+      setRdFailBonus(state, 'product', 0);
+      const dNote = (draft.bom.d ?? 0) > 0 ? '特种合金开线。' : '';
+      const body = `产品研发交付：${draft.name} 上市。${bomLabel(draft.bom)}。销售部接到首批新单。${dNote}`;
+      const reveal: RdReveal = {
+        track,
+        success: true,
+        title: `${draft.name} 已交付`,
+        body,
+        chance,
+        staff,
+      };
+      state.pendingRdReveals = [...(state.pendingRdReveals ?? []), reveal];
+      return body;
+    }
+    setRdFailBonus(state, 'product', RD_FAIL_BONUS);
+    const body = `${draft.name} 没跑通，进度清零。班底还在，下次成功率 +10%（仍封顶 80%）。`;
+    state.pendingRdReveals = [
+      ...(state.pendingRdReveals ?? []),
+      { track, success: false, title: `${draft.name} 未过关`, body, chance, staff },
+    ];
+    return body;
+  }
+
+  const ip = currentTechProject(state);
+  if (!ip) return '工艺专利已经齐了。';
+  if (success) {
+    state.ownedIps = [...(state.ownedIps ?? []), ip.id];
+    state.rdTechProjectId = null;
+    state.rdIpIndex = (state.ownedIps ?? []).length;
+    setRdFailBonus(state, 'tech', 0);
+    const body = `知识产权入账：${ip.name}。${ip.effect}。不资本化，直接形成产线增益。`;
+    state.pendingRdReveals = [
+      ...(state.pendingRdReveals ?? []),
+      { track, success: true, title: `掌握 ${ip.name}`, body, chance, staff },
+    ];
+    return body;
+  }
+  setRdFailBonus(state, 'tech', RD_FAIL_BONUS);
+  const body = `${ip.name} 样件没过，进度清零。班底还在，下次成功率 +10%（仍封顶 80%）。`;
+  state.pendingRdReveals = [
+    ...(state.pendingRdReveals ?? []),
+    { track, success: false, title: `${ip.name} 未过关`, body, chance, staff },
+  ];
+  return body;
+}
+
+function advanceRd(state: GameState, track: RdTrack, points: number): string | null {
+  ensureRdState(state);
+  if (points <= 0) return null;
+  if (!rdHasProject(state, track)) {
+    if (track === 'product') {
+      const remain = MAX_RD_PRODUCTS - (state.extraProducts?.length ?? 0);
+      return remain > 0 ? '产品实验室闲置，等待开题。' : '量产课题已经做完，团队在做工艺微调。';
+    }
+    return availableTechIps(state).length > 0
+      ? '工艺实验室闲置，等待点选课题。'
+      : '工艺专利已经齐了，团队在做持续改善。';
+  }
+  const cycle = rdCycleOf(track);
+  const next = rdTrackProgress(state, track) + points;
+  setRdProgress(state, track, next);
+  if (next < cycle) {
+    const rate = rdTrackRate(state, track);
+    const name =
+      track === 'product' ? currentProductProject(state)?.name ?? '产品课题' : currentTechProject(state)?.name ?? '工艺课题';
+    return `${RD_TRACK_LABEL[track]}推进 ${points} 个月，${name} 进度 ${next}/${cycle}，成功率 ${pctLabel(rate)}。`;
+  }
+  return resolveRd(state, track);
+}
+
+function pickLabRushTrack(state: GameState): RdTrack | null {
+  const candidates: RdTrack[] = [];
+  if (rdHasProject(state, 'product')) candidates.push('product');
+  if (rdHasProject(state, 'tech')) candidates.push('tech');
+  if (candidates.length === 0) return null;
+  const scored = candidates.map((track) => {
+    const cycle = rdCycleOf(track);
+    const progress = rdTrackProgress(state, track);
+    const staff = rdTrackStaff(state, track);
+    return { track, remain: cycle - progress, staff };
+  });
+  scored.sort((a, b) => {
+    if (a.staff > 0 !== b.staff > 0) return a.staff > 0 ? -1 : 1;
+    if (a.remain !== b.remain) return a.remain - b.remain;
+    return a.track === 'product' ? -1 : 1;
+  });
+  return scored[0]?.track ?? null;
+}
+
+function applyRd(state: GameState): string | null {
+  ensureRdState(state);
+  const notes: string[] = [];
+  if (rdTrackStaff(state, 'product') > 0) {
+    const note = advanceRd(state, 'product', 1);
+    if (note) notes.push(note);
+  }
+  if (rdTrackStaff(state, 'tech') > 0) {
+    const note = advanceRd(state, 'tech', 1);
+    if (note) notes.push(note);
+  }
+  return notes.length ? notes.join(' ') : null;
 }
 
 function suitWeight(state: GameState, suit: Role): number {
@@ -1711,15 +2065,20 @@ function playCardEffect(state: GameState, defId: string): string {
       break;
     case 'client': {
       const order = addMarketOrder(state, volumeProductOf(state), 8);
-      noteDept(state, 'sales', `大客户加单：${productName(order.productId)} ${order.qty} 件`, false);
-      return `渠道加了一张 ${productName(order.productId)} ${order.qty} 件的市场单。`;
+      noteDept(state, 'sales', `大客户加单：${skuName(state, order.productId)} ${order.qty} 件`, false);
+      return `渠道加了一张 ${skuName(state, order.productId)} ${order.qty} 件的市场单。`;
     }
     case 'premiumPush':
       state.modifiers.priceBonus += 0.2;
       break;
-    case 'labRush':
-      state.rdProgress += 1;
-      break;
+    case 'labRush': {
+      ensureRdState(state);
+      const track = pickLabRushTrack(state);
+      if (!track) return '实验室已无课题可赶。';
+      const note = advanceRd(state, track, 1);
+      noteDept(state, 'rd', note ?? `实验室通宵：${RD_TRACK_LABEL[track]}进度 +1`, false);
+      return note ?? cardById(defId).playText;
+    }
     case 'bridge':
       receive(state, 5, 'borrow');
       break;
@@ -1751,8 +2110,8 @@ function playCardEffect(state: GameState, defId: string): string {
       state.modifiers.creditSaleRate = 1;
       state.modifiers.arTermExtra = Math.max(state.modifiers.arTermExtra, 1);
       const order = addMarketOrder(state, volumeProductOf(state), 6);
-      noteDept(state, 'sales', `赊销铺货加单：${productName(order.productId)} ${order.qty} 件`, false);
-      return `加了一张 ${productName(order.productId)} ${order.qty} 件的单，货款全赊、账期拉长。`;
+      noteDept(state, 'sales', `赊销铺货加单：${skuName(state, order.productId)} ${order.qty} 件`, false);
+      return `加了一张 ${skuName(state, order.productId)} ${order.qty} 件的单，货款全赊、账期拉长。`;
     }
     default:
       break;
@@ -1933,13 +2292,25 @@ function applyEvent(state: GameState): void {
       break;
     }
     case 'poach':
+      ensureRdState(state);
       if (state.staff.rd > 0) {
-        state.staff.rd -= 1;
-        bits.push('研发人员 -1');
+        if ((state.rdProductStaff ?? 0) >= (state.rdTechStaff ?? 0) && (state.rdProductStaff ?? 0) > 0) {
+          state.rdProductStaff -= 1;
+          bits.push('产品实验室被挖走 1 人');
+        } else if ((state.rdTechStaff ?? 0) > 0) {
+          state.rdTechStaff -= 1;
+          bits.push('工艺实验室被挖走 1 人');
+        }
+        state.staff.rd = Math.max(0, (state.rdProductStaff ?? 0) + (state.rdTechStaff ?? 0));
       } else {
-        if (state.rdProgress > 0) {
-          state.rdProgress -= 1;
-          bits.push('实验室空转，研发进度 -1');
+        if ((state.rdProductProgress ?? 0) > 0 || (state.rdTechProgress ?? 0) > 0) {
+          if ((state.rdProductProgress ?? 0) >= (state.rdTechProgress ?? 0) && (state.rdProductProgress ?? 0) > 0) {
+            state.rdProductProgress -= 1;
+            bits.push('产品课题进度 -1');
+          } else {
+            state.rdTechProgress = Math.max(0, (state.rdTechProgress ?? 0) - 1);
+            bits.push('工艺课题进度 -1');
+          }
         }
         state.modifiers.extraCapacity -= 3;
         bits.push('工艺无人盯线，本月产能 -3');
@@ -2179,8 +2550,20 @@ export function createInitialState(): GameState {
     demand: { basic: 20, standard: 10, premium: 5 },
     unlockedProducts: ['basic', 'standard', 'premium'],
     materialDUnlocked: false,
-    rdProgress: 0,
+    rdProductStaff: 0,
+    rdTechStaff: 0,
+    rdProductProgress: 0,
+    rdTechProgress: 0,
     rdUnlockIndex: 0,
+    rdIpIndex: 0,
+    rdTechProjectId: null,
+    extraProducts: [],
+    rdProductDraft: null,
+    rdProductFailBonus: 0,
+    rdTechFailBonus: 0,
+    ownedIps: [],
+    pendingRdReveals: [],
+    pendingLaunchOrders: [],
     shop: [],
     cardsBoughtThisMonth: 0,
     hand: [],
@@ -2348,8 +2731,14 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
   if (!Array.isArray(state.monthOrders)) state.monthOrders = [];
   if (!Array.isArray(state.acceptedOrderIds)) state.acceptedOrderIds = [];
   if (!state.extraProduce) state.extraProduce = {};
+  ensureRdState(state);
   if (!state.marketTrend?.materials) {
-    state.marketTrend = dealMarketTrend(state.climateId, state.unlockedProducts ?? ['basic'], Boolean(state.materialDUnlocked));
+    state.marketTrend = dealMarketTrend(
+      state.climateId,
+      state.unlockedProducts ?? ['basic'],
+      Boolean(state.materialDUnlocked),
+      catalogOf(state),
+    );
   }
   if (!state.prevMaterialPrices) state.prevMaterialPrices = { ...state.materialPrices };
   if (!state.prevProductPrices) state.prevProductPrices = { ...state.productPrices };
@@ -2457,7 +2846,24 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
         return state;
       }
       pay(state, HIRE_COST, 'admin');
-      state.staff[action.role] += 1;
+      if (action.role === 'rd') {
+        ensureRdState(state);
+        const track = action.rdTrack ?? 'product';
+        if (track === 'product') {
+          state.rdProductStaff = (state.rdProductStaff ?? 0) + 1;
+          if (!state.rdProductDraft && (state.extraProducts?.length ?? 0) < MAX_RD_PRODUCTS) {
+            state.rdProductDraft = rollRdProduct(state);
+          }
+        } else {
+          state.rdTechStaff = (state.rdTechStaff ?? 0) + 1;
+          if (!state.rdTechProjectId && action.ipId && !hasIp(state, action.ipId)) {
+            state.rdTechProjectId = action.ipId;
+          }
+        }
+        state.staff.rd = (state.rdProductStaff ?? 0) + (state.rdTechStaff ?? 0);
+      } else {
+        state.staff[action.role] += 1;
+      }
       if (state.quarterStats) state.quarterStats.hired = (state.quarterStats.hired ?? 0) + 1;
       state.maxAp = maxApFor(state.staff);
       accrueRoleWages(state, action.role, SALARY[action.role]);
@@ -2470,9 +2876,58 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
       let hireNote = `招聘${ROLE_LABEL[action.role]} 1人。招聘费 ${money(HIRE_COST)} 已付，月薪 ${money(SALARY[action.role])} 计入应付职工薪酬`;
       if (action.role === 'sales') {
         const order = rollOneMarketOrder(state);
-        hireNote += `。立刻带来${productName(order.productId)} ${order.qty} 件`;
+        hireNote += `。立刻带来${skuName(state, order.productId)} ${order.qty} 件`;
+      }
+      if (action.role === 'rd') {
+        const track = action.rdTrack ?? 'product';
+        hireNote += `。编入${RD_TRACK_LABEL[track]}，成功率提升至 ${pctLabel(rdTrackRate(state, track))}`;
+        if (track === 'product' && state.rdProductDraft) {
+          hireNote += `，立项「${state.rdProductDraft.name}」`;
+        }
+        if (track === 'tech' && state.rdTechProjectId) {
+          hireNote += `，攻关「${ipById(state.rdTechProjectId).name}」`;
+        }
       }
       noteDept(state, hireDept[action.role], hireNote);
+      return state;
+    }
+
+    case 'PICK_RD_TECH': {
+      if (state.phase !== 'actions') return prev;
+      ensureRdState(state);
+      if (hasIp(state, action.ipId)) {
+        pushLog(state, '这项知识产权已经装备。');
+        return state;
+      }
+      const current = state.rdTechProjectId;
+      if (current && current !== action.ipId && rdTrackProgress(state, 'tech') > 0) {
+        pushLog(state, '当前课题已有进度，不能中途换题。');
+        return state;
+      }
+      state.rdTechProjectId = action.ipId;
+      if (current !== action.ipId) setRdProgress(state, 'tech', 0);
+      noteDept(state, 'rd', `工艺实验室开题：${ipById(action.ipId).name}`, false);
+      return state;
+    }
+
+    case 'OPEN_PRODUCT_RD': {
+      if (state.phase !== 'actions') return prev;
+      ensureRdState(state);
+      if (rdTrackStaff(state, 'product') <= 0) {
+        pushLog(state, '产品实验室没人，无法开题。');
+        return state;
+      }
+      if (state.rdProductDraft) {
+        pushLog(state, '已有进行中的产品课题。');
+        return state;
+      }
+      if ((state.extraProducts?.length ?? 0) >= MAX_RD_PRODUCTS) {
+        pushLog(state, '量产课题已经做完。');
+        return state;
+      }
+      state.rdProductDraft = rollRdProduct(state);
+      setRdProgress(state, 'product', 0);
+      noteDept(state, 'rd', `产品实验室开题：${state.rdProductDraft.name}。${state.rdProductDraft.blurb}`, false);
       return state;
     }
 
@@ -2595,16 +3050,16 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
         state.acceptedOrderIds = accepted.filter((id) => id !== action.id);
         clampExtraProduce(state);
         state.deptActs.sales = state.deptActs.sales.filter((line) => !line.startsWith('接单'));
-        noteDept(state, 'sales', `放下${productName(order.productId)} ${order.qty} 件`, false);
+        noteDept(state, 'sales', `放下${skuName(state, order.productId)} ${order.qty} 件`, false);
         return state;
       }
       if (!canAcceptOrder(state, action.id)) {
-        pushLog(state, `接不下 ${productName(order.productId)} ${order.qty} 件：产能或原料不够。`);
+        pushLog(state, `接不下 ${skuName(state, order.productId)} ${order.qty} 件：产能或原料不够。`);
         return state;
       }
       state.acceptedOrderIds = [...accepted, action.id];
       state.deptActs.sales = state.deptActs.sales.filter((line) => !line.startsWith('接单') && !line.startsWith('放下'));
-      noteDept(state, 'sales', `接单${productName(order.productId)} ${order.qty} 件`, false);
+      noteDept(state, 'sales', `接单${skuName(state, order.productId)} ${order.qty} 件`, false);
       return state;
     }
 
@@ -2617,8 +3072,15 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
       state.extraProduce = { ...extra, [action.productId]: Math.min(qty, max) };
       state.deptActs.infra = state.deptActs.infra.filter((line) => !line.startsWith('超产'));
       if ((state.extraProduce[action.productId] ?? 0) > 0) {
-        noteDept(state, 'infra', `超产${productName(action.productId)} ${state.extraProduce[action.productId]} 件入库`, false);
+        noteDept(state, 'infra', `超产${skuName(state, action.productId)} ${state.extraProduce[action.productId]} 件入库`, false);
       }
+      return state;
+    }
+
+    case 'ACK_RD_REVEAL': {
+      const queue = state.pendingRdReveals ?? [];
+      if (queue.length === 0) return prev;
+      state.pendingRdReveals = queue.slice(1);
       return state;
     }
 
@@ -2663,11 +3125,12 @@ function settleMonth(state: GameState): GameState {
   const plan = productionPlan(state);
   const salaries = syncMonthWages(state);
   const producedEntries = (Object.entries(plan.produce) as Array<[ProductId, number]>).filter(([, qty]) => qty > 0);
-  const produced = producedEntries.reduce((sum, [, qty]) => sum + qty, 0);
+  const made = producedEntries.reduce((sum, [, qty]) => sum + qty, 0);
+  const produced = producedEntries.reduce((sum, [, qty]) => sum + qty + yieldExtraOf(qty, state), 0);
 
   const depreciation = accrueDepreciation(state);
   const upkeep = roundMoney(state.factories * FACTORY_UPKEEP);
-  if (produced > 0) {
+  if (made > 0) {
     pay(state, upkeep, 'opOut');
     const conversion = roundMoney((state.wip ?? 0) + depreciation + upkeep);
     let allocated = 0;
@@ -2676,9 +3139,15 @@ function settleMonth(state: GameState): GameState {
       const share =
         index === producedEntries.length - 1
           ? roundMoney(conversion - allocated)
-          : roundMoney((conversion * qty) / produced);
+          : roundMoney((conversion * qty) / made);
       allocated = roundMoney(allocated + share);
-      state.finishedLayers[productId] = addLayer(state.finishedLayers[productId], qty, roundMoney(materialCost + share), state.month);
+      const output = qty + yieldExtraOf(qty, state);
+      state.finishedLayers[productId] = addLayer(
+        state.finishedLayers[productId],
+        output,
+        roundMoney(materialCost + share),
+        state.month,
+      );
     });
     state.wip = 0;
     syncFinishedBooks(state);
@@ -2701,13 +3170,15 @@ function settleMonth(state: GameState): GameState {
       leftover += result.leftover;
       cogs = roundMoney(cogs + result.cogs);
       revenue = roundMoney(revenue + result.sold * sellPriceOf(state, id));
-      soldNames.push(`${productName(id)} ${result.sold}件`);
+      soldNames.push(`${skuName(state, id)} ${result.sold}件`);
       if (state.quarterStats) {
         if (id !== 'basic') {
           state.quarterStats.nonBasic = true;
           state.quarterStats.nonBasicSold = (state.quarterStats.nonBasicSold ?? 0) + result.sold;
         }
-        if (id === 'premium' || id === 'special') state.quarterStats.premiumOrSpecial = true;
+        if (id === 'premium' || id === 'special' || isPremiumProduct(productOf(state, id))) {
+          state.quarterStats.premiumOrSpecial = true;
+        }
       }
     } else {
       leftover += state.finished[id] ?? 0;
@@ -2739,7 +3210,7 @@ function settleMonth(state: GameState): GameState {
     } else {
       penalty = roundMoney(penalty + (order.penalty ?? 0));
       if (order.penalty) pay(state, order.penalty, 'extra');
-      pushLog(state, order.failLog ?? `合同 ${productName(order.productId)} ${order.qty} 件未交，已扣违约金。`);
+      pushLog(state, order.failLog ?? `合同 ${skuName(state, order.productId)} ${order.qty} 件未交，已扣违约金。`);
     }
   }
   state.pendingDeal = null;

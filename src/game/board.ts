@@ -1,5 +1,5 @@
-import type { GameState, MaterialId, ProductId, QuarterStats, TrendDir } from './types';
-import { MATERIALS, PRODUCTS } from './data';
+import type { GameState, MaterialId, ProductDef, ProductId, QuarterStats, TrendDir } from './types';
+import { MATERIALS, catalogOf, isPremiumProduct, isVolumeProduct, unlockedCatalog } from './data';
 import { priceDelta } from './format';
 
 export type ClimateId = 'steel' | 'channel' | 'chip' | 'priceWar';
@@ -130,9 +130,11 @@ function collapseTrend(parts: { name: string; dir: TrendDir }[], word: (dir: Tre
   return parts.map((item) => `${item.name}${word(item.dir)}`).join(' · ');
 }
 
-function demandDirOf(climateId: ClimateId, productId: ProductId): TrendDir {
-  if (climateId === 'channel' && (productId === 'basic' || productId === 'economy')) return 1;
-  if (climateId === 'chip' && (productId === 'standard' || productId === 'premium')) return -1;
+function demandDirOf(climateId: ClimateId, product: ProductDef): TrendDir {
+  if (climateId === 'channel' && isVolumeProduct(product)) return 1;
+  if (climateId === 'chip' && (isPremiumProduct(product) || (product.bom.c ?? 0) > 0 || product.id === 'standard')) {
+    return -1;
+  }
   return 0;
 }
 
@@ -157,6 +159,7 @@ export function dealMarketTrend(
   climateId: ClimateId,
   unlockedProducts: ProductId[],
   materialDUnlocked: boolean,
+  catalog = catalogOf({ unlockedProducts }),
 ) {
   const climate = climateById(climateId);
   const materials: Record<MaterialId, TrendDir> = { a: 0, b: 0, c: 0, d: 0 };
@@ -165,7 +168,15 @@ export function dealMarketTrend(
   }
   const products: Partial<Record<ProductId, TrendDir>> = {};
   for (const id of unlockedProducts) {
-    products[id] = climate.productTrend[id] ?? 0;
+    const fromClimate = climate.productTrend[id];
+    if (fromClimate != null) {
+      products[id] = fromClimate;
+      continue;
+    }
+    const def = catalog.find((item) => item.id === id);
+    if (def && isVolumeProduct(def)) products[id] = climate.productTrend.basic ?? climate.productTrend.economy ?? 0;
+    else if (def && isPremiumProduct(def)) products[id] = climate.productTrend.premium ?? climate.productTrend.special ?? 0;
+    else products[id] = climate.productTrend.standard ?? 0;
   }
   const idle = (['a', 'b', 'c', 'd'] as MaterialId[]).filter((id) => {
     if (id === 'd' && !materialDUnlocked) return false;
@@ -184,7 +195,7 @@ export function marketToneLine(state: GameState): string {
     if (mat.id === 'd' && !state.materialDUnlocked) continue;
     mats.push(`${mat.name}${trendWord(trend.materials[mat.id] ?? 0)}`);
   }
-  const unlocked = PRODUCTS.filter((item) => state.unlockedProducts.includes(item.id));
+  const unlocked = unlockedCatalog(state);
   const dirs = unlocked.map((item) => trend.products[item.id] ?? 0);
   const productLine =
     unlocked.length > 0 && dirs.every((dir) => dir === dirs[0])
@@ -205,8 +216,7 @@ export function quotedMoves(state: GameState): { materials: string[]; products: 
   }
 
   const products: string[] = [];
-  for (const product of PRODUCTS) {
-    if (!state.unlockedProducts.includes(product.id)) continue;
+  for (const product of unlockedCatalog(state)) {
     const price = state.productPrices[product.id] ?? product.basePrice;
     const prev = state.prevProductPrices?.[product.id] ?? product.basePrice;
     const delta = priceDelta(price, prev);
@@ -243,7 +253,7 @@ export function quarterOutlook(state: GameState): {
   const trend = state.marketTrend ?? emptyMarketTrend();
   const climateId = state.climateId;
   const materials = MATERIALS.filter((mat) => mat.id !== 'd' || state.materialDUnlocked);
-  const unlocked = PRODUCTS.filter((item) => state.unlockedProducts.includes(item.id));
+  const unlocked = unlockedCatalog(state);
   return {
     materials: collapseTrend(
       materials.map((mat) => ({ name: mat.name, dir: trend.materials[mat.id] ?? 0 })),
@@ -254,7 +264,7 @@ export function quarterOutlook(state: GameState): {
       trendWord,
     ),
     demand: collapseTrend(
-      unlocked.map((item) => ({ name: item.name, dir: demandDirOf(climateId, item.id) })),
+      unlocked.map((item) => ({ name: item.name, dir: demandDirOf(climateId, item) })),
       demandWord,
     ),
     quota: collapseTrend(
@@ -580,7 +590,7 @@ export const GOALS: GoalDef[] = [
     quarter: 3,
     kind: 'challenge',
     name: '研发交付第一档',
-    desc: '完成至少一档研发交付。',
+    desc: '产品实验室完成至少一档交付。',
     axis: 'rd',
     climateAffinity: ['chip'],
     reached: (state) => state.rdUnlockIndex >= 1,
@@ -688,8 +698,8 @@ export const GOALS: GoalDef[] = [
     id: 'q4-flagship',
     quarter: 4,
     kind: 'challenge',
-    name: '旗舰或特种款出货',
-    desc: '本季以旗舰款或特种款完成一次结算。',
+    name: '旗舰或高端款出货',
+    desc: '本季以旗舰款或高端自研款完成一次结算。',
     axis: 'product',
     climateAffinity: ['chip'],
     reached: (state) => state.quarterStats.premiumOrSpecial,
@@ -734,7 +744,7 @@ export const GOALS: GoalDef[] = [
     quarter: 4,
     kind: 'challenge',
     name: '研发交付第二档',
-    desc: '完成两档研发交付，特种款开线。',
+    desc: '产品实验室完成两档交付。',
     axis: 'rd',
     climateAffinity: ['chip'],
     reached: (state) => state.rdUnlockIndex >= 2,
