@@ -49,7 +49,16 @@ const QTY = [10, 20, 40];
 const LOAN = [2, 4, 8];
 const EXTRA = [0, 2, 4, 6];
 
-type StageId = 'ceo' | 'sales' | 'materials' | 'production' | 'collect' | 'rd' | 'treasury';
+type StageId = 'ceo' | 'sales' | 'materials' | 'production' | 'rd' | 'treasury';
+
+const DEPTS: { id: StageId; label: string }[] = [
+  { id: 'ceo', label: '经理室' },
+  { id: 'sales', label: '销售部' },
+  { id: 'materials', label: '采购部' },
+  { id: 'production', label: '生产部' },
+  { id: 'rd', label: '研发部' },
+  { id: 'treasury', label: '财务部' },
+];
 
 function stageDone(state: GameState, ids: DeptId[]): string {
   return ids.flatMap((id) => state.deptActs[id] ?? []).join('；');
@@ -71,44 +80,32 @@ function orderPreview(state: GameState, order: MonthOrder) {
 
 function Stage({
   id,
-  index,
   title,
   intro,
   summary,
   done,
-  open,
-  onToggle,
-  wide,
   now,
   children,
 }: {
   id: StageId;
-  index?: string;
   title: string;
   intro: string;
   summary: string;
   done?: string;
-  open: boolean;
-  onToggle: () => void;
-  wide?: boolean;
   now?: boolean;
   children: ReactNode;
 }) {
   return (
-    <section id={`stage-${id}`} className={['dept', wide ? 'wide' : '', now ? 'now' : ''].filter(Boolean).join(' ')}>
-      <button type="button" className="dept-head" onClick={onToggle} aria-expanded={open}>
+    <section id={`stage-${id}`} className={['dept', now ? 'now' : ''].filter(Boolean).join(' ')}>
+      <header className="dept-head">
         <div>
-          <h3>
-            {index ? <span className="stage-index">{index}</span> : null}
-            {title}
-          </h3>
+          <h3>{title}</h3>
           <p className="dept-intro">{intro}</p>
           <p className="dept-done">{summary}</p>
           {done ? <p className="dept-done">{done}</p> : null}
         </div>
-        <span className="dept-toggle">{open ? '收起' : '展开'}</span>
-      </button>
-      {open && <div className="dept-body">{children}</div>}
+      </header>
+      <div className="dept-body">{children}</div>
     </section>
   );
 }
@@ -143,16 +140,9 @@ export function OperationsPage({
   const arGross = receivablesGross(state);
   const arNet = receivablesNet(state);
   const overdue = arOverdueOf(state);
-  const [open, setOpen] = useState<Record<StageId, boolean>>({
-    ceo: true,
-    sales: true,
-    materials: false,
-    production: false,
-    collect: true,
-    rd: false,
-    treasury: state.debt > 0,
-  });
+  const [active, setActive] = useState<StageId>('ceo');
   const touched = useRef(new Set<StageId>());
+  const paneRef = useRef<HTMLDivElement>(null);
   const [cart, setCart] = useState<Partial<Record<MaterialId, number>>>({});
   const [loanAmt, setLoanAmt] = useState(4);
   const [hireRole, setHireRole] = useState<Role | null>(null);
@@ -191,31 +181,20 @@ export function OperationsPage({
   });
   const lots = state.receivables ?? [];
 
-  const toggle = (id: StageId) => {
+  const selectDept = (id: StageId) => {
     touched.current.add(id);
-    setOpen((prev) => ({ ...prev, [id]: !prev[id] }));
+    setActive(id);
   };
-  const focusStage = (id: StageId) => {
-    touched.current.add(id);
-    setOpen((prev) => ({ ...prev, [id]: true }));
-    document.getElementById(`stage-${id}`)?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-  };
+
+  useEffect(() => {
+    paneRef.current?.scrollTo({ top: 0 });
+  }, [active]);
 
   useEffect(() => {
     if (producing && !touched.current.has('production')) {
-      setOpen((prev) => ({ ...prev, sales: true, production: true }));
-      document.getElementById('stage-production')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      setActive('production');
     }
-    if (acting && !touched.current.has('sales')) {
-      setOpen((prev) => ({ ...prev, sales: true }));
-    }
-  }, [acting, producing]);
-
-  useEffect(() => {
-    if (arGross > 0 && !touched.current.has('collect')) {
-      setOpen((prev) => ({ ...prev, collect: true }));
-    }
-  }, [arGross]);
+  }, [producing]);
 
   const monthEvent = state.eventId ? eventById(state.eventId) : null;
   const climate = climateById(state.climateId);
@@ -235,73 +214,44 @@ export function OperationsPage({
   const workersMax = state.machines * WORKERS_PER_MACHINE;
   const workerOverflow = Math.max(0, state.staff.production - workersMax);
 
+  const briefing = (
+    <aside className="exec-summary">
+      <p className="dept-kicker">
+        {QUARTER_LABEL[state.quarter]} · {climate.name}
+      </p>
+      <p className="exec-climate">{climate.headline}</p>
+      {basicGoal && (
+        <div className="exec-goal">
+          <b>基本目标 · {basicGoal.name}</b>
+          <p>{basicGoal.progress(state)}</p>
+        </div>
+      )}
+      {challengeGoals.map((goal) => (
+        <div key={goal.id} className={goal.reached(state) ? 'exec-goal on' : 'exec-goal'}>
+          <b>挑战目标 · {goal.name}</b>
+          <p>{goal.progress(state)}</p>
+        </div>
+      ))}
+      {monthEvent && state.eventNote && (
+        <div className={`exec-event tone-${monthEvent.tone}`}>
+          <b>本月事项 · {monthEvent.title}</b>
+          <p>{state.eventNote}</p>
+        </div>
+      )}
+      <div className="exec-outlook">
+        <b>本月产销</b>
+        <p>{monthOutlook(state)}</p>
+      </div>
+    </aside>
+  );
+
   return (
     <div className="ops">
-      <aside className="exec-summary">
-        <p className="dept-kicker">
-          {QUARTER_LABEL[state.quarter]} · {climate.name}
-        </p>
-        <p className="exec-climate">{climate.headline}</p>
-        {basicGoal && (
-          <div className="exec-goal">
-            <b>基本目标 · {basicGoal.name}</b>
-            <p>{basicGoal.progress(state)}</p>
-          </div>
-        )}
-        {challengeGoals.map((goal) => (
-          <div key={goal.id} className={goal.reached(state) ? 'exec-goal on' : 'exec-goal'}>
-            <b>挑战目标 · {goal.name}</b>
-            <p>{goal.progress(state)}</p>
-          </div>
-        ))}
-        {monthEvent && state.eventNote && (
-          <div className={`exec-event tone-${monthEvent.tone}`}>
-            <b>本月事项 · {monthEvent.title}</b>
-            <p>{state.eventNote}</p>
-          </div>
-        )}
-        <div className="exec-outlook">
-          <b>本月产销</b>
-          <p>{monthOutlook(state)}</p>
-        </div>
-      </aside>
-
-      <div className="flow-rail" role="navigation" aria-label="经营分区">
-        <button type="button" className={open.ceo ? 'on' : undefined} onClick={() => focusStage('ceo')}>
-          <span className="n">0</span>
-          总经
-        </button>
-        <button type="button" className={producing || acting ? 'on' : undefined} onClick={() => focusStage('sales')}>
-          <span className="n">1</span>
-          订单
-        </button>
-        <button type="button" className={acting ? 'on' : undefined} onClick={() => focusStage('materials')}>
-          <span className="n">2</span>
-          采购
-        </button>
-        <button type="button" className={producing ? 'on' : undefined} onClick={() => focusStage('production')}>
-          <span className="n">3</span>
-          生产
-        </button>
-        <button type="button" className={arGross > 0 ? 'on' : undefined} onClick={() => focusStage('collect')}>
-          <span className="n">4</span>
-          货款
-        </button>
-        <button type="button" onClick={() => focusStage('rd')}>
-          <span className="n">5</span>
-          研发
-        </button>
-        <button type="button" className={state.debt > 0 ? 'on' : undefined} onClick={() => focusStage('treasury')}>
-          <span className="n">6</span>
-          资金
-        </button>
-      </div>
-
-      <div className="dept-grid flow-grid">
+      <div className="dept-stage" ref={paneRef}>
+        {active === 'ceo' && (
         <Stage
           id="ceo"
-          index="0"
-          title="总经理室"
+          title="经理室"
           intro="人员结构决定翻开的卡类。管理人员在这里招聘。"
           summary={
             state.cardsUnlocked
@@ -309,10 +259,8 @@ export function OperationsPage({
               : `${totalStaff(state.staff)} 人 · 管理 ${state.staff.management}`
           }
           done={stageDone(state, ['ceo'])}
-          open={open.ceo}
-          onToggle={() => toggle('ceo')}
-          wide
         >
+          {briefing}
           <Facts>
             <div className="row">
               <span>行动点</span>
@@ -433,11 +381,12 @@ export function OperationsPage({
             ) : null}
           </Actions>
         </Stage>
+        )}
 
+        {active === 'sales' && (
         <Stage
           id="sales"
-          index="1"
-          title="订单获取"
+          title="销售部"
           intro="招募销售立刻多一张本月订单。整张交得出才接，接单不耗行动点。"
           summary={
             orders.length
@@ -445,9 +394,6 @@ export function OperationsPage({
               : `销售 ${state.staff.sales} 人 · 本月订单尚未开出`
           }
           done={stageDone(state, ['sales'])}
-          open={open.sales}
-          onToggle={() => toggle('sales')}
-          wide
           now={producing || acting}
         >
           <Facts>
@@ -503,16 +449,15 @@ export function OperationsPage({
             )}
           </Actions>
         </Stage>
+        )}
 
+        {active === 'materials' && (
         <Stage
           id="materials"
-          index="2"
-          title="原料采购"
+          title="采购部"
           intro="勾选要买的料，确认后一次付现、耗 1 AP。"
           summary={materialSummary}
           done={stageDone(state, ['store'])}
-          open={open.materials}
-          onToggle={() => toggle('materials')}
           now={acting}
         >
           <Facts>
@@ -607,16 +552,15 @@ export function OperationsPage({
             {cartItems.length > 0 && state.cash < cartTotal && <p className="hint">现金不够支付本单。</p>}
           </Actions>
         </Stage>
+        )}
 
+        {active === 'production' && (
         <Stage
           id="production"
-          index="3"
-          title="生产安排"
+          title="生产部"
           intro="厂区、设备和生产工决定产能。有余量可以超产入库。"
           summary={`产能 ${capacityOf(state)} · 设备 ${state.machines} 台 · 生产工 ${state.staff.production} 人`}
           done={stageDone(state, ['infra'])}
-          open={open.production}
-          onToggle={() => toggle('production')}
           now={producing}
         >
           <Facts>
@@ -721,84 +665,17 @@ export function OperationsPage({
                 </button>
               </div>
             )}
-            {acting && (
-              <button className="btn small ghost" style={{ marginTop: 12 }} onClick={() => dispatch({ type: 'GO_PRODUCE' })}>
-                现在就去排产 · 不耗 AP
-              </button>
-            )}
           </Actions>
         </Stage>
+        )}
 
-        <Stage
-          id="collect"
-          index="4"
-          title="货款"
-          intro="赊销尚未收回的部分，记在应收账款。"
-          summary={arGross > 0 ? `账面 ${money(arNet)}${overdue > 0 ? ` · 逾期 ${money(overdue)}` : ''}` : '本月还没有应收'}
-          open={open.collect}
-          onToggle={() => toggle('collect')}
-          now={arGross > 0}
-        >
-          <Facts>
-            <div className="row">
-              <span>应收账款</span>
-              <span>
-                账面 {money(arNet)}
-                {(state.badDebtProvision ?? 0) > 0 ? `（已提坏账 ${money(state.badDebtProvision)}）` : ''}
-              </span>
-            </div>
-            {overdue > 0 && (
-              <div className="row">
-                <span>其中逾期</span>
-                <span>{money(overdue)}</span>
-              </div>
-            )}
-            {lots.length > 0 && (
-              <div className="sheet-wrap" style={{ marginTop: 12 }}>
-                <table className="sheet dark">
-                  <thead>
-                    <tr>
-                      <th>发生月</th>
-                      <th className="num">到期月</th>
-                      <th className="num">金额</th>
-                      <th className="num">状态</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {lots.map((lot, index) => {
-                      const past = state.month - lot.dueMonth;
-                      const status =
-                        past < 0
-                          ? `${lot.dueMonth - state.month} 个月后到期`
-                          : past === 0
-                            ? '本月到期'
-                            : `逾期 ${past} 个月`;
-                      return (
-                        <tr key={`${lot.originMonth}-${lot.dueMonth}-${index}`}>
-                          <td>{MONTH_NAMES[lot.originMonth - 1] ?? `${lot.originMonth}月`}</td>
-                          <td className="num">{MONTH_NAMES[lot.dueMonth - 1] ?? `${lot.dueMonth}月`}</td>
-                          <td className="num">{money(lot.amount)}</td>
-                          <td className="num">{status}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </Facts>
-        </Stage>
-
+        {active === 'rd' && (
         <Stage
           id="rd"
-          index="5"
-          title="产品研发"
+          title="研发部"
           intro="先看已有 BOM 和人手，再看项目进度。"
           summary={`${state.rdProgress} / ${RD_THRESHOLD} · ${state.staff.rd} 人`}
           done={stageDone(state, ['rd'])}
-          open={open.rd}
-          onToggle={() => toggle('rd')}
-          wide
         >
           <Facts>
             <div className="sheet-wrap">
@@ -856,22 +733,25 @@ export function OperationsPage({
             </div>
           </Actions>
         </Stage>
+        )}
 
+        {active === 'treasury' && (
         <Stage
           id="treasury"
-          index="6"
-          title="资金管理"
-          intro="现金不够时借款，有余钱再还。"
+          title="财务部"
+          intro="现金不够时借款，有余钱再还。赊销尚未收回的部分，记在应收账款。"
           summary={
-            state.debt > 0
-              ? `借款 ${money(state.debt)} · 利息 ${money(currentInterest)}/月 · 还可借 ${money(room)}`
-              : `无借款 · 设备抵押额度 ${money(loanLimit(state.machines))}`
+            [
+              state.debt > 0
+                ? `借款 ${money(state.debt)} · 利息 ${money(currentInterest)}/月 · 还可借 ${money(room)}`
+                : `无借款 · 设备抵押额度 ${money(loanLimit(state.machines))}`,
+              arGross > 0 ? `应收 ${money(arNet)}${overdue > 0 ? ` · 逾期 ${money(overdue)}` : ''}` : '本月还没有应收',
+            ].join(' · ')
           }
           done={stageDone(state, ['finance'])}
-          open={open.treasury}
-          onToggle={() => toggle('treasury')}
+          now={state.debt > 0 || arGross > 0}
         >
-          <Facts>
+          <Facts title="借款">
             <div className="row">
               <span>短期借款</span>
               <span>{money(state.debt)}</span>
@@ -912,8 +792,85 @@ export function OperationsPage({
               </button>
             </div>
           </Actions>
+          <Facts title="货款">
+            <div className="row">
+              <span>应收账款</span>
+              <span>
+                账面 {money(arNet)}
+                {(state.badDebtProvision ?? 0) > 0 ? `（已提坏账 ${money(state.badDebtProvision)}）` : ''}
+              </span>
+            </div>
+            {overdue > 0 && (
+              <div className="row">
+                <span>其中逾期</span>
+                <span>{money(overdue)}</span>
+              </div>
+            )}
+            {lots.length > 0 && (
+              <div className="sheet-wrap" style={{ marginTop: 12 }}>
+                <table className="sheet dark">
+                  <thead>
+                    <tr>
+                      <th>发生月</th>
+                      <th className="num">到期月</th>
+                      <th className="num">金额</th>
+                      <th className="num">状态</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lots.map((lot, index) => {
+                      const past = state.month - lot.dueMonth;
+                      const status =
+                        past < 0
+                          ? `${lot.dueMonth - state.month} 个月后到期`
+                          : past === 0
+                            ? '本月到期'
+                            : `逾期 ${past} 个月`;
+                      return (
+                        <tr key={`${lot.originMonth}-${lot.dueMonth}-${index}`}>
+                          <td>{MONTH_NAMES[lot.originMonth - 1] ?? `${lot.originMonth}月`}</td>
+                          <td className="num">{MONTH_NAMES[lot.dueMonth - 1] ?? `${lot.dueMonth}月`}</td>
+                          <td className="num">{money(lot.amount)}</td>
+                          <td className="num">{status}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </Facts>
         </Stage>
+        )}
       </div>
+
+      <nav className="flow-rail" role="navigation" aria-label="经营分区">
+        {DEPTS.map((dept) => (
+          <button
+            key={dept.id}
+            type="button"
+            className={active === dept.id ? 'on' : undefined}
+            onClick={() => selectDept(dept.id)}
+          >
+            {dept.label}
+          </button>
+        ))}
+        <button
+          type="button"
+          className="settle-nav"
+          disabled={producing ? !plan.ok : !acting}
+          onClick={() => {
+            if (producing) {
+              dispatch({ type: 'SETTLE' });
+              return;
+            }
+            selectDept('production');
+            dispatch({ type: 'GO_PRODUCE' });
+          }}
+        >
+          排产结算
+        </button>
+      </nav>
 
       {hireRole && (
         <div className="overlay hire-overlay" onClick={() => setHireRole(null)}>

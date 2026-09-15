@@ -21,7 +21,7 @@ export function Board({
   const overdue = arOverdueOf(state);
 
   return (
-    <div className="shell">
+    <div className={page === 'ops' ? 'shell ops-shell' : 'shell'}>
       <div className="chrome">
         <header className="topbar">
           <div>

@@ -272,6 +272,100 @@ h1,
   padding: 18px 0 36px;
 }
 
+.ops-shell {
+  height: 100dvh;
+  max-height: 100dvh;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 0;
+}
+
+.ops-shell .chrome {
+  flex-shrink: 0;
+  z-index: 6;
+  background: #141910;
+  border-bottom: 1px solid var(--line);
+}
+
+.ops-shell .topbar {
+  gap: 10px;
+  padding: 2px 0 8px;
+}
+
+.ops-shell .brand {
+  font-size: 22px;
+}
+
+.ops-shell .brand span {
+  margin-top: 2px;
+  font-size: 12px;
+}
+
+.ops-shell .board-track {
+  margin-top: 4px;
+}
+
+.ops-shell .board-track .month-pip {
+  height: 4px;
+}
+
+.ops-shell .stats {
+  gap: 8px 12px;
+}
+
+.ops-shell .stat {
+  min-width: 72px;
+}
+
+.ops-shell .stat em {
+  margin-bottom: 1px;
+  font-size: 10px;
+}
+
+.ops-shell .stat strong {
+  font-size: 18px;
+}
+
+.ops-shell .ap-row {
+  margin-top: 2px;
+}
+
+.ops-shell .ap {
+  width: 9px;
+  height: 9px;
+}
+
+.ops-shell .tabs {
+  margin: 0;
+}
+
+.ops-shell .tab {
+  padding: 6px 12px 8px;
+}
+
+.ops {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.ops-shell .ops {
+  padding: 0;
+}
+
+.dept-stage {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior: contain;
+  border: 1px solid var(--line-strong);
+  border-bottom: none;
+  background: rgba(224, 180, 90, 0.07);
+}
+
 .topbar {
   display: flex;
   justify-content: space-between;
@@ -511,10 +605,11 @@ h1,
 }
 
 .exec-summary {
-  margin: 0 0 14px;
-  padding: 14px 16px;
-  border: 1px solid var(--line-strong);
-  background: rgba(224, 180, 90, 0.07);
+  margin: 0 0 4px;
+  padding: 4px 0 14px;
+  border: none;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
 }
 
 .exec-climate {
@@ -611,10 +706,11 @@ h1,
 
 .flow-rail {
   display: grid;
-  grid-template-columns: repeat(7, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr)) minmax(4.8em, 1.2fr);
   gap: 1px;
-  margin: 0 0 14px;
-  border: 1px solid var(--line);
+  flex-shrink: 0;
+  margin: 0;
+  border: 1px solid var(--line-strong);
   background: var(--line);
 }
 
@@ -622,9 +718,10 @@ h1,
   border: none;
   background: rgba(31, 39, 28, 0.92);
   color: var(--cream-dim);
-  padding: 10px 6px 12px;
-  letter-spacing: 0.08em;
-  font-size: 13px;
+  padding: 8px 4px;
+  min-height: 36px;
+  letter-spacing: 0.06em;
+  font-size: 12px;
 }
 
 .cart-qty {
@@ -649,7 +746,20 @@ h1,
 
 .flow-rail button.on {
   color: var(--gold-2);
-  background: rgba(224, 180, 90, 0.1);
+  background: rgba(224, 180, 90, 0.16);
+  box-shadow: inset 0 2px 0 var(--gold);
+}
+
+.flow-rail button.settle-nav {
+  color: #7ee8b4;
+  background: rgba(126, 232, 180, 0.12);
+  font-weight: 650;
+  letter-spacing: 0.02em;
+}
+
+.flow-rail button.settle-nav:disabled {
+  color: rgba(126, 232, 180, 0.34);
+  background: rgba(31, 39, 28, 0.92);
 }
 
 .dept.now {
@@ -704,9 +814,9 @@ h1,
   color: #5c5138;
 }
 
-.dept {
-  border: 1px solid var(--line);
-  background: rgba(31, 39, 28, 0.86);
+.dept-stage .dept {
+  border: none;
+  background: transparent;
 }
 
 .dept.wide {
@@ -1243,7 +1353,7 @@ h1,
   }
 
   .flow-rail {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(6, minmax(0, 1fr)) minmax(4.8em, 1.2fr);
   }
 
   .title-card,
@@ -1315,6 +1425,71 @@ h1,
   .shell {
     width: 100%;
     padding: 0 0 max(20px, env(safe-area-inset-bottom));
+  }
+
+  .ops-shell {
+    height: 100dvh;
+    max-height: 100dvh;
+    padding-bottom: 0;
+  }
+
+  .ops-shell .chrome {
+    position: relative;
+    flex-shrink: 0;
+    padding: max(2px, env(safe-area-inset-top)) 10px 0;
+  }
+
+  .ops-shell .topbar {
+    gap: 4px;
+    padding: 2px 0 4px;
+  }
+
+  .ops-shell .brand {
+    font-size: 16px;
+  }
+
+  .ops-shell .brand span {
+    margin-top: 1px;
+    font-size: 10px;
+  }
+
+  .ops-shell .board-track {
+    margin-top: 3px;
+  }
+
+  .ops-shell .board-track .month-pip {
+    height: 3px;
+  }
+
+  .ops-shell .stats {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 2px 4px;
+  }
+
+  .ops-shell .stat em {
+    font-size: 9px;
+    letter-spacing: 0.04em;
+    margin-bottom: 0;
+  }
+
+  .ops-shell .stat strong {
+    font-size: 13px;
+  }
+
+  .ops-shell .ap-row {
+    margin-top: 2px;
+    gap: 3px;
+  }
+
+  .ops-shell .ap {
+    width: 7px;
+    height: 7px;
+  }
+
+  .ops-shell .tab {
+    padding: 5px 2px 6px;
+    min-height: 28px;
+    font-size: 11px;
   }
 
   .chrome {
@@ -1404,19 +1579,29 @@ h1,
     padding: 12px max(12px, env(safe-area-inset-right)) 0 max(12px, env(safe-area-inset-left));
   }
 
+  .ops-shell .ops {
+    padding: 0;
+  }
+
   .ops-lead {
     font-size: 13px;
     margin-bottom: 10px;
   }
 
   .flow-rail {
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    margin-bottom: 10px;
+    grid-template-columns: repeat(6, minmax(0, 1fr)) minmax(4.6em, 1.25fr);
+    margin-bottom: 0;
   }
 
   .flow-rail button {
-    padding: 8px 4px 10px;
-    font-size: 12px;
+    padding: 6px 1px;
+    min-height: 32px;
+    font-size: 11px;
+    letter-spacing: 0;
+  }
+
+  .ops-shell .flow-rail {
+    padding-bottom: env(safe-area-inset-bottom);
   }
 
   .ops .sheet-wrap {
@@ -1433,20 +1618,21 @@ h1,
   }
 
   .exec-summary {
-    padding: 12px;
-    margin-bottom: 10px;
+    padding: 0 0 12px;
+    margin-bottom: 4px;
   }
 
   .dept-head {
-    gap: 10px;
-    padding: 14px 12px;
+    gap: 8px;
+    padding: 10px 12px 8px;
   }
 
   .dept-head h3 {
-    font-size: 18px;
+    font-size: 16px;
   }
 
   .dept-head p {
+    margin-top: 3px;
     font-size: 12px;
   }
 
