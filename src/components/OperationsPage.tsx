@@ -37,6 +37,7 @@ import {
   receivablesGross,
   receivablesNet,
   purchaseQtyOptions,
+  materialCrateSize,
   sellPriceOf,
   spotOf,
   totalStaff,
@@ -209,10 +210,6 @@ export function OperationsPage({
     weight: 1 + state.staff[role] * 0.85,
   }));
   const cardWeightTotal = cardWeights.reduce((sum, item) => sum + item.weight, 0);
-  const showAgeCols = visibleMaterials.some((item) => {
-    if (state.materials[item.id] <= 0) return false;
-    return materialMaxAge(state, item.id) >= 2 || materialProvisionOf(state, item.id) > 0;
-  });
   const lots = state.receivables ?? [];
 
   const selectDept = (id: StageId) => {
@@ -233,9 +230,6 @@ export function OperationsPage({
 
   const basicGoal = state.basicGoalId ? goalById(state.basicGoalId) : null;
   const challengeGoals = (state.challengeGoalIds ?? []).map((id) => goalById(id));
-  const materialSummary = visibleMaterials
-    .map((item) => `${item.name}库${qty(state.materials[item.id])} / 现货${spotOf(state, item.id)}`)
-    .join(' · ') || '本月暂无原料现货';
   const orders = state.monthOrders ?? [];
   const accepted = state.acceptedOrderIds ?? [];
   const plan = productionPlan(state);
@@ -510,87 +504,73 @@ export function OperationsPage({
         <Stage
           id="materials"
           title="采购部"
-          intro="本月现货额度随机，料越高级越紧，月末作废不结转。想接高端单，得提前备货。"
-          summary={materialSummary}
           done={stageDone(state, ['store'])}
           now={acting}
         >
-          <Facts>
-            <div className="sheet-wrap">
-              <table className="sheet dark cart-sheet">
-                <thead>
-                  <tr>
-                    <th>原料</th>
-                    <th className="num">库存</th>
-                    <th className="num">本月现货</th>
-                    <th className="num">报价</th>
-                    <th className="num">账面成本</th>
-                    {showAgeCols && <th className="num">最长库龄</th>}
-                    {showAgeCols && <th className="num">跌价准备</th>}
-                    <th className="num">本次采购</th>
-                    <th className="num">付现</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {visibleMaterials.map((item) => {
-                    const age = materialMaxAge(state, item.id);
-                    const remaining = spotOf(state, item.id);
-                    const pick = Math.min(cart[item.id] ?? 0, remaining);
-                    const line = buyLineCost(state, item.id, pick);
-                    const steps = purchaseQtyOptions(remaining);
-                    return (
-                      <tr key={item.id}>
-                        <td>{item.name}</td>
-                        <td className="num">{qty(state.materials[item.id])}</td>
-                        <td className="num">{remaining > 0 ? qty(remaining) : '售罄'}</td>
-                        <td className="num">{money(state.materialPrices[item.id])} / 件</td>
-                        <td className="num">{money(state.materialCost?.[item.id] ?? 0)}</td>
-                        {showAgeCols && (
-                          <td className="num">{state.materials[item.id] > 0 ? `${age} 个月` : '—'}</td>
-                        )}
-                        {showAgeCols && <td className="num">{money(materialProvisionOf(state, item.id))}</td>}
-                        <td className="num">
-                          <span className="cart-qty">
-                            <button
-                              type="button"
-                              className={pick === 0 ? 'chip on' : 'chip'}
-                              disabled={!acting}
-                              onClick={() => setCart((prev) => ({ ...prev, [item.id]: 0 }))}
-                            >
-                              0
-                            </button>
-                            {steps.map((n) => (
-                              <button
-                                key={n}
-                                type="button"
-                                className={pick === n ? 'chip on' : 'chip'}
-                                disabled={!acting}
-                                onClick={() => setCart((prev) => ({ ...prev, [item.id]: n }))}
-                              >
-                                {n}
-                              </button>
-                            ))}
-                          </span>
-                        </td>
-                        <td className="num">{pick > 0 ? money(line) : '—'}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+          <Actions>
+            <div className="spot-list">
+              {visibleMaterials.map((item) => {
+                const remaining = spotOf(state, item.id);
+                const pick = Math.min(cart[item.id] ?? 0, remaining);
+                const line = buyLineCost(state, item.id, pick);
+                const steps = purchaseQtyOptions(remaining, materialCrateSize(item.id));
+                const stock = state.materials[item.id] ?? 0;
+                const age = materialMaxAge(state, item.id);
+                const provision = materialProvisionOf(state, item.id);
+                const aged = stock > 0 && (age >= 2 || provision > 0);
+                const soldOut = remaining <= 0;
+                return (
+                  <article key={item.id} className={['spot-card', soldOut ? 'soldout' : '', pick > 0 ? 'on' : ''].filter(Boolean).join(' ')}>
+                    <header className="spot-top">
+                      <b>{item.name}</b>
+                      <span>{money(state.materialPrices[item.id])} / 件</span>
+                    </header>
+                    <p className="spot-meta">
+                      <span>库存 {qty(stock)}</span>
+                      <span className={soldOut ? 'bad' : 'good'}>{soldOut ? '现货售罄' : `现货 ${qty(remaining)}`}</span>
+                    </p>
+                    {aged ? (
+                      <p className="spot-age">
+                        库龄 {age} 个月
+                        {provision > 0 ? ` · 跌价准备 ${money(provision)}` : ''}
+                      </p>
+                    ) : null}
+                    {soldOut ? (
+                      <p className="spot-empty">本月额度已尽</p>
+                    ) : (
+                      <div className="spot-lots" style={{ gridTemplateColumns: `repeat(${steps.length}, minmax(0, 1fr))` }}>
+                        {steps.map((n) => (
+                          <button
+                            key={n}
+                            type="button"
+                            className={pick === n ? 'chip on' : 'chip'}
+                            disabled={!acting}
+                            onClick={() =>
+                              setCart((prev) => ({ ...prev, [item.id]: pick === n ? 0 : n }))
+                            }
+                          >
+                            {n === remaining ? `全 ${n}` : n}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    <p className="spot-pay">{pick > 0 ? `付现 ${money(line)}` : ' '}</p>
+                  </article>
+                );
+              })}
             </div>
             {state.modifiers.nextBuyDiscount > 0 && (
               <p className="hint" style={{ marginTop: 8 }}>
                 本单集采折扣 {Math.round(state.modifiers.nextBuyDiscount * 100)}%。
               </p>
             )}
-          </Facts>
+          </Actions>
           <Actions
             note={
               acting
                 ? buyApFree
                   ? '第三、四季度采购不耗行动点，仍要付现。本月没买完的额度月底作废。'
-                  : '本月没买完的额度月底作废，高级料更宜提前备货。'
+                  : '本月没买完的额度月底作废。'
                 : '事件结束后才能采购。'
             }
           >

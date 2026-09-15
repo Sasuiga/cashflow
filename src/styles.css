@@ -740,16 +740,99 @@ h1,
   font-size: 12px;
 }
 
-.cart-qty {
-  display: inline-flex;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-  gap: 4px;
+.spot-list {
+  display: grid;
+  gap: 10px;
 }
 
-.cart-qty .chip {
-  padding: 4px 7px;
-  min-width: 32px;
+.spot-card {
+  text-align: left;
+  border: 1px solid var(--line);
+  background: var(--ink-2);
+  color: var(--cream);
+  padding: 12px 14px 10px;
+}
+
+.spot-card.on {
+  border-color: rgba(224, 180, 90, 0.45);
+}
+
+.spot-card.soldout {
+  opacity: 0.55;
+}
+
+.spot-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+}
+
+.spot-top b {
+  font-family: var(--serif);
+  font-size: 18px;
+}
+
+.spot-top span,
+.spot-meta,
+.spot-age,
+.spot-empty,
+.spot-pay {
+  color: var(--cream-dim);
+  font-size: 13px;
+}
+
+.spot-meta {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 6px 0 10px;
+}
+
+.spot-meta .good {
+  color: var(--mint);
+}
+
+.spot-meta .bad {
+  color: var(--rose);
+}
+
+.spot-age {
+  margin: -4px 0 10px;
+  color: var(--rose);
+}
+
+.spot-empty {
+  margin: 0 0 4px;
+}
+
+.spot-lots {
+  display: grid;
+  gap: 6px;
+}
+
+.spot-lots .chip {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 4px;
+}
+
+.spot-lots .chip:hover {
+  background: rgba(224, 180, 90, 0.08);
+}
+
+.spot-lots .chip.on,
+.spot-lots .chip.on:hover {
+  background: rgba(224, 180, 90, 0.18);
+  border-color: var(--gold);
+  color: var(--gold-2);
+}
+
+.spot-pay {
+  min-height: 1.2em;
+  margin: 8px 0 0;
+  text-align: right;
+  color: var(--gold-2);
 }
 
 .flow-rail button .n {
@@ -1683,6 +1766,10 @@ h1,
 
   .ops .sheet-wrap {
     overflow-x: auto;
+  }
+
+  .spot-lots .chip {
+    min-height: 44px;
   }
 
   .cart-qty {

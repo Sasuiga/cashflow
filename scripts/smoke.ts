@@ -1,4 +1,4 @@
-import { createInitialState, equityAccounts, netAssetsOf, netProfitOf, reduce } from '../src/game/engine';
+import { createInitialState, equityAccounts, hireEffectLines, netAssetsOf, netProfitOf, purchaseQtyOptions, reduce } from '../src/game/engine';
 import { goalById } from '../src/game/board';
 import { roundMoney } from '../src/game/format';
 import type { GameState } from '../src/game/types';
@@ -62,6 +62,30 @@ function checkMarketQuotes(): void {
   assert(diffP < 0.05 || Math.abs(diffP - 0.2) < 1e-6, `基础款月度台阶应为 0 或 0.2，实际 ${diffP}`);
   assert((state.materialSpot?.a ?? 0) >= 4 && (state.materialSpot?.a ?? 0) <= 24, `钢材现货应在 4–24，实际 ${state.materialSpot?.a}`);
   assert((state.materialSpot?.c ?? 0) <= 6, `芯片现货应不超过 6，实际 ${state.materialSpot?.c}`);
+}
+
+function checkSalesOrders(): void {
+  const opened = reduce(createInitialState(), { type: 'START_GAME' });
+  assert(opened.staff.sales === 0, `开局应无销售人员，实际 ${opened.staff.sales}`);
+  const ids = (opened.challengePoolIds ?? []).slice(0, 2);
+  let state = opened;
+  for (const id of ids) state = reduce(state, { type: 'TOGGLE_BOARD_GOAL', id });
+  state = reduce(state, { type: 'CONFIRM_BOARD' });
+  state = reduce(state, { type: 'CONFIRM_BRIEFING' });
+  state = reduce(state, { type: 'ACK_EVENT' });
+  const orders = state.monthOrders ?? [];
+  assert(orders.length >= 2 && orders.length <= 6, `无销售时月初订单应为 2–6 张，实际 ${orders.length}`);
+  const lines = hireEffectLines(state, 'sales');
+  assert(lines[0]?.includes(`本月订单 ${orders.length} → ${orders.length + 1} 张`), `招销售当月应加一张，实际 ${lines[0]}`);
+  assert(lines[1]?.includes('每 2 名销售人员使月初订单 +1'), `招销售应说明下月按两人加一张，实际 ${lines[1]}`);
+  assert(lines[1]?.includes('下月月初订单仍为 3 张'), `一名销售不应抬高下月基数，实际 ${lines[1]}`);
+}
+
+function checkPurchaseLots(): void {
+  assert(purchaseQtyOptions(12, 4).join(',') === '4,8,12', '钢材 12 件应是一箱、两箱或全买');
+  assert(purchaseQtyOptions(24, 4).join(',') === '4,12,24', '大宗现货应收敛成三档');
+  assert(purchaseQtyOptions(1, 1).join(',') === '1', '芯片 1 件只应能全买');
+  assert(purchaseQtyOptions(0, 4).length === 0, '售罄不应有买量');
 }
 
 function checkSpotPurchase(): void {
@@ -257,6 +281,8 @@ function play(): GameState {
 checkOpeningAccounts();
 checkBoardVariety();
 checkMarketQuotes();
+checkSalesOrders();
+checkPurchaseLots();
 checkSpotPurchase();
 checkProposals();
 settleFirstMonth();

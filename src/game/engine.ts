@@ -1,5 +1,7 @@
 import {
   BASE_AP,
+  BASE_MONTH_ORDERS,
+  MAX_MONTH_ORDERS,
   CAP_OVERFLOW,
   CAP_PER_WORKER,
   CARDS,
@@ -211,7 +213,7 @@ export function maxApFor(staff: Staff): number {
 }
 
 function orderCountFor(sales: number): number {
-  return clamp(2 + sales, 2, 4);
+  return BASE_MONTH_ORDERS + Math.floor(Math.max(0, sales) / 2);
 }
 
 export function hireEffectLines(state: GameState, role: Role): string[] {
@@ -239,9 +241,15 @@ export function hireEffectLines(state: GameState, role: Role): string[] {
   }
   if (role === 'sales') {
     const have = state.monthOrders?.length ?? 0;
+    const before = orderCountFor(state.staff.sales);
+    const after = orderCountFor(state.staff.sales + 1);
+    const baseline =
+      after > before
+        ? `本次入职：下月月初订单 ${before} → ${after} 张。`
+        : `下月月初订单仍为 ${before} 张。再招 1 名销售后升到 ${before + 1}。`;
     return [
-      '本月立刻到岗，并带来 1 张市场单。',
-      `本次入职：本月订单 ${have} → ${have + 1} 张。销售人手越多，单张订单件数越大。`,
+      `本月立刻到岗，并带来 1 张市场单。本月订单 ${have} → ${have + 1} 张。`,
+      `每 2 名销售人员使月初订单 +1（基础 ${BASE_MONTH_ORDERS} 张）。${baseline}`,
       card,
     ];
   }
@@ -376,12 +384,27 @@ export function spotOf(state: GameState, id: MaterialId): number {
   return Math.max(0, state.materialSpot?.[id] ?? 0);
 }
 
-export function purchaseQtyOptions(remaining: number): number[] {
+export function purchaseQtyOptions(remaining: number, crate = 1): number[] {
   if (remaining <= 0) return [];
-  const ladder = remaining >= 10 ? [5, 10, 20, 40] : remaining >= 5 ? [2, 5, 10] : [1, 2];
-  const steps = ladder.filter((n) => n <= remaining);
-  if (!steps.includes(remaining)) steps.push(remaining);
-  return steps.sort((a, b) => a - b);
+  const size = Math.max(1, crate);
+  const opts: number[] = [];
+  const add = (n: number) => {
+    const v = Math.max(0, Math.min(remaining, Math.floor(n)));
+    if (v > 0 && !opts.includes(v)) opts.push(v);
+  };
+  add(size);
+  add(size * 2);
+  add(Math.floor(remaining / (2 * size)) * size);
+  add(remaining);
+  opts.sort((a, b) => a - b);
+  if (opts.length <= 3) return opts;
+  const half = remaining / 2;
+  const mid = opts.reduce((best, n) => (Math.abs(n - half) < Math.abs(best - half) ? n : best));
+  return [...new Set([opts[0], mid, opts[opts.length - 1]])].sort((a, b) => a - b);
+}
+
+export function materialCrateSize(id: MaterialId): number {
+  return id === 'a' || id === 'b' ? 4 : 1;
 }
 
 export function volumeProductOf(state: GameState): ProductId {
@@ -467,8 +490,8 @@ function syncDemandFromOrders(state: GameState): void {
   state.demand = demand;
 }
 
-function orderSizePool(productId: ProductId, sales: number, channel: boolean): number[] {
-  const boosted = sales >= 2 || channel;
+function orderSizePool(productId: ProductId, channel: boolean): number[] {
+  const boosted = channel;
   if (productId === 'basic' || productId === 'economy') return boosted ? [10, 12, 16] : [8, 10, 12];
   if (productId === 'standard') return boosted ? [4, 6] : [3, 4];
   return boosted ? [1, 2] : [1];
@@ -509,7 +532,7 @@ function rollMonthOrders(state: GameState): void {
   let count = orderCountFor(state.staff.sales) + (channel ? 1 : 0);
   if ((state.modifiers.extraDemand ?? 0) <= -8) count -= 1;
   if ((state.modifiers.extraDemand ?? 0) >= 8) count += 1;
-  count = clamp(count, 2, 4);
+  count = clamp(count, 2, MAX_MONTH_ORDERS);
 
   if (state.pendingDeal) {
     const deal = state.pendingDeal;
@@ -525,7 +548,7 @@ function rollMonthOrders(state: GameState): void {
 
   const volume = volumeProductOf(state);
   const volumeQty = sizeAfterDemand(
-    pick(orderSizePool(volume, state.staff.sales, channel)),
+    pick(orderSizePool(volume, channel)),
     volume,
     state.modifiers.extraDemand ?? 0,
   );
@@ -537,7 +560,7 @@ function rollMonthOrders(state: GameState): void {
     guard += 1;
     const productId = pick(pool);
     const qty = sizeAfterDemand(
-      pick(orderSizePool(productId, state.staff.sales, channel)),
+      pick(orderSizePool(productId, channel)),
       productId,
       state.modifiers.extraDemand ?? 0,
     );
@@ -562,7 +585,7 @@ function rollOneMarketOrder(state: GameState): MonthOrder {
   for (let guard = 0; guard < 8; guard += 1) {
     productId = pick(pool);
     qty = sizeAfterDemand(
-      pick(orderSizePool(productId, state.staff.sales, channel)),
+      pick(orderSizePool(productId, channel)),
       productId,
       state.modifiers.extraDemand ?? 0,
     );
@@ -2035,7 +2058,7 @@ export function createInitialState(): GameState {
     factories: 1,
     slots: SLOTS_PER_FACTORY,
     machines: 1,
-    staff: { production: 2, management: 1, sales: 1, rd: 0 },
+    staff: { production: 2, management: 1, sales: 0, rd: 0 },
     materials,
     finished: {},
     materialPrices: { a: 0.4, b: 0.4, c: 1, d: 2 },
@@ -2081,7 +2104,7 @@ export function createInitialState(): GameState {
     challengePoolIds: [],
     boardHistory: [],
     boardMinutes: null,
-    quarterStats: emptyQuarterStats(4, 0, 24, 1),
+    quarterStats: emptyQuarterStats(3, 0, 24, 1),
     usedClimateIds: [],
     recentEventFamilies: [],
     quarterEventTones: [],
