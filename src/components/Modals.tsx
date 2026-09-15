@@ -34,7 +34,7 @@ export function BoardModal({
         )}
         <p className="sheet-caption">本季定调 · {climate.name}</p>
         <p className="lead" style={{ marginTop: 0 }}>
-          {climate.headline}月度事件可能扭转定调。
+          {climate.headline}
         </p>
         <div className="quarter-outlook">
           <p>原料价格：{outlook.materials}。</p>
@@ -65,7 +65,6 @@ export function BoardModal({
             </button>
           );
         })}
-        <p className="lead event-hint">{ready ? '挑战目标已选定。' : '选定一条挑战目标。'}</p>
         <div className="footer-actions">
           <button className="btn" disabled={!ready} onClick={onConfirm}>
             确认本季目标
