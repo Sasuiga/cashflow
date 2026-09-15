@@ -93,11 +93,12 @@ export function productName(id: ProductId): string {
   return map[id];
 }
 
-export function priceDelta(current: number, base: number): { text: string; tone: 'up' | 'down' | 'flat' } {
-  const pct = (current - base) / base;
-  if (Math.abs(pct) < 0.005) return { text: '持平', tone: 'flat' };
-  const signed = `${pct > 0 ? '+' : ''}${Math.round(pct * 100)}%`;
-  return { text: signed, tone: pct > 0 ? 'up' : 'down' };
+export function priceDelta(current: number, previous: number): { text: string; tone: 'up' | 'down' | 'flat' } {
+  const diff = roundMoney(current - previous);
+  if (Math.abs(diff) < 0.05) return { text: '持平', tone: 'flat' };
+  const pct = previous > 0 ? diff / previous : 0;
+  const pctText = `${pct > 0 ? '+' : ''}${Math.round(pct * 100)}%`;
+  return { text: `${signedAmount(diff)}（${pctText}）`, tone: diff > 0 ? 'up' : 'down' };
 }
 
 export function scoreTitle(netAssets: number, kind: 'bankrupt' | 'finished'): string {

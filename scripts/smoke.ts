@@ -46,6 +46,22 @@ function checkBoardVariety(): void {
   assert(basics.size >= 2 || new Set(pools).size >= 2, '开局目标组合应出现差异');
 }
 
+function checkMarketQuotes(): void {
+  let state = reduce(createInitialState(), { type: 'START_GAME' });
+  assert(typeof state.marketTrend?.materials.a === 'number', '开季应写下行情定调');
+  const ids = (state.challengePoolIds ?? []).slice(0, 2);
+  assert(ids.length === 2, '开局应发出四选二议题');
+  for (const id of ids) state = reduce(state, { type: 'TOGGLE_BOARD_GOAL', id });
+  state = reduce(state, { type: 'CONFIRM_BOARD' });
+  assert(state.phase === 'briefing', '确认目标后应进入月报');
+  const diffA = Math.abs(state.materialPrices.a - state.prevMaterialPrices.a);
+  assert(diffA < 0.05 || Math.abs(diffA - 0.1) < 1e-6, `钢材月度台阶应为 0 或 0.1，实际 ${diffA}`);
+  const basic = state.productPrices.basic ?? 1.5;
+  const prevBasic = state.prevProductPrices.basic ?? 1.5;
+  const diffP = Math.abs(basic - prevBasic);
+  assert(diffP < 0.05 || Math.abs(diffP - 0.2) < 1e-6, `基础款月度台阶应为 0 或 0.2，实际 ${diffP}`);
+}
+
 function checkOpeningAccounts(): void {
   const opened = reduce(createInitialState(), { type: 'START_GAME' });
   const net = netAssetsOf(opened);
@@ -186,6 +202,7 @@ function play(): GameState {
 
 checkOpeningAccounts();
 checkBoardVariety();
+checkMarketQuotes();
 settleFirstMonth();
 
 const result = play();

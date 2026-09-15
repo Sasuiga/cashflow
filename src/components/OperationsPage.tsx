@@ -41,7 +41,7 @@ import {
   totalStaff,
 } from '../game/engine';
 import { MONTH_NAMES, ROLE_HINT, ROLE_LABEL, bomLabel, materialName, money, qty, roundMoney, signedMoney } from '../game/format';
-import { QUARTER_LABEL, climateById, goalById, q3ProcurementFree } from '../game/board';
+import { QUARTER_LABEL, climateById, goalById, marketToneLine, q3ProcurementFree } from '../game/board';
 import type { DeptId, GameAction, GameState, MaterialId, MonthOrder, Role } from '../game/types';
 
 const ROLES: Role[] = ['production', 'management', 'sales', 'rd'];
@@ -238,6 +238,7 @@ export function OperationsPage({
         {QUARTER_LABEL[state.quarter]} · {climate.name}
       </p>
       <p className="exec-climate">{climate.headline}</p>
+      <p className="exec-climate">{marketToneLine(state)}</p>
       {basicGoal && (
         <div className="exec-goal">
           <b>基本目标 · {basicGoal.name}</b>

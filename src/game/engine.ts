@@ -34,6 +34,7 @@ import {
   WORKERS_PER_MACHINE,
   cardById,
   eventById,
+  materialById,
   productById,
 } from './data';
 import { ACHIEVEMENTS } from './achievements';
@@ -46,10 +47,14 @@ import {
   currentBasicGoal,
   dealBasicGoal,
   dealChallengePool,
+  dealMarketTrend,
+  emptyMarketTrend,
   emptyQuarterStats,
   goalById,
+  marketToneLine,
   q3ProcurementFree,
   quarterOf,
+  trendWord,
 } from './board';
 import { MONTH_NAMES, ROLE_LABEL, materialName, money, productName, roundMoney } from './format';
 import type {
@@ -71,6 +76,7 @@ import type {
   SettlementReport,
   Staff,
   StockLayer,
+  TrendDir,
 } from './types';
 
 function clone<T>(value: T): T {
@@ -100,6 +106,85 @@ function rollShock(month: number): Shock {
 
 function shockOf<T>(shock: Shock, light: T, mid: T, heavy: T): T {
   return shock === 'light' ? light : shock === 'heavy' ? heavy : mid;
+}
+
+function priceTick(base: number): number {
+  return Math.max(0.1, roundMoney(base * 0.1));
+}
+
+function boundMaterialPrice(id: MaterialId, price: number): number {
+  const base = materialById(id).basePrice;
+  return roundPrice(clamp(price, roundMoney(base * 0.5), roundMoney(base * 2)));
+}
+
+function boundProductPrice(id: ProductId, price: number): number {
+  const base = productById(id).basePrice;
+  return roundPrice(clamp(price, roundMoney(base * 0.5), roundMoney(base * 1.5)));
+}
+
+function moveMaterialPrice(state: GameState, id: MaterialId, ticks: number): void {
+  if (!ticks) return;
+  const base = materialById(id).basePrice;
+  state.materialPrices[id] = boundMaterialPrice(id, state.materialPrices[id] + priceTick(base) * ticks);
+}
+
+function moveProductPrice(state: GameState, id: ProductId, ticks: number): void {
+  if (!ticks) return;
+  const base = productById(id).basePrice;
+  const current = state.productPrices[id] ?? base;
+  state.productPrices[id] = boundProductPrice(id, current + priceTick(base) * ticks);
+}
+
+function moveAllProductPrices(state: GameState, ticks: number): void {
+  for (const id of state.unlockedProducts) moveProductPrice(state, id, ticks);
+}
+
+function quotedPct(before: number, after: number): number {
+  if (before <= 0) return 0;
+  return Math.round(((after - before) / before) * 100);
+}
+
+function trendStep(dir: TrendDir): -1 | 0 | 1 {
+  const roll = Math.random();
+  if (dir > 0) {
+    if (roll < 0.7) return 1;
+    if (roll < 0.9) return 0;
+    return -1;
+  }
+  if (dir < 0) {
+    if (roll < 0.7) return -1;
+    if (roll < 0.9) return 0;
+    return 1;
+  }
+  if (roll < 0.5) return 0;
+  return roll < 0.75 ? 1 : -1;
+}
+
+function ensureMarketTrend(state: GameState): void {
+  if (!state.marketTrend?.materials) {
+    state.marketTrend = dealMarketTrend(state.climateId, state.unlockedProducts, state.materialDUnlocked);
+  }
+  if (!state.marketTrend.products) state.marketTrend.products = {};
+}
+
+function setMaterialTrend(state: GameState, id: MaterialId, dir: TrendDir): void {
+  ensureMarketTrend(state);
+  state.marketTrend.materials[id] = dir;
+}
+
+function setAllProductTrends(state: GameState, dir: TrendDir): void {
+  ensureMarketTrend(state);
+  for (const id of state.unlockedProducts) state.marketTrend.products[id] = dir;
+}
+
+function snapshotQuotedPrices(state: GameState): void {
+  state.prevMaterialPrices = {
+    a: state.materialPrices.a,
+    b: state.materialPrices.b,
+    c: state.materialPrices.c,
+    d: state.materialPrices.d,
+  };
+  state.prevProductPrices = { ...state.productPrices };
 }
 
 function emptyModifiers(): Modifiers {
@@ -873,6 +958,7 @@ function beginQuarter(state: GameState, quarter: 1 | 2 | 3 | 4): void {
   const climate = pick(pool);
   state.climateId = climate.id;
   state.usedClimateIds = [...state.usedClimateIds, climate.id];
+  state.marketTrend = dealMarketTrend(climate.id, state.unlockedProducts, state.materialDUnlocked);
   state.basicGoalId = dealBasicGoal(quarter, climate.id).id;
   state.challengePoolIds = dealChallengePool(quarter, climate.id).map((goal) => goal.id);
   state.challengeGoalIds = [];
@@ -881,6 +967,7 @@ function beginQuarter(state: GameState, quarter: 1 | 2 | 3 | 4): void {
   state.quarterStats.peakCash = Math.max(0, state.cash);
   state.quarterEventTones = [];
   state.phase = 'board';
+  pushLog(state, `本季行情定调：${marketToneLine(state)}。`);
 }
 
 function emptyWageAccrual(): Record<Role, number> {
@@ -1191,40 +1278,19 @@ function nextUid(state: GameState): string {
   return `c${state.uidSeq}`;
 }
 
-function rollMarket(state: GameState, firstMonth: boolean): void {
-  const climate = climateById(state.climateId);
+function rollMarket(state: GameState): void {
+  ensureMarketTrend(state);
+  snapshotQuotedPrices(state);
   for (const mat of MATERIALS) {
     if (mat.id === 'd' && !state.materialDUnlocked) {
       state.materialPrices.d = mat.basePrice;
       continue;
     }
-    if (firstMonth) {
-      state.materialPrices[mat.id] = mat.basePrice;
-      continue;
-    }
-    let step = pick([-0.1, 0, 0.1]);
-    if (climate.id === 'steel' && mat.id === 'a') step += 0.1;
-    if (climate.id === 'chip' && mat.id === 'c') step += 0.2;
-    state.materialPrices[mat.id] = roundPrice(
-      clamp(state.materialPrices[mat.id] + step, roundMoney(mat.basePrice * 0.5), roundMoney(mat.basePrice * 2)),
-    );
+    moveMaterialPrice(state, mat.id, trendStep(state.marketTrend.materials[mat.id] ?? 0));
   }
-
   for (const product of PRODUCTS) {
     if (!state.unlockedProducts.includes(product.id)) continue;
-    if (firstMonth) {
-      state.productPrices[product.id] = product.basePrice;
-      continue;
-    }
-    let step = pick([-0.2, 0, 0.2]);
-    if (climate.id === 'priceWar') step -= 0.2;
-    state.productPrices[product.id] = roundPrice(
-      clamp(
-        (state.productPrices[product.id] ?? product.basePrice) + step,
-        roundMoney(product.basePrice * 0.5),
-        roundMoney(product.basePrice * 1.5),
-      ),
-    );
+    moveProductPrice(state, product.id, trendStep(state.marketTrend.products[product.id] ?? 0));
   }
 }
 
@@ -1276,7 +1342,7 @@ function takeMaterial(state: GameState, id: MaterialId, qty: number): number {
   return lost.qty;
 }
 
-function prepareMonth(state: GameState, firstMonth: boolean): void {
+function prepareMonth(state: GameState): void {
   state.modifiers = emptyModifiers();
   state.shop = [];
   state.shopDrawn = false;
@@ -1296,7 +1362,7 @@ function prepareMonth(state: GameState, firstMonth: boolean): void {
   state.cardsUnlocked = cardsUnlockedNow(state);
   state.maxAp = maxApFor(state.staff);
   state.ap = state.maxAp;
-  rollMarket(state, firstMonth);
+  rollMarket(state);
   state.eventId = pickEvent(state);
   state.eventNote = null;
   state.phase = 'briefing';
@@ -1404,11 +1470,18 @@ function applyRd(state: GameState): string | null {
   state.rdProgress -= RD_THRESHOLD;
   const unlock = RD_UNLOCKS[state.rdUnlockIndex]!;
   state.rdUnlockIndex += 1;
-  if (unlock.unlockD) state.materialDUnlocked = true;
+  if (unlock.unlockD) {
+    state.materialDUnlocked = true;
+    ensureMarketTrend(state);
+    state.marketTrend.materials.d = climateById(state.climateId).materialTrend.d ?? 0;
+  }
   if (unlock.product && !state.unlockedProducts.includes(unlock.product)) {
     state.unlockedProducts.push(unlock.product);
     const def = productById(unlock.product);
     state.productPrices[unlock.product] = def.basePrice;
+    state.prevProductPrices = { ...(state.prevProductPrices ?? {}), [unlock.product]: def.basePrice };
+    ensureMarketTrend(state);
+    state.marketTrend.products[unlock.product] = climateById(state.climateId).productTrend[unlock.product] ?? 0;
     state.demand[unlock.product] = state.demand[unlock.product] ?? 0;
   }
   return unlock.note;
@@ -1502,18 +1575,24 @@ function applyEvent(state: GameState): void {
     case 'steelSpike': {
       const mult = shockOf(shock, 1.3, 1.5, 1.7);
       const cut = shockOf(shock, 4, 6, 8);
-      state.materialPrices.a = roundPrice(state.materialPrices.a * mult);
+      const before = state.materialPrices.a;
+      state.materialPrices.a = boundMaterialPrice('a', before * mult);
+      setMaterialTrend(state, 'a', 1);
       const lost = takeMaterial(state, 'a', cut);
-      bits.push(`钢材报价上调 ${Math.round((mult - 1) * 100)}%，现为 ${money(state.materialPrices.a)}/件`);
+      bits.push(`钢材报价上调 ${quotedPct(before, state.materialPrices.a)}%，现为 ${money(state.materialPrices.a)}/件`);
+      bits.push(`本季钢材定调改为${trendWord(1)}`);
       if (lost > 0) bits.push(`到货配额被砍，钢材库存 -${lost}`);
       break;
     }
     case 'plasticSpike': {
       const mult = shockOf(shock, 1.3, 1.5, 1.7);
       const cut = shockOf(shock, 3, 5, 7);
-      state.materialPrices.b = roundPrice(state.materialPrices.b * mult);
+      const before = state.materialPrices.b;
+      state.materialPrices.b = boundMaterialPrice('b', before * mult);
+      setMaterialTrend(state, 'b', 1);
       const lost = takeMaterial(state, 'b', cut);
-      bits.push(`塑料报价上调 ${Math.round((mult - 1) * 100)}%，现为 ${money(state.materialPrices.b)}/件`);
+      bits.push(`塑料报价上调 ${quotedPct(before, state.materialPrices.b)}%，现为 ${money(state.materialPrices.b)}/件`);
+      bits.push(`本季塑料定调改为${trendWord(1)}`);
       if (lost > 0) bits.push(`到货配额被砍，塑料库存 -${lost}`);
       break;
     }
@@ -1558,9 +1637,12 @@ function applyEvent(state: GameState): void {
     case 'dump': {
       const priceCut = shockOf(shock, 0.1, 0.15, 0.2);
       const demandCut = shockOf(shock, 5, 8, 12);
+      moveAllProductPrices(state, -1);
+      setAllProductTrends(state, -1);
       state.modifiers.priceBonus -= priceCut;
       state.modifiers.extraDemand -= demandCut;
       bits.push(`本月售价 -${Math.round(priceCut * 100)}%，订单收紧`);
+      bits.push(`本季成品定调改为${trendWord(-1)}`);
       break;
     }
     case 'blackout': {
@@ -1578,9 +1660,12 @@ function applyEvent(state: GameState): void {
     case 'chipSqueeze': {
       const mult = shockOf(shock, 1.3, 1.5, 1.8);
       const cut = shockOf(shock, 1, 1, 2);
-      state.materialPrices.c = roundPrice(state.materialPrices.c * mult);
+      const before = state.materialPrices.c;
+      state.materialPrices.c = boundMaterialPrice('c', before * mult);
+      setMaterialTrend(state, 'c', 1);
       const lost = takeMaterial(state, 'c', cut);
-      bits.push(`芯片报价上调 ${Math.round((mult - 1) * 100)}%，现为 ${money(state.materialPrices.c)}/件`);
+      bits.push(`芯片报价上调 ${quotedPct(before, state.materialPrices.c)}%，现为 ${money(state.materialPrices.c)}/件`);
+      bits.push(`本季芯片定调改为${trendWord(1)}`);
       if (lost > 0) bits.push(`配额被收，库存芯片 -${lost}`);
       break;
     }
@@ -1757,15 +1842,25 @@ function applyEvent(state: GameState): void {
     case 'priceRally': {
       const bonus = shockOf(shock, 0.08, 0.1, 0.15);
       const demand = shockOf(shock, 4, 6, 8);
+      moveAllProductPrices(state, 1);
+      setAllProductTrends(state, 1);
       state.modifiers.priceBonus += bonus;
       state.modifiers.extraDemand += demand;
       bits.push(`本月售价 +${Math.round(bonus * 100)}%，订单放宽`);
+      bits.push(`本季成品定调改为${trendWord(1)}`);
       break;
     }
     case 'chipAlloc': {
       const qty = shockOf(shock, 1, 2, 3);
+      const before = state.materialPrices.c;
       grantMaterial(state, 'c', qty);
+      moveMaterialPrice(state, 'c', -1);
+      setMaterialTrend(state, 'c', -1);
       bits.push(`芯片配额到货 ${qty} 件，已按市价入库`);
+      if (state.materialPrices.c !== before) {
+        bits.push(`芯片报价落到 ${money(state.materialPrices.c)}/件`);
+      }
+      bits.push(`本季芯片定调改为${trendWord(-1)}`);
       break;
     }
     case 'vendorCredit':
@@ -1794,8 +1889,10 @@ function applyEvent(state: GameState): void {
     }
     case 'idleSeason': {
       const demand = shockOf(shock, 6, 10, 14);
+      setAllProductTrends(state, -1);
       state.modifiers.extraDemand -= demand;
       bits.push('淡季空窗，本月订单明显收紧');
+      bits.push(`本季成品定调改为${trendWord(-1)}`);
       break;
     }
     case 'moldWear': {
@@ -1872,6 +1969,9 @@ export function createInitialState(): GameState {
     finished: {},
     materialPrices: { a: 0.4, b: 0.4, c: 1, d: 2 },
     productPrices: { basic: 1.5, standard: 4, premium: 6 },
+    prevMaterialPrices: { a: 0.4, b: 0.4, c: 1, d: 2 },
+    prevProductPrices: { basic: 1.5, standard: 4, premium: 6 },
+    marketTrend: emptyMarketTrend(),
     demand: { basic: 20, standard: 10, premium: 5 },
     unlockedProducts: ['basic', 'standard', 'premium'],
     materialDUnlocked: false,
@@ -2021,6 +2121,11 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
   if (!Array.isArray(state.monthOrders)) state.monthOrders = [];
   if (!Array.isArray(state.acceptedOrderIds)) state.acceptedOrderIds = [];
   if (!state.extraProduce) state.extraProduce = {};
+  if (!state.marketTrend?.materials) {
+    state.marketTrend = dealMarketTrend(state.climateId, state.unlockedProducts ?? ['basic'], Boolean(state.materialDUnlocked));
+  }
+  if (!state.prevMaterialPrices) state.prevMaterialPrices = { ...state.materialPrices };
+  if (!state.prevProductPrices) state.prevProductPrices = { ...state.productPrices };
 
   switch (action.type) {
     case 'TOGGLE_BOARD_GOAL': {
@@ -2041,14 +2146,13 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
     case 'CONFIRM_BOARD': {
       if (state.phase !== 'board' || state.challengeDraft.length !== 2) return prev;
       state.challengeGoalIds = [...state.challengeDraft];
-      const firstMonth = state.month === 1 && !state.lastReport;
-      prepareMonth(state, firstMonth);
+      prepareMonth(state);
       syncMonthWages(state);
       const climate = climateById(state.climateId);
       const picked = state.challengeGoalIds.map((id) => `「${goalById(id).name}」`).join('、');
       pushLog(
         state,
-        `${QUARTER_LABEL[state.quarter]}决议：基本目标「${goalById(state.basicGoalId).name}」；挑战目标${picked}。${climate.headline}`,
+        `${QUARTER_LABEL[state.quarter]}决议：基本目标「${goalById(state.basicGoalId).name}」；挑战目标${picked}。${climate.headline} 定调：${marketToneLine(state)}。`,
       );
       return state;
     }
@@ -2332,7 +2436,7 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
         beginQuarter(state, quarterOf(state.month));
         return state;
       }
-      prepareMonth(state, false);
+      prepareMonth(state);
       syncMonthWages(state);
       pushLog(state, `${state.month} 月行情已更新。`);
       return state;

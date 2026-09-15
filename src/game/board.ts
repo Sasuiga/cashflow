@@ -1,5 +1,6 @@
-import type { GameState, QuarterStats } from './types';
+import type { GameState, MaterialId, ProductId, QuarterStats, TrendDir } from './types';
 import { MATERIALS, PRODUCTS } from './data';
+import { priceDelta } from './format';
 
 export type ClimateId = 'steel' | 'channel' | 'chip' | 'priceWar';
 export type GoalKind = 'basic' | 'challenge';
@@ -27,6 +28,8 @@ export interface ClimateDef {
   headline: string;
   briefing: string;
   eventIds: string[];
+  materialTrend: Partial<Record<MaterialId, TrendDir>>;
+  productTrend: Partial<Record<ProductId, TrendDir>>;
 }
 
 export interface GoalDef {
@@ -46,29 +49,37 @@ export const CLIMATES: ClimateDef[] = [
     id: 'steel',
     name: '钢材紧缺',
     headline: '北方钢厂惜售，现货偏紧。',
-    briefing: '本季市场：钢材紧缺。钢价易涨，基础款料本会被抬上去。',
+    briefing: '本季市场：钢材紧缺。钢价易涨，吃钢的走量货料本会被抬上去。',
     eventIds: ['steelSpike', 'plasticSpike', 'moldWear'],
+    materialTrend: { a: 1 },
+    productTrend: { basic: 1, economy: 1 },
   },
   {
     id: 'channel',
     name: '渠道要量',
     headline: '经销商在锁货，走量订单更密。',
-    briefing: '本季市场：渠道要量。需求偏高，交不齐单会被追责。',
+    briefing: '本季市场：渠道要量。需求偏高，交不齐单会被追责。走量货报价偏强。',
     eventIds: ['bigOrder', 'rushOrder', 'rushStandard', 'channelHold', 'arDelay', 'customerBreak', 'priceRally'],
+    materialTrend: {},
+    productTrend: { basic: 1, economy: 1 },
   },
   {
     id: 'chip',
     name: '芯片交期紧张',
     headline: '分销商收紧配额，中高端更吃力。',
-    briefing: '本季市场：芯片交期紧张。标准款和旗舰款的料更贵、更少。',
+    briefing: '本季市场：芯片交期紧张。芯片易涨，标准款和旗舰款售价也容易跟涨。',
     eventIds: ['chipSqueeze', 'chipAlloc'],
+    materialTrend: { c: 1 },
+    productTrend: { standard: 1, premium: 1 },
   },
   {
     id: 'priceWar',
     name: '价格战',
     headline: '同行在清库存，标价承压。',
-    briefing: '本季市场：价格战。售价容易被压，毛利变薄。',
+    briefing: '本季市场：价格战。成品报价偏弱，毛利容易被压薄。',
     eventIds: ['dump', 'quality', 'stockAge', 'dampStock', 'idleSeason', 'inspectBonus'],
+    materialTrend: {},
+    productTrend: { basic: -1, standard: -1, premium: -1, economy: -1, special: -1 },
   },
 ];
 
@@ -87,37 +98,84 @@ export function climateById(id: ClimateId): ClimateDef {
   return CLIMATES.find((item) => item.id === id) ?? CLIMATES[0]!;
 }
 
+export function trendWord(dir: TrendDir): string {
+  if (dir > 0) return '看涨';
+  if (dir < 0) return '看跌';
+  return '持稳';
+}
+
+export function emptyMarketTrend() {
+  return {
+    materials: { a: 0, b: 0, c: 0, d: 0 } as Record<MaterialId, TrendDir>,
+    products: {} as Partial<Record<ProductId, TrendDir>>,
+  };
+}
+
+export function dealMarketTrend(
+  climateId: ClimateId,
+  unlockedProducts: ProductId[],
+  materialDUnlocked: boolean,
+) {
+  const climate = climateById(climateId);
+  const materials: Record<MaterialId, TrendDir> = { a: 0, b: 0, c: 0, d: 0 };
+  for (const id of Object.keys(climate.materialTrend) as MaterialId[]) {
+    materials[id] = climate.materialTrend[id] ?? 0;
+  }
+  const products: Partial<Record<ProductId, TrendDir>> = {};
+  for (const id of unlockedProducts) {
+    products[id] = climate.productTrend[id] ?? 0;
+  }
+  const idle = (['a', 'b', 'c', 'd'] as MaterialId[]).filter((id) => {
+    if (id === 'd' && !materialDUnlocked) return false;
+    return materials[id] === 0;
+  });
+  if (idle.length > 0 && Math.random() < 0.7) {
+    materials[idle[Math.floor(Math.random() * idle.length)]!] = Math.random() < 0.5 ? 1 : -1;
+  }
+  return { materials, products };
+}
+
+export function marketToneLine(state: GameState): string {
+  const trend = state.marketTrend ?? emptyMarketTrend();
+  const mats: string[] = [];
+  for (const mat of MATERIALS) {
+    if (mat.id === 'd' && !state.materialDUnlocked) continue;
+    mats.push(`${mat.name}${trendWord(trend.materials[mat.id] ?? 0)}`);
+  }
+  const unlocked = PRODUCTS.filter((item) => state.unlockedProducts.includes(item.id));
+  const dirs = unlocked.map((item) => trend.products[item.id] ?? 0);
+  const productLine =
+    unlocked.length > 0 && dirs.every((dir) => dir === dirs[0])
+      ? `成品${trendWord(dirs[0]!)}`
+      : unlocked.map((item) => `${item.name}${trendWord(trend.products[item.id] ?? 0)}`).join(' · ');
+  return [...mats, productLine].filter(Boolean).join(' · ');
+}
+
 export function marketDigest(state: GameState): string {
   const climate = climateById(state.climateId);
-  if (state.month === 1) {
-    return `本月开盘，报价贴近基准。${climate.briefing}`;
-  }
-
   const matMoves: string[] = [];
   for (const mat of MATERIALS) {
     if (mat.id === 'd' && !state.materialDUnlocked) continue;
     const price = state.materialPrices[mat.id];
-    const pct = (price - mat.basePrice) / mat.basePrice;
-    if (Math.abs(pct) < 0.05) continue;
-    matMoves.push(`${mat.name}较基准${pct > 0 ? '上涨' : '回落'} ${Math.round(Math.abs(pct) * 100)}%`);
+    const prev = state.prevMaterialPrices?.[mat.id] ?? mat.basePrice;
+    const delta = priceDelta(price, prev);
+    if (delta.tone === 'flat') continue;
+    matMoves.push(`${mat.name}较上月${delta.text}`);
   }
 
   const productMoves: string[] = [];
   for (const product of PRODUCTS) {
     if (!state.unlockedProducts.includes(product.id)) continue;
     const price = state.productPrices[product.id] ?? product.basePrice;
-    const pct = (price - product.basePrice) / product.basePrice;
-    const demand = state.demand[product.id] ?? product.baseDemand;
-    if (Math.abs(pct) >= 0.08) {
-      productMoves.push(`${product.name}售价${pct > 0 ? '上浮' : '下压'} ${Math.round(Math.abs(pct) * 100)}%`);
-    } else if (demand !== product.baseDemand) {
-      productMoves.push(`${product.name}需求${demand > product.baseDemand ? '放到' : '收到'} ${demand} 件`);
-    }
+    const prev = state.prevProductPrices?.[product.id] ?? product.basePrice;
+    const delta = priceDelta(price, prev);
+    if (delta.tone === 'flat') continue;
+    productMoves.push(`${product.name}较上月${delta.text}`);
   }
 
-  const parts = [climate.briefing];
-  parts.push(matMoves.length > 0 ? `原料方面，${matMoves.join('，')}。` : '原料报价大体贴近基准，现货还算平稳。');
-  parts.push(productMoves.length > 0 ? `成品这边，${productMoves.join('，')}。` : '成品市价和需求没有大幅偏离基准。');
+  const parts = [`本季定调：${marketToneLine(state)}。`, climate.briefing];
+  parts.push(matMoves.length > 0 ? `原料方面，${matMoves.join('，')}。` : '原料报价较上月没有明显台阶。');
+  parts.push(productMoves.length > 0 ? `成品这边，${productMoves.join('，')}。` : '成品市价较上月没有明显台阶。');
   return parts.join('');
 }
 

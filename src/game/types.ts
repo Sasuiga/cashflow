@@ -14,6 +14,12 @@ export type MaterialId = 'a' | 'b' | 'c' | 'd';
 export type ProductId = 'basic' | 'standard' | 'premium' | 'economy' | 'special';
 export type CardSuit = Role;
 export type EndKind = 'bankrupt' | 'finished';
+export type TrendDir = -1 | 0 | 1;
+
+export interface MarketTrend {
+  materials: Record<MaterialId, TrendDir>;
+  products: Partial<Record<ProductId, TrendDir>>;
+}
 
 export interface Staff {
   production: number;
@@ -283,6 +289,9 @@ export interface GameState {
   finished: Partial<Record<ProductId, number>>;
   materialPrices: Record<MaterialId, number>;
   productPrices: Partial<Record<ProductId, number>>;
+  prevMaterialPrices: Record<MaterialId, number>;
+  prevProductPrices: Partial<Record<ProductId, number>>;
+  marketTrend: MarketTrend;
   demand: Partial<Record<ProductId, number>>;
   unlockedProducts: ProductId[];
   materialDUnlocked: boolean;

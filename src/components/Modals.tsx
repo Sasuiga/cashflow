@@ -1,7 +1,7 @@
 import { MATERIALS, PRODUCTS, eventById } from '../game/data';
 import { booksForView, netProfitOf, operatingCashOf } from '../game/engine';
 import { MONTH_NAMES, money, priceDelta, signedMoney } from '../game/format';
-import { QUARTER_LABEL, climateById, currentBasicGoal, currentChallengePool, marketDigest } from '../game/board';
+import { QUARTER_LABEL, climateById, currentBasicGoal, currentChallengePool, marketDigest, marketToneLine } from '../game/board';
 import type { GameState } from '../game/types';
 
 export function BoardModal({
@@ -35,6 +35,10 @@ export function BoardModal({
         <p className="sheet-caption">本季市场基调 · {climate.name}</p>
         <p className="lead" style={{ marginTop: 0 }}>
           {climate.briefing}
+        </p>
+        <p className="sheet-caption">本季行情定调</p>
+        <p className="lead" style={{ marginTop: 0 }}>
+          {marketToneLine(state)}。月度事件可能扭转定调。
         </p>
         <div className="event-impact">
           <b>基本目标 · 未达成扣 5 分</b>
@@ -88,13 +92,13 @@ export function BriefingModal({ state, onConfirm }: { state: GameState; onConfir
             <tr>
               <th>品种</th>
               <th className="num">报价</th>
-              <th className="num">变动</th>
+              <th className="num">较上月</th>
             </tr>
           </thead>
           <tbody>
             {visibleMaterials.map((item) => {
               const price = state.materialPrices[item.id];
-              const delta = priceDelta(price, item.basePrice);
+              const delta = priceDelta(price, state.prevMaterialPrices?.[item.id] ?? item.basePrice);
               return (
                 <tr key={item.id}>
                   <td>{item.name}</td>
@@ -114,13 +118,13 @@ export function BriefingModal({ state, onConfirm }: { state: GameState; onConfir
               <th>产品</th>
               <th className="num">市价</th>
               <th className="num">需求</th>
-              <th className="num">变动</th>
+              <th className="num">较上月</th>
             </tr>
           </thead>
           <tbody>
             {products.map((item) => {
               const price = state.productPrices[item.id] ?? item.basePrice;
-              const delta = priceDelta(price, item.basePrice);
+              const delta = priceDelta(price, state.prevProductPrices?.[item.id] ?? item.basePrice);
               return (
                 <tr key={item.id}>
                   <td>{item.name}</td>
