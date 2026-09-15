@@ -366,6 +366,39 @@ export function factoryLayout(state: GameState, capUsed = 0): FactoryView[] {
   return views;
 }
 
+export interface OrderCapLoad {
+  orderId: string;
+  productId: ProductId;
+  qty: number;
+  fromStock: number;
+  make: number;
+  cap: number;
+}
+
+export function orderCapLoads(state: GameState, acceptedIds = state.acceptedOrderIds ?? []): OrderCapLoad[] {
+  const stockLeft: Partial<Record<ProductId, number>> = {};
+  for (const id of state.unlockedProducts) {
+    stockLeft[id] = state.finished[id] ?? 0;
+  }
+  const loads: OrderCapLoad[] = [];
+  for (const order of state.monthOrders ?? []) {
+    if (!acceptedIds.includes(order.id)) continue;
+    const have = stockLeft[order.productId] ?? 0;
+    const fromStock = Math.min(order.qty, have);
+    stockLeft[order.productId] = have - fromStock;
+    const make = order.qty - fromStock;
+    loads.push({
+      orderId: order.id,
+      productId: order.productId,
+      qty: order.qty,
+      fromStock,
+      make,
+      cap: make,
+    });
+  }
+  return loads;
+}
+
 export function demandOf(state: GameState, id: ProductId): number {
   return Math.max(0, state.demand[id] ?? 0);
 }

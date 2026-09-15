@@ -39,6 +39,7 @@ import {
   monthlyInterest,
   monthlySalary,
   monthOutlook,
+  orderCapLoads,
   productionPlan,
   receivablesGross,
   receivablesNet,
@@ -50,7 +51,7 @@ import {
 } from '../game/engine';
 import { MONTH_NAMES, ROLE_HINT, ROLE_LABEL, bomLabel, factoryName, materialName, money, priceDelta, qty, roundMoney, signedMoney } from '../game/format';
 import { goalById, q3ProcurementFree } from '../game/board';
-import type { GameAction, GameState, MaterialId, MonthOrder, Role } from '../game/types';
+import type { GameAction, GameState, MaterialId, MonthOrder, ProductId, Role } from '../game/types';
 
 const ROLES: Role[] = ['production', 'management', 'sales', 'rd'];
 const LOAN = [2, 4, 8];
@@ -199,7 +200,7 @@ function plantConfirmCopy(state: GameState, kind: PlantKind) {
     title: '扩建厂区 1 座',
     confirm: '确认扩建',
     instant: [
-      `立刻新开一座产区，新增 ${SLOTS_PER_FACTORY} 个机位。新产区会出现在生产部标签里。`,
+      `立刻新开一座厂区，新增 ${SLOTS_PER_FACTORY} 个机位。新厂区会出现在生产部标签里。`,
       `本次：新增 ${factoryName(state.factories)}，机位 ${state.slots} → ${nextSlots}。`,
     ],
     ongoing: [
@@ -219,13 +220,11 @@ function PlantBoard({
   plants,
   openIndex,
   extraCapacity,
-  missing,
   onToggle,
 }: {
   plants: ReturnType<typeof factoryLayout>;
   openIndex: number;
   extraCapacity: number;
-  missing: string[];
   onToggle: (index: number) => void;
 }) {
   return (
@@ -278,13 +277,13 @@ function PlantBoard({
                 </div>
                 {plant.overflow > 0 ? (
                   <p className="plant-note">
-                    超编 {plant.overflow} 人挂在本产区 · 每人产能 +{CAP_OVERFLOW}，合计 +{plant.overflow * CAP_OVERFLOW}
+                    超编 {plant.overflow} 人挂在本厂区 · 每人产能 +{CAP_OVERFLOW}，合计 +{plant.overflow * CAP_OVERFLOW}
                   </p>
                 ) : null}
                 {plant.index === 0 && extraCapacity !== 0 ? (
                   <p className="plant-note">
                     {extraCapacity > 0 ? `本月额外产能 +${extraCapacity}` : `本月事件影响产能 ${extraCapacity}`}
-                    ，已计入本产区占用。
+                    ，已计入本厂区占用。
                   </p>
                 ) : null}
               </div>
@@ -292,8 +291,159 @@ function PlantBoard({
           </div>
         );
       })}
-      {missing.length > 0 ? <p className="hint">{missing.join('，')}</p> : null}
     </div>
+  );
+}
+
+function ScheduleBoard({
+  state,
+  plan,
+  products,
+  loads,
+  canEdit,
+  producing,
+  onToggleOrder,
+  onExtra,
+  onSettle,
+  onBack,
+}: {
+  state: GameState;
+  plan: ReturnType<typeof productionPlan>;
+  products: typeof PRODUCTS;
+  loads: ReturnType<typeof orderCapLoads>;
+  canEdit: boolean;
+  producing: boolean;
+  onToggleOrder: (id: string) => void;
+  onExtra: (productId: ProductId, qty: number) => void;
+  onSettle: () => void;
+  onBack: () => void;
+}) {
+  const extraCap = products.reduce((sum, item) => sum + (state.extraProduce?.[item.id] ?? 0), 0);
+  const orderCap = loads.reduce((sum, load) => sum + load.cap, 0);
+  const over = plan.capUsed > plan.capTotal;
+  const fill = plan.capTotal > 0 ? Math.min(100, (plan.capUsed / plan.capTotal) * 100) : 0;
+
+  return (
+    <section className="schedule-board">
+      <header className="schedule-head">
+        <b>排产</b>
+        <span className={over ? 'bad' : undefined}>
+          占用 {plan.capUsed}/{plan.capTotal}
+        </span>
+      </header>
+      <div className={['schedule-meter', over ? 'over' : ''].filter(Boolean).join(' ')} aria-hidden>
+        <i style={{ width: `${fill}%` }} />
+      </div>
+      {plan.missing.length > 0 ? <p className="hint">{plan.missing.join('，')}</p> : null}
+
+      <div className="schedule-pane">
+        <header>
+          <p className="dept-kicker">订单生产</p>
+          <span>工单占用 {orderCap}</span>
+        </header>
+        <div className="job-list">
+          {loads.length === 0 ? (
+            <div className="job empty">
+              <p>到销售部接单后，工单会落到这里。</p>
+            </div>
+          ) : (
+            loads.map((load) => {
+              const order = (state.monthOrders ?? []).find((item) => item.id === load.orderId);
+              const item = productById(load.productId);
+              const body = (
+                <>
+                  <div>
+                    <span className="suit">
+                      {order?.kind === 'contract' ? '合同工单' : '市场工单'} · {item.tier}
+                    </span>
+                    <h4>
+                      {item.name} {load.qty} 件
+                    </h4>
+                    <p className="stat">
+                      {load.fromStock > 0 && load.make > 0
+                        ? `本月现做 ${load.make} · 库存抵 ${load.fromStock}`
+                        : load.make > 0
+                          ? `本月现做 ${load.make}`
+                          : `库存交付 ${load.fromStock}`}
+                    </p>
+                  </div>
+                  <div className="job-cap">
+                    <strong>{load.cap}</strong>
+                    <span>产能占用</span>
+                  </div>
+                </>
+              );
+              return canEdit ? (
+                <button key={load.orderId} type="button" className="job" onClick={() => onToggleOrder(load.orderId)}>
+                  {body}
+                </button>
+              ) : (
+                <article key={load.orderId} className="job">
+                  {body}
+                </article>
+              );
+            })
+          )}
+        </div>
+      </div>
+
+      <div className="schedule-pane">
+        <header>
+          <p className="dept-kicker">备货入库</p>
+          <span>备货占用 {extraCap}</span>
+        </header>
+        <div className="stock-jobs">
+          {products.map((item) => {
+            const extra = state.extraProduce?.[item.id] ?? 0;
+            const max = maxExtraProduce(state, item.id);
+            const stock = state.finished[item.id] ?? 0;
+            const age = finishedMaxAge(state, item.id);
+            const provision = finishedProvisionOf(state, item.id);
+            return (
+              <article key={item.id} className={['job', extra > 0 ? 'on' : ''].filter(Boolean).join(' ')}>
+                <div>
+                  <span className="suit">{item.tier}</span>
+                  <h4>{item.name}</h4>
+                  <p className="stat">
+                    库存 {qty(stock)}
+                    {age >= 2 ? ` · 库龄 ${age} 个月` : ''}
+                    {provision > 0 ? ` · 跌价 ${money(provision)}` : ''}
+                  </p>
+                </div>
+                <div className="job-cap">
+                  <strong>{extra}</strong>
+                  <span>产能占用</span>
+                </div>
+                <div className="stock-lots">
+                  {EXTRA.map((n) => (
+                    <button
+                      key={n}
+                      type="button"
+                      className={extra === n ? 'chip on' : 'chip'}
+                      disabled={!canEdit || (n > 0 && n > Math.max(extra, max))}
+                      onClick={() => onExtra(item.id, n)}
+                    >
+                      {n === 0 ? '不备货' : `+${n}`}
+                    </button>
+                  ))}
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      </div>
+
+      {producing ? (
+        <div className="footer-actions">
+          <button className="btn small ghost" onClick={onBack}>
+            取消排产，返回经营
+          </button>
+          <button className="btn" disabled={!plan.ok} onClick={onSettle}>
+            确认接单并结算 · 不耗 AP
+          </button>
+        </div>
+      ) : null}
+    </section>
   );
 }
 
@@ -391,6 +541,7 @@ export function OperationsPage({
       ? cartItems.map((line) => `${materialName(line.material)}${line.qty}件`).join('、')
       : '';
   const plants = factoryLayout(state, plan.capUsed);
+  const loads = orderCapLoads(state);
 
   const briefing = (
     <aside className="exec-summary">
@@ -765,25 +916,21 @@ export function OperationsPage({
               plants={plants}
               openIndex={openPlant >= plants.length ? plants.length - 1 : openPlant}
               extraCapacity={state.modifiers.extraCapacity}
-              missing={plan.missing}
               onToggle={(index) => setOpenPlant(openPlant === index ? -1 : index)}
             />
-            {products.some((item) => (state.finished[item.id] ?? 0) > 0) &&
-              products
-                .filter((item) => (state.finished[item.id] ?? 0) > 0)
-                .map((item) => (
-                  <div className="row" key={item.id}>
-                    <span>成品 · {item.name}</span>
-                    <span>
-                      {qty(state.finished[item.id] ?? 0)} · 账面 {money(state.finishedCost?.[item.id] ?? 0)}
-                      {finishedMaxAge(state, item.id) >= 2 ? ` · 库龄 ${finishedMaxAge(state, item.id)} 个月` : ''}
-                      {finishedProvisionOf(state, item.id) > 0
-                        ? ` · 跌价 ${money(finishedProvisionOf(state, item.id))}`
-                        : ''}
-                    </span>
-                  </div>
-                ))}
           </Facts>
+          <ScheduleBoard
+            state={state}
+            plan={plan}
+            products={products}
+            loads={loads}
+            canEdit={acting || producing}
+            producing={producing}
+            onToggleOrder={(id) => dispatch({ type: 'TOGGLE_ORDER', id })}
+            onExtra={(productId, extraQty) => dispatch({ type: 'SET_EXTRA_PRODUCE', productId, qty: extraQty })}
+            onSettle={() => setSettleOpen(true)}
+            onBack={() => dispatch({ type: 'BACK_TO_ACTIONS' })}
+          />
           <div className="hire-action plant-actions">
             <button className="chip" disabled={!canAct} onClick={() => setHireRole('production')}>
               招聘生产人员
@@ -795,47 +942,7 @@ export function OperationsPage({
               扩建厂区
             </button>
           </div>
-          <Actions note={acting ? undefined : producing ? undefined : '事件结束后才能改编制和产线。'}>
-            {(acting || producing) && products.length > 0 && (
-              <div className="dept-block" style={{ paddingTop: 0 }}>
-                <p className="dept-kicker">超产入库</p>
-                {products.map((item) => {
-                  const extra = state.extraProduce?.[item.id] ?? 0;
-                  const max = maxExtraProduce(state, item.id);
-                  return (
-                    <div key={item.id} className="row" style={{ marginTop: 8 }}>
-                      <span>
-                        {item.name}
-                        {extra > 0 ? ` · 已排 ${extra}` : ''}
-                      </span>
-                      <span className="qty-row" style={{ margin: 0 }}>
-                        {EXTRA.map((n) => (
-                          <button
-                            key={n}
-                            className={extra === n ? 'chip on' : 'chip'}
-                            disabled={n > 0 && n > Math.max(extra, max)}
-                            onClick={() => dispatch({ type: 'SET_EXTRA_PRODUCE', productId: item.id, qty: n })}
-                          >
-                            {n === 0 ? '不超产' : `+${n}`}
-                          </button>
-                        ))}
-                      </span>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-            {producing && (
-              <div className="footer-actions">
-                <button className="btn small ghost" onClick={() => dispatch({ type: 'BACK_TO_ACTIONS' })}>
-                  取消排产，返回经营
-                </button>
-                <button className="btn" disabled={!plan.ok} onClick={() => setSettleOpen(true)}>
-                  确认接单并结算 · 不耗 AP
-                </button>
-              </div>
-            )}
-          </Actions>
+          {acting || producing ? null : <p className="hint">事件结束后才能改编制和产线。</p>}
         </Stage>
         )}
 

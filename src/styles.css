@@ -1199,6 +1199,188 @@ h1,
   color: var(--cream-dim);
 }
 
+.schedule-board {
+  margin-top: 16px;
+  padding: 14px 12px 12px;
+  border: 1px solid var(--line-strong);
+  background:
+    linear-gradient(180deg, rgba(224, 180, 90, 0.07), transparent 42%),
+    var(--ink-2);
+}
+
+.schedule-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.schedule-head b {
+  font-family: var(--serif);
+  font-size: 18px;
+  color: var(--gold);
+}
+
+.schedule-head span {
+  font-size: 13px;
+  color: var(--cream-dim);
+}
+
+.schedule-meter {
+  height: 6px;
+  margin-bottom: 12px;
+  background: rgba(243, 234, 212, 0.08);
+  border: 1px solid var(--line);
+}
+
+.schedule-meter i {
+  display: block;
+  height: 100%;
+  background: var(--gold);
+}
+
+.schedule-meter.over i {
+  background: var(--rose);
+}
+
+.schedule-pane {
+  margin-top: 14px;
+}
+
+.schedule-pane header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+.schedule-pane header .dept-kicker {
+  margin: 0;
+}
+
+.schedule-pane header span {
+  font-size: 12px;
+  color: var(--cream-dim);
+}
+
+.job-list,
+.stock-jobs {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.job {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 6px 12px;
+  width: 100%;
+  padding: 12px;
+  border: 1px solid rgba(42, 36, 22, 0.18);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.28), transparent 28%),
+    var(--paper);
+  color: var(--paper-ink);
+  box-shadow: 0 8px 18px rgba(0, 0, 0, 0.16);
+  text-align: left;
+}
+
+button.job {
+  cursor: pointer;
+  font: inherit;
+}
+
+button.job:hover {
+  border-color: #b8892d;
+}
+
+.job.on {
+  outline: 1px solid rgba(184, 137, 45, 0.45);
+}
+
+.job .suit {
+  display: block;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  color: #8a7040;
+}
+
+.job h4 {
+  font-family: var(--serif);
+  margin: 4px 0 6px;
+  font-size: 18px;
+}
+
+.job .stat {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #6d5728;
+}
+
+.job-cap {
+  text-align: right;
+  align-self: center;
+}
+
+.job-cap strong {
+  display: block;
+  font-family: var(--serif);
+  font-size: 26px;
+  line-height: 1;
+  color: #8a5a12;
+}
+
+.job-cap span {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: #6d5728;
+}
+
+.job.empty {
+  display: block;
+  background: rgba(243, 234, 212, 0.05);
+  border: 1px dashed rgba(212, 195, 154, 0.38);
+  box-shadow: none;
+  text-align: center;
+  padding: 18px 12px;
+}
+
+.job.empty p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--cream-dim);
+}
+
+.stock-lots {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.job .chip {
+  color: var(--paper-ink);
+  border-color: #d4c39a;
+  min-height: 36px;
+}
+
+.job .chip.on,
+.job .chip:hover {
+  border-color: #b8892d;
+  color: #8a5a12;
+  background: #f7efd8;
+}
+
+.job .chip:disabled {
+  opacity: 0.38;
+}
+
 .hire-modal .sheet-caption {
   margin-top: 8px;
 }
@@ -2094,6 +2276,14 @@ h1,
 
   .plant-slot .cap {
     font-size: 18px;
+  }
+
+  .job h4 {
+    font-size: 16px;
+  }
+
+  .job-cap strong {
+    font-size: 22px;
   }
 
   .panel {

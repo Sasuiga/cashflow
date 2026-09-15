@@ -1,4 +1,4 @@
-import { createInitialState, equityAccounts, factoryLayout, hireEffectLines, netAssetsOf, netProfitOf, purchaseQtyOptions, reduce } from '../src/game/engine';
+import { createInitialState, equityAccounts, factoryLayout, hireEffectLines, netAssetsOf, netProfitOf, orderCapLoads, purchaseQtyOptions, reduce } from '../src/game/engine';
 import { goalById } from '../src/game/board';
 import { roundMoney } from '../src/game/format';
 import type { GameState } from '../src/game/types';
@@ -91,26 +91,34 @@ function checkPurchaseLots(): void {
 function checkFactoryLayout(): void {
   const opened = reduce(createInitialState(), { type: 'START_GAME' });
   const plants = factoryLayout(opened, 0);
-  assert(plants.length === 1, `开局应有一座产区，实际 ${plants.length}`);
-  assert(plants[0]?.name === '一号产区', `开局产区名应为 一号产区，实际 ${plants[0]?.name}`);
+  assert(plants.length === 1, `开局应有一座厂区，实际 ${plants.length}`);
+  assert(plants[0]?.name === '一号厂区', `开局厂区名应为 一号厂区，实际 ${plants[0]?.name}`);
   assert(plants[0]?.machineCount === 1, `开局应有 1 台设备，实际 ${plants[0]?.machineCount}`);
   assert(plants[0]?.machines[0]?.workers === 2, `开局 1 号机应有 2 人，实际 ${plants[0]?.machines[0]?.workers}`);
   assert(plants[0]?.machines[0]?.cap === 14, `开局 1 号机产能应为 14，实际 ${plants[0]?.machines[0]?.cap}`);
-  assert(plants[0]?.cap === 14, `开局产区产能应为 14，实际 ${plants[0]?.cap}`);
+  assert(plants[0]?.cap === 14, `开局厂区产能应为 14，实际 ${plants[0]?.cap}`);
   assert(plants[0]?.machines[1]?.filled === false, '开局 2 号机位应空置');
 
   const overflowed = factoryLayout({ ...opened, staff: { ...opened.staff, production: 5 } }, 0);
   assert(overflowed[0]?.overflow === 1, `5 名生产工应对 1 台设备超编 1 人，实际 ${overflowed[0]?.overflow}`);
-  assert(overflowed[0]?.cap === 23, `超编后产区产能应为 23，实际 ${overflowed[0]?.cap}`);
+  assert(overflowed[0]?.cap === 23, `超编后厂区产能应为 23，实际 ${overflowed[0]?.cap}`);
 
   const expanded = factoryLayout({ ...opened, factories: 2, slots: 6, machines: 4 }, 10);
   assert(expanded.length === 2, `两座厂区应拆成两个标签，实际 ${expanded.length}`);
-  assert(expanded[0]?.machineCount === 3 && expanded[1]?.machineCount === 1, '设备应先填满一号产区');
-  assert(expanded[0]?.used === 10 && expanded[1]?.used === 0, `占用应先摊到一号产区，实际 ${expanded[0]?.used}/${expanded[1]?.used}`);
-  assert(expanded[1]?.name === '二号产区', `第二座应为二号产区，实际 ${expanded[1]?.name}`);
+  assert(expanded[0]?.machineCount === 3 && expanded[1]?.machineCount === 1, '设备应先填满一号厂区');
+  assert(expanded[0]?.used === 10 && expanded[1]?.used === 0, `占用应先摊到一号厂区，实际 ${expanded[0]?.used}/${expanded[1]?.used}`);
+  assert(expanded[1]?.name === '二号厂区', `第二座应为二号厂区，实际 ${expanded[1]?.name}`);
 
   const penalized = factoryLayout({ ...opened, modifiers: { ...opened.modifiers, extraCapacity: -3 } }, 0);
-  assert(penalized[0]?.cap === 11, `事件减产能后一号产区应为 11，实际 ${penalized[0]?.cap}`);
+  assert(penalized[0]?.cap === 11, `事件减产能后一号厂区应为 11，实际 ${penalized[0]?.cap}`);
+
+  const scheduled = orderCapLoads({
+    ...opened,
+    finished: { ...opened.finished, basic: 4 },
+    monthOrders: [{ id: 't1', productId: 'basic', qty: 10, kind: 'market', penalty: 0 }],
+    acceptedOrderIds: ['t1'],
+  });
+  assert(scheduled[0]?.fromStock === 4 && scheduled[0]?.cap === 6, `库存应先抵订单产能，实际 库存${scheduled[0]?.fromStock} 占用${scheduled[0]?.cap}`);
 }
 
 function checkSpotPurchase(): void {

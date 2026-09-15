@@ -77,7 +77,7 @@ const FACTORY_ORDINALS = ['一', '二', '三', '四', '五', '六', '七', '八'
 export function factoryName(index: number): string {
   const n = index + 1;
   const label = n >= 1 && n <= FACTORY_ORDINALS.length ? FACTORY_ORDINALS[n - 1] : String(n);
-  return `${label}号产区`;
+  return `${label}号厂区`;
 }
 
 export function materialName(id: MaterialId): string {
