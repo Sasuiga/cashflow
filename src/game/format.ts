@@ -25,7 +25,7 @@ export const ROLE_LABEL: Record<Role, string> = {
 export const ROLE_HINT: Record<Role, string> = {
   production: '设备位内每人产能 +4，超出 +1',
   management: '每 2 人提升 1 点行动点上限',
-  sales: '到岗立刻多一张本月订单，单量随人手变大',
+  sales: '',
   rd: '结算时每人推进 1 点，满 2 点解锁',
 };
 

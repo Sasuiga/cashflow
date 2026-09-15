@@ -1351,13 +1351,26 @@ h1,
 }
 
 .product .meta {
+  display: grid;
+  gap: 6px;
+  color: var(--cream-dim);
+  font-size: 13px;
+  margin-top: 10px;
+}
+
+.product .meta-row {
   display: flex;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: 8px 14px;
-  color: var(--cream-dim);
-  font-size: 13px;
-  margin-top: 8px;
+  gap: 6px 16px;
+}
+
+.product .good {
+  color: var(--mint);
+}
+
+.product .bad {
+  color: var(--rose);
 }
 
 .ledger {

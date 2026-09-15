@@ -240,8 +240,8 @@ export function hireEffectLines(state: GameState, role: Role): string[] {
   if (role === 'sales') {
     const have = state.monthOrders?.length ?? 0;
     return [
-      '本月立刻到岗，并带来 1 张市场单。人手越多，单量越大。',
-      `本次入职：订单簿 ${have} → ${have + 1} 张。`,
+      '本月立刻到岗，并带来 1 张市场单。',
+      `本次入职：本月订单 ${have} → ${have + 1} 张。销售人手越多，单张订单件数越大。`,
       card,
     ];
   }

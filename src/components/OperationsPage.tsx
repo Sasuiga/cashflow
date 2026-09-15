@@ -81,6 +81,17 @@ function orderPreview(state: GameState, order: MonthOrder) {
   };
 }
 
+function orderGapText(state: GameState, plan: ReturnType<typeof productionPlan>) {
+  const parts: string[] = [];
+  const capGap = Math.max(0, plan.capUsed - plan.capTotal);
+  if (capGap > 0) parts.push(`产能 ${capGap}`);
+  for (const mat of MATERIALS) {
+    const short = (plan.materialNeed[mat.id] ?? 0) - (state.materials[mat.id] ?? 0);
+    if (short > 0) parts.push(`${mat.name} ${short}`);
+  }
+  return parts.length ? `缺口：${parts.join('、')}` : '缺口：无';
+}
+
 function Stage({
   id,
   title,
@@ -436,11 +447,10 @@ export function OperationsPage({
         <Stage
           id="sales"
           title="销售部"
-          intro="走量单件数大、占产能、现销好看；高端单毛利厚，但芯片现货紧，当月往往买不齐。整张交得出才接，接单不耗行动点。"
           summary={
             orders.length
-              ? `已接 ${accepted.length}/${orders.length} 张 · 销售 ${state.staff.sales} 人`
-              : `销售 ${state.staff.sales} 人 · 本月订单尚未开出`
+              ? `销售人员${state.staff.sales}人 已接订单${accepted.length}/${orders.length}张`
+              : `销售人员${state.staff.sales}人 本月订单尚未开出`
           }
           done={stageDone(state, ['sales'])}
           now={producing || acting}
@@ -467,19 +477,24 @@ export function OperationsPage({
                         {order.kind === 'contract' ? '合同 · ' : ''}
                         {item.tier} · {item.name} {order.qty} 件
                       </b>
-                      <div>{item.blurb}</div>
                       <div className="meta">
-                        <span>库存 {view.stock}</span>
-                        <span>单价 {money(view.price)}</span>
-                        <span>单件料本 {money(view.unitMat)}</span>
-                        <span>单件毛利 {money(view.unitGross)}</span>
-                        <span>毛利 {money(view.gross)}</span>
-                        <span>占产能 {order.qty}</span>
-                        <span>营业收入 {money(view.revenue)}</span>
-                        <span>现销 {money(view.cash)}</span>
-                        <span>赊销 {money(view.credit)}</span>
-                        <span>{on ? '已接' : can ? '可接' : trial.missing.join('，') || '交不出'}</span>
-                        {order.kind === 'contract' && !on ? <span>不接扣 {money(order.penalty)} 违约金</span> : null}
+                        <div className="meta-row">
+                          <span>订单收入 {money(view.revenue)}</span>
+                          <span>毛利 {money(view.gross)}</span>
+                        </div>
+                        <div className="meta-row">
+                          <span>现销 {money(view.cash)}</span>
+                          <span>赊销 {money(view.credit)}</span>
+                        </div>
+                        <div className="meta-row">
+                          <span className={view.stock >= order.qty ? 'good' : 'bad'}>库存 {view.stock}</span>
+                          <span className={trial.ok ? 'good' : 'bad'}>{orderGapText(state, trial)}</span>
+                        </div>
+                        {order.kind === 'contract' && !on ? (
+                          <div className="meta-row">
+                            <span>不接扣 {money(order.penalty)} 违约金</span>
+                          </div>
+                        ) : null}
                       </div>
                     </button>
                   );
@@ -902,7 +917,7 @@ export function OperationsPage({
               编制
             </p>
             <h2>招聘{ROLE_LABEL[hireRole]} 1 人</h2>
-            <p className="lead">{ROLE_HINT[hireRole]}</p>
+            {ROLE_HINT[hireRole] ? <p className="lead">{ROLE_HINT[hireRole]}</p> : null}
             <ul className="hire-points">
               {hireEffectLines(state, hireRole).map((line) => (
                 <li key={line}>{line}</li>
