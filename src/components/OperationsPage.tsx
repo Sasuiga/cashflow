@@ -986,19 +986,9 @@ export function OperationsPage({
         <Stage
           id="rd"
           title="研发部"
-          summary={`${state.rdProgress} / ${RD_THRESHOLD} · ${state.staff.rd} 人`}
+          summary={`研发 ${state.staff.rd} 人 · 进度 ${state.rdProgress}/${RD_THRESHOLD}`}
         >
           <Facts>
-            <div className="row">
-              <span>研发人员</span>
-              <span>{state.staff.rd} 人</span>
-            </div>
-            <div className="row">
-              <span>当前项目进度</span>
-              <span>
-                {state.rdProgress} / {RD_THRESHOLD}
-              </span>
-            </div>
             <div className="rd-bar" aria-hidden>
               <i style={{ width: `${Math.min(100, (state.rdProgress / RD_THRESHOLD) * 100)}%` }} />
             </div>
