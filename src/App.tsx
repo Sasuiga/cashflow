@@ -30,7 +30,10 @@ export function App() {
             <EventModal state={state} onAck={() => dispatch({ type: 'ACK_EVENT' })} />
           )}
           {state.pendingRdReveals?.length > 0 && (
-            <RdRevealModal state={state} onAck={() => dispatch({ type: 'ACK_RD_REVEAL' })} />
+            <RdRevealModal
+              state={state}
+              onAssign={(assign) => dispatch({ type: 'ASSIGN_RD_REVEAL', assign })}
+            />
           )}
           {state.phase === 'report' && !(state.pendingRdReveals?.length > 0) && (
             <ReportModal

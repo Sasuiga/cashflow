@@ -1,5 +1,5 @@
-import { createInitialState, equityAccounts, factoryLayout, hireEffectLines, lowestUnlockedMargin, bomSpotCost, netAssetsOf, netProfitOf, orderCapLoads, purchaseQtyOptions, reduce } from '../src/game/engine';
-import { rdSuccessRate } from '../src/game/data';
+import { createInitialState, equityAccounts, factoryLayout, hireEffectLines, lowestUnlockedMargin, bomSpotCost, netAssetsOf, netProfitOf, orderCapLoads, purchaseQtyOptions, rdRevealOptions, reduce } from '../src/game/engine';
+import { RD_FAIL_BONUS, rdSuccessRate } from '../src/game/data';
 import { goalById } from '../src/game/board';
 import { roundMoney } from '../src/game/format';
 import type { GameState } from '../src/game/types';
@@ -9,6 +9,15 @@ function confirmBoard(state: GameState): GameState {
   if (!id) throw new Error('Board pool empty');
   if (!state.challengeDraft.includes(id)) state = reduce(state, { type: 'TOGGLE_BOARD_GOAL', id });
   return reduce(state, { type: 'CONFIRM_BOARD' });
+}
+
+function assignPendingRd(state: GameState): GameState {
+  while ((state.pendingRdReveals ?? []).length > 0) {
+    const options = rdRevealOptions(state);
+    const retry = options.find((item) => item.assign.kind === 'retry');
+    state = reduce(state, { type: 'ASSIGN_RD_REVEAL', assign: (retry ?? options[0])?.assign ?? { kind: 'idle' } });
+  }
+  return state;
 }
 
 function assert(cond: boolean, message: string): void {
@@ -280,9 +289,7 @@ function checkRdLabs(): void {
   assert(state.rdProductProgress === 1, `一月结算后产品进度应为 1/3，实际 ${state.rdProductProgress}`);
   assert(state.rdTechProgress === 1, `一月结算后工艺进度应为 1/2，实际 ${state.rdTechProgress}`);
   assert((state.pendingRdReveals ?? []).length === 0, '满周期前不应弹出研发成果');
-  while ((state.pendingRdReveals ?? []).length > 0) {
-    state = reduce(state, { type: 'ACK_RD_REVEAL' });
-  }
+  state = assignPendingRd(state);
   state = reduce(state, { type: 'NEXT_MONTH' });
   if (state.phase === 'board') state = confirmBoard(state);
   if (state.phase === 'briefing') state = reduce(state, { type: 'CONFIRM_BRIEFING' });
@@ -296,9 +303,21 @@ function checkRdLabs(): void {
   assert(state.rdProductProgress === 2, `二月结算后产品进度应为 2/3，实际 ${state.rdProductProgress}`);
   assert(state.rdTechProgress === 0, '工艺 2 个月周期应在二月结算时掷骰并清零进度');
   assert((state.pendingRdReveals ?? []).some((item) => item.track === 'tech'), '二月结算应弹出工艺研发成果');
-  while ((state.pendingRdReveals ?? []).length > 0) {
-    state = reduce(state, { type: 'ACK_RD_REVEAL' });
+  const techReveal = (state.pendingRdReveals ?? []).find((item) => item.track === 'tech');
+  if (techReveal && !techReveal.success) {
+    const stayed = reduce(state, { type: 'ASSIGN_RD_REVEAL', assign: { kind: 'retry' } });
+    assert(stayed.rdTechProjectId === 'jig', '失败续攻应留下原课题');
+    assert(stayed.rdTechFailBonus === RD_FAIL_BONUS, '失败续攻应保留成功率加成');
+    const switched = reduce(state, { type: 'ASSIGN_RD_REVEAL', assign: { kind: 'tech', ipId: 'yield' } });
+    assert(switched.rdTechProjectId === 'yield', '失败转题应换到新知识产权');
+    assert(switched.rdTechFailBonus === 0, '转题应清掉失败加成');
+    assert(switched.rdTechStaff === 1, '转题后工艺组人数不变');
+  } else if (techReveal?.success) {
+    const next = reduce(state, { type: 'ASSIGN_RD_REVEAL', assign: { kind: 'tech', ipId: 'yield' } });
+    assert((next.ownedIps ?? []).includes('jig'), '成功后应留下已装备的工装夹具');
+    assert(next.rdTechProjectId === 'yield', '成功后应立即开下一档工艺');
   }
+  state = assignPendingRd(state);
 }
 
 function play(): GameState {
@@ -307,7 +326,7 @@ function play(): GameState {
   for (let i = 0; i < 120; i += 1) {
     if (state.phase === 'ended') return state;
     if ((state.pendingRdReveals ?? []).length > 0) {
-      state = reduce(state, { type: 'ACK_RD_REVEAL' });
+      state = assignPendingRd(state);
       continue;
     }
     if (state.phase === 'board') {
@@ -370,7 +389,7 @@ function play(): GameState {
     }
     if (state.phase === 'report') {
       while ((state.pendingRdReveals ?? []).length > 0) {
-        state = reduce(state, { type: 'ACK_RD_REVEAL' });
+        state = assignPendingRd(state);
       }
       state = reduce(state, { type: 'NEXT_MONTH' });
       continue;

@@ -31,7 +31,6 @@ import {
   creditSaleRateOf,
   availableTechIps,
   canOpenProductRd,
-  canPickTechProject,
   currentProductProject,
   currentTechProject,
   factoryLayout,
@@ -179,11 +178,13 @@ function RdLabCard({
   track,
   acting,
   onOpenProduct,
+  onPickTech,
 }: {
   state: GameState;
   track: RdTrack;
   acting: boolean;
   onOpenProduct?: () => void;
+  onPickTech?: (id: IpId) => void;
 }) {
   const staff = rdTrackStaff(state, track);
   const progress = rdTrackProgress(state, track);
@@ -194,13 +195,15 @@ function RdLabCard({
   const hasProject = Boolean(product || tech);
   const remainProduct = MAX_RD_PRODUCTS - (state.extraProducts?.length ?? 0);
   const remainTech = availableTechIps(state).length;
+  const openIps = track === 'tech' && !hasProject && remainTech > 0 ? availableTechIps(state) : [];
+  const canAssignTech = acting && staff > 0 && openIps.length > 0;
   const idleName =
     track === 'product'
       ? remainProduct > 0
         ? '未开题'
         : '课题已结'
       : remainTech > 0
-        ? '点选工艺开题'
+        ? '待开题'
         : '课题已结';
   const idleBlurb =
     track === 'product'
@@ -208,7 +211,7 @@ function RdLabCard({
         ? '派人后随机生成 BOM 和名称，毛利保证高于现有最低档。'
         : '两档量产课题已经做完。'
       : remainTech > 0
-        ? '从下方科技树点选一项知识产权，再派人攻关。'
+        ? '招聘编入工艺组时选择要攻关的知识产权。'
         : '工艺专利已经齐了。';
   const projectName = product?.name ?? tech?.name ?? idleName;
   const blurb = product?.blurb ?? tech?.blurb ?? idleBlurb;
@@ -243,7 +246,16 @@ function RdLabCard({
           随机开题
         </button>
       ) : null}
-      {staff <= 0 ? (
+      {canAssignTech ? (
+        <div className="rd-ip-picks">
+          <p className="stat">选择要攻关的知识产权</p>
+          {openIps.map((ip) => (
+            <button key={ip.id} type="button" className="chip" onClick={() => onPickTech?.(ip.id)}>
+              {ip.name} · {ip.effect}
+            </button>
+          ))}
+        </div>
+      ) : staff <= 0 ? (
         <p className="stat">实验室无人，本月结算不推进。</p>
       ) : !hasProject ? (
         <p className="stat">
@@ -252,7 +264,7 @@ function RdLabCard({
               ? '在岗等待开题，本月结算不推进。'
               : '量产课题已经做完。'
             : remainTech > 0
-              ? '在岗等待点选工艺，本月结算不推进。'
+              ? '在岗等待开题。招聘编入工艺组时可选择工艺。'
               : '工艺专利已经齐了。'}
         </p>
       ) : progress >= cycle ? (
@@ -264,43 +276,29 @@ function RdLabCard({
   );
 }
 
-function IpRack({
-  state,
-  acting,
-  onPick,
-}: {
-  state: GameState;
-  acting: boolean;
-  onPick: (id: IpId) => void;
-}) {
+function IpTree({ state }: { state: GameState }) {
   const owned = new Set(state.ownedIps ?? []);
   return (
-    <div className="ip-rack">
+    <>
       {IP_CATALOG.map((ip) => {
         const got = owned.has(ip.id);
         const current = !got && state.rdTechProjectId === ip.id;
-        const pickable = acting && !got && canPickTechProject(state, ip.id);
-        const className = ['ip-plate', got ? 'on' : '', current ? 'next' : '', pickable ? 'pick' : '']
-          .filter(Boolean)
-          .join(' ');
-        const body = (
-          <>
-            <span className="suit">{got ? '已装备' : current ? '在研' : pickable ? '可选' : '待研'}</span>
-            <h4>{ip.name}</h4>
-            <p>{ip.effect}</p>
-          </>
-        );
-        return pickable ? (
-          <button key={ip.id} type="button" className={className} onClick={() => onPick(ip.id)}>
-            {body}
-          </button>
-        ) : (
-          <article key={ip.id} className={className}>
-            {body}
-          </article>
+        return (
+          <div
+            key={ip.id}
+            className={['row', 'ip-row', got ? 'on' : '', current ? 'next' : '', !got && !current ? 'locked' : '']
+              .filter(Boolean)
+              .join(' ')}
+          >
+            <span>
+              <b>{ip.name}</b>
+              <em>{ip.effect}</em>
+            </span>
+            <span>{got ? '已解锁' : current ? '在研' : '未解锁'}</span>
+          </div>
         );
       })}
-    </div>
+    </>
   );
 }
 
@@ -1134,19 +1132,20 @@ export function OperationsPage({
                 acting={acting}
                 onOpenProduct={() => dispatch({ type: 'OPEN_PRODUCT_RD' })}
               />
-              <RdLabCard state={state} track="tech" acting={acting} />
+              <RdLabCard
+                state={state}
+                track="tech"
+                acting={acting}
+                onPickTech={(ipId) => dispatch({ type: 'PICK_RD_TECH', ipId })}
+              />
             </div>
             <p className="hint" style={{ marginTop: 12 }}>
-              产品课题 3 个月，BOM 随机生成；工艺课题 2 个月，第一次派人时可自选知识产权。每人 +20% 成功率，上限 80%。有人值守才走表，招人不加速进度。
+              产品课题 3 个月，BOM 随机生成；工艺课题 2 个月，招人或派人时选择知识产权。每人 +20% 成功率，上限 80%。有人值守才走表，招人不加速进度。
               {rdCapacityBonus(state) > 0 ? ` 已装备知识产权为本月产能 +${rdCapacityBonus(state)}。` : ''}
             </p>
           </Facts>
           <Facts title="知识产权">
-            <IpRack
-              state={state}
-              acting={acting}
-              onPick={(ipId) => dispatch({ type: 'PICK_RD_TECH', ipId })}
-            />
+            <IpTree state={state} />
           </Facts>
           {(state.extraProducts?.length ?? 0) > 0 && (
             <Facts title="已交付产品">

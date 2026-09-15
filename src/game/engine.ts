@@ -91,6 +91,8 @@ import type {
   MonthOrder,
   ProductDef,
   ProductId,
+  RdAssign,
+  RdAssignOption,
   RdReveal,
   RdTrack,
   ReceivableLot,
@@ -314,6 +316,154 @@ export function canPickTechProject(state: GameState, ipId?: IpId): boolean {
 
 export function rdHasProject(state: GameState, track: RdTrack): boolean {
   return track === 'product' ? Boolean(currentProductProject(state)) : Boolean(currentTechProject(state));
+}
+
+function sameRdAssign(a: RdAssign, b: RdAssign): boolean {
+  if (a.kind !== b.kind) return false;
+  if (a.kind === 'tech' && b.kind === 'tech') return (a.ipId ?? null) === (b.ipId ?? null);
+  return true;
+}
+
+function syncRdHeadcount(state: GameState): void {
+  state.staff.rd = Math.max(0, (state.rdProductStaff ?? 0) + (state.rdTechStaff ?? 0));
+}
+
+function moveAllRdStaff(state: GameState, from: RdTrack, to: RdTrack): void {
+  if (from === to) return;
+  const count = rdTrackStaff(state, from);
+  if (from === 'product') {
+    state.rdProductStaff = 0;
+    state.rdTechStaff = (state.rdTechStaff ?? 0) + count;
+  } else {
+    state.rdTechStaff = 0;
+    state.rdProductStaff = (state.rdProductStaff ?? 0) + count;
+  }
+  syncRdHeadcount(state);
+}
+
+function clearRdProject(state: GameState, track: RdTrack): void {
+  setRdProgress(state, track, 0);
+  setRdFailBonus(state, track, 0);
+  if (track === 'product') state.rdProductDraft = null;
+  else state.rdTechProjectId = null;
+}
+
+function pendingRevealOn(state: GameState, track: RdTrack): boolean {
+  return (state.pendingRdReveals ?? []).some((item) => item.track === track);
+}
+
+export function rdRevealOptions(state: GameState): RdAssignOption[] {
+  const reveal = state.pendingRdReveals?.[0];
+  if (!reveal) return [];
+  const options: RdAssignOption[] = [];
+  const other: RdTrack = reveal.track === 'product' ? 'tech' : 'product';
+  const otherBusy = pendingRevealOn(state, other);
+  const productRemain = (state.extraProducts?.length ?? 0) < MAX_RD_PRODUCTS;
+  const failedTechId = !reveal.success && reveal.track === 'tech' ? state.rdTechProjectId : null;
+  const techChoices = availableTechIps(state).filter((item) => item.id !== failedTechId);
+  const productProject = currentProductProject(state);
+  const techProject = currentTechProject(state);
+
+  if (!reveal.success) {
+    const name = reveal.track === 'product' ? productProject?.name : techProject?.name;
+    options.push({
+      assign: { kind: 'retry' },
+      title: `继续「${name ?? '当前课题'}」`,
+      blurb: `进度归零，下次成功率 ${pctLabel(rdTrackRate(state, reveal.track))}。`,
+    });
+  }
+
+  if (reveal.track === 'product') {
+    if (productRemain) {
+      options.push({
+        assign: { kind: 'product' },
+        title: reveal.success ? '开新产品' : '改做新产品',
+        blurb: '随机生成 BOM 和名称，毛利高于现有最低档。',
+      });
+    }
+  } else if (!otherBusy && productProject) {
+    options.push({
+      assign: { kind: 'product' },
+      title: `编入产品组 · 「${productProject.name}」`,
+      blurb: `加入进行中的课题，进度 ${rdTrackProgress(state, 'product')}/${rdCycleOf('product')}。`,
+    });
+  } else if (!otherBusy && productRemain) {
+    options.push({
+      assign: { kind: 'product' },
+      title: '编入产品组并开题',
+      blurb: '整组调去产品实验室，随机开题。',
+    });
+  }
+
+  if (reveal.track === 'tech') {
+    for (const ip of techChoices) {
+      options.push({
+        assign: { kind: 'tech', ipId: ip.id },
+        title: reveal.success ? `攻关「${ip.name}」` : `改做「${ip.name}」`,
+        blurb: ip.effect,
+      });
+    }
+  } else if (!otherBusy && techProject) {
+    options.push({
+      assign: { kind: 'tech' },
+      title: `编入工艺组 · 「${techProject.name}」`,
+      blurb: `加入进行中的课题，进度 ${rdTrackProgress(state, 'tech')}/${rdCycleOf('tech')}。`,
+    });
+  } else if (!otherBusy) {
+    for (const ip of techChoices) {
+      options.push({
+        assign: { kind: 'tech', ipId: ip.id },
+        title: `编入工艺组 · 「${ip.name}」`,
+        blurb: ip.effect,
+      });
+    }
+  }
+
+  if (options.length === 0) {
+    options.push({
+      assign: { kind: 'idle' },
+      title: '实验室待命',
+      blurb: '本组暂无新课题，班底留下。',
+    });
+  }
+  return options;
+}
+
+function applyRdAssign(state: GameState, reveal: RdReveal, assign: RdAssign): string {
+  const from = reveal.track;
+  const headcount = rdTrackStaff(state, from);
+  if (assign.kind === 'retry') {
+    const name =
+      from === 'product' ? currentProductProject(state)?.name : currentTechProject(state)?.name;
+    return `${headcount} 人继续攻关「${name ?? '当前课题'}」`;
+  }
+  if (!reveal.success) clearRdProject(state, from);
+  if (assign.kind === 'idle') {
+    return `${rdTrackStaff(state, from)} 人留在${RD_TRACK_LABEL[from]}待命`;
+  }
+  const dest: RdTrack = assign.kind === 'product' ? 'product' : 'tech';
+  if (dest !== from) moveAllRdStaff(state, from, dest);
+  if (dest === 'product') {
+    if (!currentProductProject(state) && (state.extraProducts?.length ?? 0) < MAX_RD_PRODUCTS) {
+      state.rdProductDraft = rollRdProduct(state);
+      setRdProgress(state, 'product', 0);
+      return `${rdTrackStaff(state, 'product')} 人转做「${state.rdProductDraft.name}」`;
+    }
+    const joined = currentProductProject(state);
+    return joined
+      ? `${rdTrackStaff(state, 'product')} 人加入「${joined.name}」`
+      : `${rdTrackStaff(state, 'product')} 人编入产品实验室待命`;
+  }
+  if (!currentTechProject(state)) {
+    const ipId = assign.kind === 'tech' ? assign.ipId : undefined;
+    if (ipId && !hasIp(state, ipId)) {
+      state.rdTechProjectId = ipId;
+      setRdProgress(state, 'tech', 0);
+      return `${rdTrackStaff(state, 'tech')} 人转做「${ipById(ipId).name}」`;
+    }
+    return `${rdTrackStaff(state, 'tech')} 人编入工艺实验室待命`;
+  }
+  return `${rdTrackStaff(state, 'tech')} 人加入「${currentTechProject(state)!.name}」`;
 }
 
 export function unitsNeeded(state: GameState, id: ProductId, qty: number): Materials {
@@ -1939,7 +2089,7 @@ function resolveRd(state: GameState, track: RdTrack): string {
       return body;
     }
     setRdFailBonus(state, 'product', RD_FAIL_BONUS);
-    const body = `${draft.name} 没跑通，进度清零。班底还在，下次成功率 +10%（仍封顶 80%）。`;
+      const body = `${draft.name} 没跑通，进度清零。若继续攻关，下次成功率 +10%（仍封顶 80%）。`;
     state.pendingRdReveals = [
       ...(state.pendingRdReveals ?? []),
       { track, success: false, title: `${draft.name} 未过关`, body, chance, staff },
@@ -1962,7 +2112,7 @@ function resolveRd(state: GameState, track: RdTrack): string {
     return body;
   }
   setRdFailBonus(state, 'tech', RD_FAIL_BONUS);
-  const body = `${ip.name} 样件没过，进度清零。班底还在，下次成功率 +10%（仍封顶 80%）。`;
+  const body = `${ip.name} 样件没过，进度清零。若继续攻关，下次成功率 +10%（仍封顶 80%）。`;
   state.pendingRdReveals = [
     ...(state.pendingRdReveals ?? []),
     { track, success: false, title: `${ip.name} 未过关`, body, chance, staff },
@@ -3077,9 +3227,18 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
       return state;
     }
 
-    case 'ACK_RD_REVEAL': {
+    case 'ASSIGN_RD_REVEAL': {
       const queue = state.pendingRdReveals ?? [];
-      if (queue.length === 0) return prev;
+      const reveal = queue[0];
+      if (!reveal) return prev;
+      const options = rdRevealOptions(state);
+      const picked = options.find((item) => sameRdAssign(item.assign, action.assign));
+      if (!picked) {
+        pushLog(state, '请先安排这批研发人员。');
+        return state;
+      }
+      const note = applyRdAssign(state, reveal, picked.assign);
+      noteDept(state, 'rd', note);
       state.pendingRdReveals = queue.slice(1);
       return state;
     }
@@ -3095,6 +3254,10 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
 
     case 'NEXT_MONTH':
       if (state.phase !== 'report') return prev;
+      if ((state.pendingRdReveals ?? []).length > 0) {
+        pushLog(state, '请先安排空出来的研发人员。');
+        return state;
+      }
       if (state.endKind) {
         state.phase = 'ended';
         return state;

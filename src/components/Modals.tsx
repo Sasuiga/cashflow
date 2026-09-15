@@ -1,8 +1,8 @@
 import { MATERIALS, catalogOf, eventById } from '../game/data';
-import { booksForView, netProfitOf, operatingCashOf } from '../game/engine';
+import { booksForView, netProfitOf, operatingCashOf, rdRevealOptions } from '../game/engine';
 import { MONTH_NAMES, RD_TRACK_LABEL, money, pctLabel, priceDelta, signedMoney } from '../game/format';
 import { QUARTER_LABEL, CHALLENGE_PICK, climateById, currentBasicGoal, currentChallengePool, quarterOutlook } from '../game/board';
-import type { GameState } from '../game/types';
+import type { GameState, RdAssign } from '../game/types';
 
 export function BoardModal({
   state,
@@ -240,10 +240,17 @@ export function ReportModal({ state, onNext }: { state: GameState; onNext: () =>
   );
 }
 
-export function RdRevealModal({ state, onAck }: { state: GameState; onAck: () => void }) {
+export function RdRevealModal({
+  state,
+  onAssign,
+}: {
+  state: GameState;
+  onAssign: (assign: RdAssign) => void;
+}) {
   const reveal = state.pendingRdReveals[0];
   if (!reveal) return null;
   const tone = reveal.success ? 'good' : 'bad';
+  const options = rdRevealOptions(state);
   return (
     <div className="overlay rd-overlay">
       <div className="modal">
@@ -255,18 +262,27 @@ export function RdRevealModal({ state, onAck }: { state: GameState; onAck: () =>
         <div className={`event-impact tone-${tone}`}>
           <b>{reveal.success ? '已入账' : '未过关'}</b>
           <p>
-            {reveal.staff} 人在岗，成功率 {pctLabel(reveal.chance)}。
+            {reveal.staff} 人空出。成功率 {pctLabel(reveal.chance)}。
             {reveal.success
               ? reveal.track === 'product'
                 ? '新产品已开线，销售部会接到对应订单。'
                 : '知识产权已装备到产线，持续生效，不资本化。'
-              : '进度清零，班底保留，下次成功率 +10%。'}
+              : '进度已清零。继续原题则下次成功率 +10%。'}
           </p>
         </div>
-        <div className="footer-actions">
-          <button className="btn" onClick={onAck}>
-            {reveal.success ? '收入囊中' : '继续课题'}
-          </button>
+        <p className="sheet-caption">这 {reveal.staff} 人接下来</p>
+        <div className="rd-assign">
+          {options.map((item) => (
+            <button
+              key={`${item.assign.kind}-${item.assign.kind === 'tech' ? item.assign.ipId ?? 'join' : ''}-${item.title}`}
+              type="button"
+              className="choice"
+              onClick={() => onAssign(item.assign)}
+            >
+              <b>{item.title}</b>
+              <span>{item.blurb}</span>
+            </button>
+          ))}
         </div>
       </div>
     </div>

@@ -1576,71 +1576,55 @@ button.job:hover {
   color: var(--cream-dim);
 }
 
-.ip-rack {
-  display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+.rd-ip-picks {
+  display: flex;
+  flex-direction: column;
   gap: 8px;
+  margin-top: 10px;
 }
 
-.ip-plate {
-  min-height: 108px;
-  border: 1px dashed rgba(212, 195, 154, 0.38);
-  background: rgba(243, 234, 212, 0.04);
-  padding: 10px 10px 12px;
+.rd-ip-picks .stat {
+  margin: 0;
 }
 
-.ip-plate .suit {
-  letter-spacing: 0.12em;
-  font-size: 10px;
-  color: var(--cream-dim);
+.rd-ip-picks .chip {
+  width: 100%;
+  justify-content: flex-start;
+  text-align: left;
 }
 
-.ip-plate h4 {
-  margin: 6px 0 6px;
-  font-family: var(--serif);
-  font-size: 15px;
+.ip-row {
+  align-items: flex-start;
+}
+
+.ip-row span:first-child {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ip-row b {
   font-weight: 650;
 }
 
-.ip-plate p {
-  margin: 0;
+.ip-row em {
+  font-style: normal;
   font-size: 12px;
-  line-height: 1.45;
   color: var(--cream-dim);
 }
 
-.ip-plate.next {
-  border-style: solid;
-  border-color: rgba(224, 180, 90, 0.4);
+.ip-row.locked {
+  opacity: 0.58;
 }
 
-.ip-plate.on {
-  border-style: solid;
-  border-color: var(--gold);
-  background:
-    linear-gradient(180deg, rgba(224, 180, 90, 0.14), rgba(31, 39, 28, 0.2)),
-    var(--ink-2);
+.ip-row.locked span:last-child {
+  color: var(--cream-dim);
 }
 
-.ip-plate.on .suit {
+.ip-row.on span:last-child,
+.ip-row.next span:last-child {
   color: var(--gold);
-}
-
-.ip-plate.on p {
-  color: var(--cream);
-}
-
-.ip-plate.pick {
-  cursor: pointer;
-  text-align: left;
-  font: inherit;
-  color: inherit;
-  width: 100%;
-}
-
-.ip-plate.pick:hover {
-  border-style: solid;
-  border-color: rgba(224, 180, 90, 0.7);
 }
 
 .rd-hire-picks {
@@ -1704,6 +1688,24 @@ button.job:hover {
 
 .rd-overlay {
   z-index: 16;
+}
+
+.rd-assign {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 8px;
+}
+
+.rd-assign .choice {
+  margin-bottom: 0;
+}
+
+.rd-assign .choice span {
+  display: block;
+  margin-top: 4px;
+  font-size: 13px;
+  color: #6d5a38;
 }
 
 .layout {
@@ -1895,6 +1897,9 @@ button.job:hover {
 
 .modal {
   width: min(720px, 100%);
+  max-height: calc(100dvh - 48px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
   background: var(--paper);
   color: var(--paper-ink);
   padding: 32px 32px 24px;
@@ -2143,10 +2148,6 @@ button.job:hover {
 
   .rd-hire-row {
     grid-template-columns: 1fr;
-  }
-
-  .ip-rack {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .flow-rail {

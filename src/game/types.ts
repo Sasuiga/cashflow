@@ -202,6 +202,18 @@ export interface RdReveal {
   staff: number;
 }
 
+export type RdAssign =
+  | { kind: 'retry' }
+  | { kind: 'product' }
+  | { kind: 'tech'; ipId?: IpId }
+  | { kind: 'idle' };
+
+export interface RdAssignOption {
+  assign: RdAssign;
+  title: string;
+  blurb: string;
+}
+
 export interface LaunchOrder {
   productId: ProductId;
   qty: number;
@@ -383,7 +395,7 @@ export type GameAction =
   | { type: 'HIRE'; role: Role; rdTrack?: RdTrack; ipId?: IpId }
   | { type: 'PICK_RD_TECH'; ipId: IpId }
   | { type: 'OPEN_PRODUCT_RD' }
-  | { type: 'ACK_RD_REVEAL' }
+  | { type: 'ASSIGN_RD_REVEAL'; assign: RdAssign }
   | { type: 'BUY_MATERIAL'; material: MaterialId; qty: number }
   | { type: 'BUY_MATERIALS'; items: { material: MaterialId; qty: number }[] }
   | { type: 'BORROW'; amount: number }
