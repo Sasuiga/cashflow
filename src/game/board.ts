@@ -151,31 +151,50 @@ export function marketToneLine(state: GameState): string {
   return [...mats, productLine].filter(Boolean).join(' · ');
 }
 
-export function marketDigest(state: GameState): string {
-  const climate = climateById(state.climateId);
-  const matMoves: string[] = [];
+export function quotedMoves(state: GameState): { materials: string[]; products: string[] } {
+  const materials: string[] = [];
   for (const mat of MATERIALS) {
     if (mat.id === 'd' && !state.materialDUnlocked) continue;
     const price = state.materialPrices[mat.id];
     const prev = state.prevMaterialPrices?.[mat.id] ?? mat.basePrice;
     const delta = priceDelta(price, prev);
     if (delta.tone === 'flat') continue;
-    matMoves.push(`${mat.name}较上月${delta.text}`);
+    materials.push(`${mat.name}较上月${delta.text}`);
   }
 
-  const productMoves: string[] = [];
+  const products: string[] = [];
   for (const product of PRODUCTS) {
     if (!state.unlockedProducts.includes(product.id)) continue;
     const price = state.productPrices[product.id] ?? product.basePrice;
     const prev = state.prevProductPrices?.[product.id] ?? product.basePrice;
     const delta = priceDelta(price, prev);
     if (delta.tone === 'flat') continue;
-    productMoves.push(`${product.name}较上月${delta.text}`);
+    products.push(`${product.name}较上月${delta.text}`);
   }
+  return { materials, products };
+}
 
-  const parts = [`本季定调：${marketToneLine(state)}。`, climate.briefing];
-  parts.push(matMoves.length > 0 ? `原料方面，${matMoves.join('，')}。` : '原料报价较上月没有明显台阶。');
-  parts.push(productMoves.length > 0 ? `成品这边，${productMoves.join('，')}。` : '成品市价较上月没有明显台阶。');
+export function marketTrendLog(state: GameState): string {
+  const climate = climateById(state.climateId);
+  return `${climate.name}。${climate.headline} ${marketToneLine(state)}。`;
+}
+
+export function quotedMoveLog(state: GameState): string {
+  const { materials, products } = quotedMoves(state);
+  const parts = [
+    materials.length > 0 ? `原料方面，${materials.join('，')}。` : '原料报价较上月没有明显台阶。',
+    products.length > 0 ? `成品这边，${products.join('，')}。` : '成品市价较上月没有明显台阶。',
+  ];
+  return parts.join('');
+}
+
+export function monthMarketLog(state: GameState): string {
+  return `${state.month} 月行情：${marketTrendLog(state)}${quotedMoveLog(state)}`;
+}
+
+export function marketDigest(state: GameState): string {
+  const climate = climateById(state.climateId);
+  const parts = [`本季定调：${marketToneLine(state)}。`, climate.briefing, quotedMoveLog(state)];
   const spots = MATERIALS.filter((mat) => mat.id !== 'd' || state.materialDUnlocked).map((mat) => {
     const qty = Math.max(0, state.materialSpot?.[mat.id] ?? 0);
     return `${mat.name}${qty}件`;
@@ -433,11 +452,11 @@ export const GOALS: GoalDef[] = [
     id: 'q2-card',
     quarter: 2,
     kind: 'challenge',
-    name: '决策卡投入使用',
-    desc: '本季打出至少 1 张决策卡。',
+    name: '提案落地一次',
+    desc: '本季至少落地 1 份提案。',
     axis: 'card',
     reached: (state) => state.quarterStats.playedCard,
-    progress: (state) => (state.quarterStats.playedCard ? '已打出决策卡' : '尚未打牌'),
+    progress: (state) => (state.quarterStats.playedCard ? '已落地提案' : '尚未落地'),
   },
   {
     id: 'q2-cash20',

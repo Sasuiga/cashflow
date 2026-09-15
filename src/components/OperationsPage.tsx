@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   FACTORY_COST,
-  HAND_LIMIT,
   FACTORY_UPKEEP,
+  HAND_LIMIT,
   HIRE_COST,
   MACHINE_BASE_CAP,
   MACHINE_COST,
@@ -13,7 +13,6 @@ import {
   SALARY,
   WORKERS_PER_MACHINE,
   cardById,
-  eventById,
   productById,
 } from '../game/data';
 import {
@@ -26,6 +25,7 @@ import {
   finishedMaxAge,
   finishedProvisionOf,
   hireEffectLines,
+  isProposalReady,
   loanLimit,
   materialMaxAge,
   materialProvisionOf,
@@ -33,7 +33,6 @@ import {
   monthlyInterest,
   monthlySalary,
   monthOutlook,
-  nextCardBuyAp,
   productionPlan,
   receivablesGross,
   receivablesNet,
@@ -43,7 +42,7 @@ import {
   totalStaff,
 } from '../game/engine';
 import { MONTH_NAMES, ROLE_HINT, ROLE_LABEL, bomLabel, materialName, money, qty, roundMoney, signedMoney } from '../game/format';
-import { QUARTER_LABEL, climateById, goalById, marketToneLine, q3ProcurementFree } from '../game/board';
+import { goalById, q3ProcurementFree } from '../game/board';
 import type { DeptId, GameAction, GameState, MaterialId, MonthOrder, Role } from '../game/types';
 
 const ROLES: Role[] = ['production', 'management', 'sales', 'rd'];
@@ -93,8 +92,8 @@ function Stage({
 }: {
   id: StageId;
   title: string;
-  intro: string;
-  summary: string;
+  intro?: string;
+  summary?: string;
   done?: string;
   now?: boolean;
   children: ReactNode;
@@ -104,8 +103,8 @@ function Stage({
       <header className="dept-head">
         <div>
           <h3>{title}</h3>
-          <p className="dept-intro">{intro}</p>
-          <p className="dept-done">{summary}</p>
+          {intro ? <p className="dept-intro">{intro}</p> : null}
+          {summary ? <p className="dept-done">{summary}</p> : null}
           {done ? <p className="dept-done">{done}</p> : null}
         </div>
       </header>
@@ -132,6 +131,24 @@ function Actions({ children, note }: { children?: ReactNode; note?: string }) {
   );
 }
 
+function HireBar({
+  role,
+  disabled,
+  onHire,
+}: {
+  role: Role;
+  disabled: boolean;
+  onHire: (role: Role) => void;
+}) {
+  return (
+    <div className="hire-action">
+      <button className="chip" disabled={disabled} onClick={() => onHire(role)}>
+        招聘{ROLE_LABEL[role]}人员
+      </button>
+    </div>
+  );
+}
+
 export function OperationsPage({
   state,
   dispatch,
@@ -151,6 +168,7 @@ export function OperationsPage({
   const [loanAmt, setLoanAmt] = useState(4);
   const [hireRole, setHireRole] = useState<Role | null>(null);
   const [settleOpen, setSettleOpen] = useState(false);
+  const [pendingAdopt, setPendingAdopt] = useState<number | null>(null);
 
   const canAct = acting && state.ap > 0;
   const buyApFree = q3ProcurementFree(state.month);
@@ -193,6 +211,7 @@ export function OperationsPage({
 
   useEffect(() => {
     paneRef.current?.scrollTo({ top: 0 });
+    setPendingAdopt(null);
   }, [active]);
 
   useEffect(() => {
@@ -201,8 +220,6 @@ export function OperationsPage({
     }
   }, [producing]);
 
-  const monthEvent = state.eventId ? eventById(state.eventId) : null;
-  const climate = climateById(state.climateId);
   const basicGoal = state.basicGoalId ? goalById(state.basicGoalId) : null;
   const challengeGoals = (state.challengeGoalIds ?? []).map((id) => goalById(id));
   const materialSummary = visibleMaterials
@@ -235,29 +252,18 @@ export function OperationsPage({
 
   const briefing = (
     <aside className="exec-summary">
-      <p className="dept-kicker">
-        {QUARTER_LABEL[state.quarter]} · {climate.name}
-      </p>
-      <p className="exec-climate">{climate.headline}</p>
-      <p className="exec-climate">{marketToneLine(state)}</p>
       {basicGoal && (
-        <div className="exec-goal">
+        <div className="exec-goal basic">
           <b>基本目标 · {basicGoal.name}</b>
           <p>{basicGoal.progress(state)}</p>
         </div>
       )}
       {challengeGoals.map((goal) => (
-        <div key={goal.id} className={goal.reached(state) ? 'exec-goal on' : 'exec-goal'}>
+        <div key={goal.id} className="exec-goal challenge">
           <b>挑战目标 · {goal.name}</b>
           <p>{goal.progress(state)}</p>
         </div>
       ))}
-      {monthEvent && state.eventNote && (
-        <div className={`exec-event tone-${monthEvent.tone}`}>
-          <b>本月事项 · {monthEvent.title}</b>
-          <p>{state.eventNote}</p>
-        </div>
-      )}
       <div className="exec-outlook">
         <b>本月产销</b>
         <p>{monthOutlook(state)}</p>
@@ -269,33 +275,17 @@ export function OperationsPage({
     <div className="ops">
       <div className="dept-stage" ref={paneRef}>
         {active === 'ceo' && (
-        <Stage
-          id="ceo"
-          title="经理室"
-          intro="人员结构决定翻开的卡类。管理人员在这里招聘。"
-          summary={
-            state.cardsUnlocked
-              ? `${totalStaff(state.staff)} 人 · 手牌 ${state.hand.length}/${HAND_LIMIT}`
-              : `${totalStaff(state.staff)} 人 · 管理 ${state.staff.management}`
-          }
-          done={stageDone(state, ['ceo'])}
-        >
+        <Stage id="ceo" title="经理室" done={stageDone(state, ['ceo'])}>
           {briefing}
           <Facts>
-            <div className="row">
-              <span>行动点</span>
-              <span>
-                {state.ap} / {state.maxAp}
-              </span>
-            </div>
-            <div className="sheet-wrap" style={{ marginTop: 12 }}>
+            <div className="sheet-wrap">
               <table className="sheet dark staff-sheet">
                 <thead>
                   <tr>
                     <th>部门</th>
                     <th className="num">人数</th>
                     <th className="num">月薪小计</th>
-                    <th className="num">本月卡类倾向</th>
+                    <th className="num">提案倾向</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -319,87 +309,126 @@ export function OperationsPage({
               </table>
             </div>
           </Facts>
-          <Actions
-            note={
-              acting
-                ? state.cardsUnlocked
-                  ? '翻牌不耗 AP。本月第一张买牌免 AP，之后每多买一张多耗 1 AP。打牌耗 1 AP。'
-                  : undefined
-                : '事件结束后才能招聘、翻牌和打牌。'
-            }
-          >
-            <div className="qty-row stacked">
-              <button className="chip" disabled={!canAct} onClick={() => setHireRole('management')}>
-                招聘管理人员 · 耗 1 AP
-              </button>
-            </div>
-            {state.cardsUnlocked ? (
-              <>
-                {acting && (
-                  <>
-                    <div className="footer-actions" style={{ marginTop: 12, justifyContent: 'flex-start' }}>
-                      <button className="btn small ghost" disabled={state.shopDrawn} onClick={() => dispatch({ type: 'DRAW_SHOP' })}>
-                        {state.shopDrawn ? '本月已翻牌' : '翻开本月卡铺 · 不耗 AP'}
-                      </button>
-                    </div>
-                    {state.shop.length > 0 && (
-                      <div className="cards" style={{ marginTop: 12 }}>
-                        {state.shop.map((card, index) => {
-                          const def = cardById(card.defId);
-                          const buyAp = nextCardBuyAp(state);
-                          const buyApLabel = buyAp > 0 ? `耗 ${buyAp} AP` : '本月首张免 AP';
-                          return (
-                            <article key={card.uid} className="card" style={{ ['--tilt' as string]: `${index - 1}deg` }}>
-                              <div className="suit">{ROLE_LABEL[def.suit]}</div>
-                              <h4>{def.name}</h4>
-                              <p>{def.blurb}</p>
-                              <div className="cost">
-                                {money(def.cost)} · {buyApLabel}
-                              </div>
-                              <button
-                                className="btn small"
-                                style={{ marginTop: 10 }}
-                                disabled={state.cash < def.cost || buyAp > state.ap}
-                                onClick={() => dispatch({ type: 'BUY_CARD', index })}
-                              >
-                                买入「{def.name}」 · {buyApLabel} · 付现 {money(def.cost)}
-                              </button>
-                            </article>
-                          );
-                        })}
+          <div className="dept-block">
+            <p className="dept-kicker">本月提案</p>
+            <p className="hint">
+              {acting
+                ? pendingAdopt !== null
+                  ? `待执行已满（${HAND_LIMIT}）。点选一份换下，或取消。`
+                  : '每月可免费立项一份，次月才能落地。落地耗 1 AP 并支付费用。不立项也完全合法。'
+                : '事件结束后才能立项和落地。编制决定本月会出现哪类提案。'}
+            </p>
+            {state.shop.length > 0 ? (
+              <div className="cards" style={{ marginTop: 12 }}>
+                {state.shop.map((card, index) => {
+                  const def = cardById(card.defId);
+                  const adopted = (state.cardsBoughtThisMonth ?? 0) >= 1;
+                  const picking = pendingAdopt === index;
+                  return (
+                    <article
+                      key={card.uid}
+                      className={['card', picking ? 'picking' : ''].filter(Boolean).join(' ')}
+                      style={{ ['--tilt' as string]: `${index - 1}deg` }}
+                    >
+                      <div className="suit">{ROLE_LABEL[def.suit]}类提案</div>
+                      <h4>{def.name}</h4>
+                      <p>{def.blurb}</p>
+                      <div className="cost">
+                        落地 {money(def.cost)} · 1 AP
                       </div>
-                    )}
-                  </>
-                )}
-                {state.hand.length > 0 && (
-                  <div className="hand" style={{ marginTop: 14 }}>
-                    {state.hand.map((card) => {
-                      const def = cardById(card.defId);
-                      return (
-                        <article key={card.uid} className="card">
-                          <div className="suit">手牌 · {ROLE_LABEL[def.suit]}</div>
-                          <h4>{def.name}</h4>
-                          <p>{def.blurb}</p>
-                          {acting ? (
-                            <button className="btn small" disabled={!canAct} style={{ marginTop: 10 }} onClick={() => dispatch({ type: 'PLAY_CARD', uid: card.uid })}>
-                              打出「{def.name}」 · 耗 1 AP
-                            </button>
-                          ) : (
-                            <div className="cost">行动阶段才能打出</div>
-                          )}
-                        </article>
-                      );
-                    })}
-                  </div>
-                )}
-                {state.hand.length === 0 && acting && state.shop.length === 0 && (
-                  <p className="hint" style={{ marginTop: 12 }}>
-                    {state.shopDrawn ? '本月卡铺已空。' : '本月卡铺尚未翻开。'}
-                  </p>
-                )}
-              </>
-            ) : null}
-          </Actions>
+                      {acting ? (
+                        adopted ? (
+                          <div className="cost">本月已立项</div>
+                        ) : picking ? (
+                          <button className="btn small ghost" style={{ marginTop: 10 }} onClick={() => setPendingAdopt(null)}>
+                            取消替换
+                          </button>
+                        ) : (
+                          <button
+                            className="btn small"
+                            style={{ marginTop: 10 }}
+                            onClick={() => {
+                              if (state.hand.length >= HAND_LIMIT) {
+                                setPendingAdopt(index);
+                                return;
+                              }
+                              dispatch({ type: 'BUY_CARD', index });
+                            }}
+                          >
+                            立项「{def.name}」
+                          </button>
+                        )
+                      ) : (
+                        <div className="cost">行动阶段可立项</div>
+                      )}
+                    </article>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="hint" style={{ marginTop: 12 }}>
+                {state.phase === 'board' ? '确认本季目标后出示本月提案。' : '本月没有新的提案。'}
+              </p>
+            )}
+            <p className="dept-kicker" style={{ marginTop: 18 }}>
+              待执行
+            </p>
+            {state.hand.length > 0 ? (
+              <div className="hand" style={{ marginTop: 12 }}>
+                {state.hand.map((card) => {
+                  const def = cardById(card.defId);
+                  const ready = isProposalReady(card, state.month);
+                  const replacing = pendingAdopt !== null;
+                  return (
+                    <article key={card.uid} className={['card', replacing ? 'picking' : ''].filter(Boolean).join(' ')}>
+                      <div className="suit">
+                        待执行 · {ROLE_LABEL[def.suit]}
+                        {ready ? '' : ' · 下月可落地'}
+                      </div>
+                      <h4>{def.name}</h4>
+                      <p>{def.blurb}</p>
+                      <div className="cost">
+                        落地 {money(def.cost)} · 1 AP
+                      </div>
+                      {replacing ? (
+                        <button
+                          className="btn small"
+                          style={{ marginTop: 10 }}
+                          onClick={() => {
+                            if (pendingAdopt === null) return;
+                            dispatch({ type: 'BUY_CARD', index: pendingAdopt, replaceUid: card.uid });
+                            setPendingAdopt(null);
+                          }}
+                        >
+                          换下这份
+                        </button>
+                      ) : acting ? (
+                        ready ? (
+                          <button
+                            className="btn small"
+                            style={{ marginTop: 10 }}
+                            disabled={!canAct || state.cash < def.cost}
+                            onClick={() => dispatch({ type: 'PLAY_CARD', uid: card.uid })}
+                          >
+                            落地「{def.name}」 · 耗 1 AP · 付现 {money(def.cost)}
+                          </button>
+                        ) : (
+                          <div className="cost">下月才能落地</div>
+                        )
+                      ) : (
+                        <div className="cost">{ready ? '行动阶段可落地' : '下月才能落地'}</div>
+                      )}
+                    </article>
+                  );
+                })}
+              </div>
+            ) : (
+              <p className="hint" style={{ marginTop: 8 }}>
+                还没有立项。每月从上面选一份即可。
+              </p>
+            )}
+          </div>
+          <HireBar role="management" disabled={!canAct} onHire={setHireRole} />
         </Stage>
         )}
 
@@ -416,22 +445,9 @@ export function OperationsPage({
           done={stageDone(state, ['sales'])}
           now={producing || acting}
         >
-          <Facts>
-            <div className="row">
-              <span>销售人员</span>
-              <span>
-                {state.staff.sales} 人 · {ROLE_HINT.sales}
-              </span>
-            </div>
-          </Facts>
           <Actions>
-            <div className="qty-row stacked">
-              <button className="chip" disabled={!canAct} onClick={() => setHireRole('sales')}>
-                招聘销售人员 · 耗 1 AP
-              </button>
-            </div>
             {orders.length > 0 && (
-              <div className="produce-list" style={{ marginTop: 12 }}>
+              <div className="produce-list">
                 {orders.map((order) => {
                   const view = orderPreview(state, order);
                   const on = accepted.includes(order.id);
@@ -471,6 +487,7 @@ export function OperationsPage({
               </div>
             )}
           </Actions>
+          <HireBar role="sales" disabled={!canAct} onHire={setHireRole} />
         </Stage>
         )}
 
@@ -610,9 +627,7 @@ export function OperationsPage({
             </div>
             <div className="row">
               <span>生产工</span>
-              <span>
-                {state.staff.production} 人 · {ROLE_HINT.production}
-              </span>
+              <span>{state.staff.production} 人</span>
             </div>
             <div className="row">
               <span>产能占用</span>
@@ -638,12 +653,7 @@ export function OperationsPage({
                 ))}
           </Facts>
           <Actions note={acting ? undefined : producing ? undefined : '事件结束后才能改编制和产线。'}>
-            <div className="qty-row stacked">
-              <button className="chip" disabled={!canAct} onClick={() => setHireRole('production')}>
-                招聘生产人员 · 耗 1 AP
-              </button>
-            </div>
-            <div className="action-grid" style={{ marginTop: 10 }}>
+            <div className="action-grid">
               <button className="action" disabled={!canAct} onClick={() => dispatch({ type: 'BUY_MACHINE' })}>
                 <b>购买设备 1台 · 耗 1 AP · 付现 {money(MACHINE_COST)}</b>
                 <small>基础产能 +{MACHINE_BASE_CAP}，最多安置 {WORKERS_PER_MACHINE} 名生产工。</small>
@@ -693,6 +703,7 @@ export function OperationsPage({
               </div>
             )}
           </Actions>
+          <HireBar role="production" disabled={!canAct} onHire={setHireRole} />
         </Stage>
         )}
 
@@ -729,9 +740,7 @@ export function OperationsPage({
             </div>
             <div className="row" style={{ marginTop: 12 }}>
               <span>研发人员</span>
-              <span>
-                {state.staff.rd} 人 · 结算时推进 {state.staff.rd} 点
-              </span>
+              <span>{state.staff.rd} 人</span>
             </div>
             <div className="row">
               <span>当前项目进度</span>
@@ -752,13 +761,7 @@ export function OperationsPage({
                     : '量产项目已经做完，团队在做工艺微调。'}
             </p>
           </Facts>
-          <Actions>
-            <div className="qty-row stacked">
-              <button className="chip" disabled={!canAct} onClick={() => setHireRole('rd')}>
-                招聘研发人员 · 耗 1 AP
-              </button>
-            </div>
-          </Actions>
+          <HireBar role="rd" disabled={!canAct} onHire={setHireRole} />
         </Stage>
         )}
 
@@ -899,6 +902,7 @@ export function OperationsPage({
               编制
             </p>
             <h2>招聘{ROLE_LABEL[hireRole]} 1 人</h2>
+            <p className="lead">{ROLE_HINT[hireRole]}</p>
             <ul className="hire-points">
               {hireEffectLines(state, hireRole).map((line) => (
                 <li key={line}>{line}</li>

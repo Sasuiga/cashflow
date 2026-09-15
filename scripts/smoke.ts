@@ -91,6 +91,30 @@ function checkSpotPurchase(): void {
   assert((state.materialSpot?.a ?? 0) === 0, '买完后钢材现货应扣尽');
 }
 
+function checkProposals(): void {
+  let state = reduce(createInitialState(), { type: 'START_GAME' });
+  const ids = (state.challengePoolIds ?? []).slice(0, 2);
+  for (const id of ids) state = reduce(state, { type: 'TOGGLE_BOARD_GOAL', id });
+  state = reduce(state, { type: 'CONFIRM_BOARD' });
+  assert(state.shop.length === 3, '确认目标后应出示三份本月提案');
+  state = reduce(state, { type: 'CONFIRM_BRIEFING' });
+  state = reduce(state, { type: 'ACK_EVENT' });
+  assert(state.shop.length === 3, '行动阶段仍应保留本月提案');
+  const cash = state.cash;
+  const ap = state.ap;
+  const picked = state.shop[0]!;
+  state = reduce(state, { type: 'BUY_CARD', index: 0 });
+  assert(state.cash === cash, '立项不应扣现金');
+  assert(state.ap === ap, '立项不应耗行动点');
+  assert(state.hand.length === 1 && state.hand[0]?.defId === picked.defId, '立项后应进入待执行');
+  assert(state.hand[0]?.readyMonth === state.month + 1, '新立项次月才能落地');
+  assert(state.cardsBoughtThisMonth === 1, '本月立项计数应为 1');
+  const blocked = reduce(state, { type: 'PLAY_CARD', uid: state.hand[0]!.uid });
+  assert(blocked.hand.length === 1, '当月不能落地刚立项的提案');
+  const twice = reduce(state, { type: 'BUY_CARD', index: 0 });
+  assert(twice.hand.length === 1 && twice.cardsBoughtThisMonth === 1, '每月只能立项一份');
+}
+
 function checkOpeningAccounts(): void {
   const opened = reduce(createInitialState(), { type: 'START_GAME' });
   const net = netAssetsOf(opened);
@@ -193,14 +217,13 @@ function play(): GameState {
         const qty = Math.min(10, state.materialSpot?.b ?? 0);
         if (qty > 0) state = reduce(state, { type: 'BUY_MATERIAL', material: 'b', qty });
       }
-      if (state.cardsUnlocked && !state.shopDrawn) {
-        state = reduce(state, { type: 'DRAW_SHOP' });
-        if (state.shop[0] && state.cash > 40) {
-          state = reduce(state, { type: 'BUY_CARD', index: 0 });
-        }
-        if (state.hand[0] && state.ap > 0) {
-          state = reduce(state, { type: 'PLAY_CARD', uid: state.hand[0].uid });
-        }
+      if ((state.cardsBoughtThisMonth ?? 0) === 0 && state.shop[0]) {
+        const replaceUid = state.hand.length >= 5 ? state.hand[0]?.uid : undefined;
+        state = reduce(state, { type: 'BUY_CARD', index: 0, replaceUid });
+      }
+      const ready = state.hand.find((card) => (card.readyMonth ?? 0) <= state.month);
+      if (ready && state.ap > 0 && state.cash > 40) {
+        state = reduce(state, { type: 'PLAY_CARD', uid: ready.uid });
       }
       state = reduce(state, { type: 'GO_PRODUCE' });
       continue;
@@ -235,6 +258,7 @@ checkOpeningAccounts();
 checkBoardVariety();
 checkMarketQuotes();
 checkSpotPurchase();
+checkProposals();
 settleFirstMonth();
 
 const result = play();

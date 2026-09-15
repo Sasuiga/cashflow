@@ -7,7 +7,7 @@ export interface AchievementDef {
 export const ACHIEVEMENTS: AchievementDef[] = [
   { id: 'open', name: '开业大吉', desc: '北港制造正式开工。' },
   { id: 'firstSettle', name: '第一笔账', desc: '完成第一次月度结算。' },
-  { id: 'cards', name: '决策入局', desc: '解锁决策卡。' },
+  { id: 'cards', name: '立项开工', desc: '完成一次提案立项。' },
   { id: 'hire6', name: '班子齐了', desc: '编制达到 6 人。' },
   { id: 'machine2', name: '产线扩容', desc: '设备不少于 2 台。' },
   { id: 'factory2', name: '开第二厂', desc: '厂区不少于 2 座。' },

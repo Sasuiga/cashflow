@@ -51,7 +51,8 @@ import {
   emptyMarketTrend,
   emptyQuarterStats,
   goalById,
-  marketToneLine,
+  monthMarketLog,
+  marketTrendLog,
   q3ProcurementFree,
   quarterOf,
   trendWord,
@@ -214,7 +215,7 @@ function orderCountFor(sales: number): number {
 }
 
 export function hireEffectLines(state: GameState, role: Role): string[] {
-  const card = `${ROLE_LABEL[role]}人员越多，翻开的决策卡越容易出${ROLE_LABEL[role]}花色。`;
+  const card = `${ROLE_LABEL[role]}人员越多，本月提案越容易出现${ROLE_LABEL[role]}类方案。`;
   if (role === 'production') {
     const next = { ...state, staff: { ...state.staff, production: state.staff.production + 1 } };
     const before = capacityOf(state);
@@ -688,10 +689,6 @@ export function monthlySalary(staff: Staff): number {
   );
 }
 
-function cardsUnlockedNow(state: GameState): boolean {
-  return state.month >= 3 || totalStaff(state.staff) >= 6;
-}
-
 function pushLog(state: GameState, line: string): void {
   state.log = [line, ...state.log].slice(0, 40);
 }
@@ -919,7 +916,7 @@ export function checkAchievements(state: GameState): void {
   if (state.debt > 0) state.everDebt = true;
   unlockAchievement(state, 'open');
   if (state.lastReport) unlockAchievement(state, 'firstSettle');
-  if (state.cardsUnlocked) unlockAchievement(state, 'cards');
+  if (state.hand.length > 0 || Boolean(state.quarterStats?.playedCard)) unlockAchievement(state, 'cards');
   if (totalStaff(state.staff) >= 6) unlockAchievement(state, 'hire6');
   if (state.machines >= 2) unlockAchievement(state, 'machine2');
   if (state.factories >= 2) unlockAchievement(state, 'factory2');
@@ -996,8 +993,10 @@ function beginQuarter(state: GameState, quarter: 1 | 2 | 3 | 4): void {
   state.quarterStats = emptyQuarterStats(totalStaff(state.staff), state.debt, state.cash, state.machines);
   state.quarterStats.peakCash = Math.max(0, state.cash);
   state.quarterEventTones = [];
+  state.shop = [];
+  state.cardsBoughtThisMonth = 0;
   state.phase = 'board';
-  pushLog(state, `本季行情定调：${marketToneLine(state)}。`);
+  pushLog(state, `${QUARTER_LABEL[quarter]}行情定调：${marketTrendLog(state)}`);
 }
 
 function emptyWageAccrual(): Record<Role, number> {
@@ -1299,10 +1298,6 @@ function spendAp(state: GameState, n = 1): boolean {
   return true;
 }
 
-export function nextCardBuyAp(state: GameState): number {
-  return state.cardsBoughtThisMonth ?? 0;
-}
-
 function nextUid(state: GameState): string {
   state.uidSeq += 1;
   return `c${state.uidSeq}`;
@@ -1404,7 +1399,6 @@ function takeMaterial(state: GameState, id: MaterialId, qty: number): number {
 function prepareMonth(state: GameState): void {
   state.modifiers = emptyModifiers();
   state.shop = [];
-  state.shopDrawn = false;
   state.cardsBoughtThisMonth = 0;
   state.selectedProduct = null;
   state.pendingDeal = null;
@@ -1418,11 +1412,11 @@ function prepareMonth(state: GameState): void {
   state.ledger.openingCash = state.cash;
   state.depreciableMachineGross = state.machineGross ?? 0;
   state.depreciableFactoryGross = state.factoryGross ?? 0;
-  state.cardsUnlocked = cardsUnlockedNow(state);
   state.maxAp = maxApFor(state.staff);
   state.ap = state.maxAp;
   rollMarket(state);
   rollMaterialSpot(state);
+  dealMonthProposals(state);
   state.eventId = pickEvent(state);
   state.eventNote = null;
   state.phase = 'briefing';
@@ -1551,12 +1545,20 @@ function suitWeight(state: GameState, suit: Role): number {
   return 1 + state.staff[suit] * 0.85;
 }
 
+function dealMonthProposals(state: GameState): void {
+  state.shop = [rollCard(state), rollCard(state), rollCard(state)];
+}
+
+export function isProposalReady(card: CardInstance, month: number): boolean {
+  return (card.readyMonth ?? 0) <= month;
+}
+
 function rollCard(state: GameState): CardInstance {
   const weighted = CARDS.flatMap((card) => {
     const copies = Math.max(1, Math.round(suitWeight(state, card.suit) * 2));
     return Array.from({ length: copies }, () => card.id);
   });
-  return { uid: nextUid(state), defId: pick(weighted) };
+  return { uid: nextUid(state), defId: pick(weighted), readyMonth: 0 };
 }
 
 function playCardEffect(state: GameState, defId: string): string {
@@ -2047,9 +2049,7 @@ export function createInitialState(): GameState {
     materialDUnlocked: false,
     rdProgress: 0,
     rdUnlockIndex: 0,
-    cardsUnlocked: false,
     shop: [],
-    shopDrawn: false,
     cardsBoughtThisMonth: 0,
     hand: [],
     modifiers: emptyModifiers(),
@@ -2188,6 +2188,12 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
   ensureImpairmentState(state);
   if (typeof state.paidInCapital !== 'number') state.paidInCapital = netAssetsOf(state);
   if (typeof state.cardsBoughtThisMonth !== 'number' || Number.isNaN(state.cardsBoughtThisMonth)) state.cardsBoughtThisMonth = 0;
+  if (!Array.isArray(state.shop)) state.shop = [];
+  if (!Array.isArray(state.hand)) state.hand = [];
+  state.hand = state.hand.map((card) => ({
+    ...card,
+    readyMonth: typeof card.readyMonth === 'number' ? card.readyMonth : 1,
+  }));
   if (!Array.isArray(state.milestones)) state.milestones = [];
   if (typeof state.eventNote !== 'string' && state.eventNote !== null) state.eventNote = null;
   if (!Array.isArray(state.boardHistory)) state.boardHistory = [];
@@ -2244,12 +2250,12 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
       state.challengeGoalIds = [...state.challengeDraft];
       prepareMonth(state);
       syncMonthWages(state);
-      const climate = climateById(state.climateId);
       const picked = state.challengeGoalIds.map((id) => `「${goalById(id).name}」`).join('、');
       pushLog(
         state,
-        `${QUARTER_LABEL[state.quarter]}决议：基本目标「${goalById(state.basicGoalId).name}」；挑战目标${picked}。${climate.headline} 定调：${marketToneLine(state)}。`,
+        `${QUARTER_LABEL[state.quarter]}决议：基本目标「${goalById(state.basicGoalId).name}」；挑战目标${picked}。`,
       );
+      pushLog(state, monthMarketLog(state));
       return state;
     }
 
@@ -2265,11 +2271,6 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
       state.phase = 'actions';
       state.ap = maxApFor(state.staff);
       state.maxAp = state.ap;
-      if (cardsUnlockedNow(state) && !state.cardsUnlocked) {
-        state.cardsUnlocked = true;
-        pushLog(state, '决策卡已解锁：本月可免费翻牌，再花钱选购。');
-      }
-      state.cardsUnlocked = cardsUnlockedNow(state);
       rollMonthOrders(state);
       syncMonthWages(state);
       return state;
@@ -2347,10 +2348,6 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
       }
       noteDept(state, hireDept[action.role], hireNote);
       pushLog(state, hireLog);
-      if (cardsUnlockedNow(state) && !state.cardsUnlocked) {
-        state.cardsUnlocked = true;
-        pushLog(state, '团队够大了，决策卡本月起可用。');
-      }
       return state;
     }
 
@@ -2400,49 +2397,29 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
       return state;
     }
 
-    case 'DRAW_SHOP': {
-      if (state.phase !== 'actions' || !state.cardsUnlocked || state.shopDrawn) return prev;
-      state.shop = [rollCard(state), rollCard(state), rollCard(state)];
-      state.shopDrawn = true;
-      noteDept(state, 'ceo', '翻开本月卡铺');
-      pushLog(state, '三张决策卡翻开。员工结构越偏哪一类，哪一类牌越常出现。');
-      return state;
-    }
-
     case 'BUY_CARD': {
       if (state.phase !== 'actions' || !state.shop[action.index]) return prev;
-      if (state.hand.length >= HAND_LIMIT) {
-        pushLog(state, `手牌已满（${HAND_LIMIT}）。先打出再买。`);
+      if ((state.cardsBoughtThisMonth ?? 0) >= 1) {
+        pushLog(state, '本月已经立过一项，下月再看新提案。');
         return state;
+      }
+      if (state.hand.length >= HAND_LIMIT) {
+        if (!action.replaceUid) {
+          pushLog(state, `待执行已满（${HAND_LIMIT}）。立项时请换下一份。`);
+          return state;
+        }
+        const dropAt = state.hand.findIndex((card) => card.uid === action.replaceUid);
+        if (dropAt < 0) return prev;
+        const [dropped] = state.hand.splice(dropAt, 1);
+        pushLog(state, `换下「${cardById(dropped!.defId).name}」，腾出立项位子。`);
       }
       const card = state.shop[action.index]!;
-      const cost = cardById(card.defId).cost;
-      if (state.cash < cost) {
-        pushLog(state, '买不起这张卡。');
-        return state;
-      }
-      const apCost = state.cardsBoughtThisMonth;
-      if (apCost > 0 && !spendAp(state, apCost)) {
-        pushLog(state, `再买一张要耗 ${apCost} AP。`);
-        return state;
-      }
-      pay(state, cost, 'admin');
-      state.hand.push(card);
+      state.hand.push({ ...card, readyMonth: state.month + 1 });
       state.shop.splice(action.index, 1);
-      state.cardsBoughtThisMonth += 1;
-      noteDept(
-        state,
-        'ceo',
-        apCost > 0
-          ? `买入「${cardById(card.defId).name}」，花费 ${money(cost)}，耗 ${apCost} AP`
-          : `买入「${cardById(card.defId).name}」，花费 ${money(cost)}，本月首张免 AP`,
-      );
-      pushLog(
-        state,
-        apCost > 0
-          ? `购入「${cardById(card.defId).name}」，耗 ${apCost} AP。`
-          : `购入「${cardById(card.defId).name}」，本月首张免 AP。`,
-      );
+      state.cardsBoughtThisMonth = 1;
+      const name = cardById(card.defId).name;
+      noteDept(state, 'ceo', `立项「${name}」，下月可落地`);
+      pushLog(state, `立项「${name}」。本月不耗现金和行动点，下月才能落地。`);
       return state;
     }
 
@@ -2450,15 +2427,25 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
       if (state.phase !== 'actions') return prev;
       const index = state.hand.findIndex((card) => card.uid === action.uid);
       if (index < 0) return prev;
-      if (!spendAp(state)) {
-        pushLog(state, '行动点不足，无法打出卡牌。');
+      const held = state.hand[index]!;
+      const def = cardById(held.defId);
+      if (!isProposalReady(held, state.month)) {
+        pushLog(state, `「${def.name}」本月立项，下月才能落地。`);
         return state;
       }
-      const [card] = state.hand.splice(index, 1);
-      const def = cardById(card!.defId);
-      const text = playCardEffect(state, card!.defId);
+      if (state.cash < def.cost) {
+        pushLog(state, `现金不够支付「${def.name}」落地费用。`);
+        return state;
+      }
+      if (!spendAp(state)) {
+        pushLog(state, '行动点不足，无法落地。');
+        return state;
+      }
+      pay(state, def.cost, 'admin');
+      state.hand.splice(index, 1);
+      const text = playCardEffect(state, held.defId);
       if (state.quarterStats) state.quarterStats.playedCard = true;
-      noteDept(state, 'ceo', `打出「${def.name}」：${def.playText}`);
+      noteDept(state, 'ceo', `落地「${def.name}」：${def.playText}`);
       pushLog(state, text);
       return state;
     }
@@ -2534,7 +2521,7 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
       }
       prepareMonth(state);
       syncMonthWages(state);
-      pushLog(state, `${state.month} 月行情已更新。`);
+      pushLog(state, monthMarketLog(state));
       return state;
 
     default:

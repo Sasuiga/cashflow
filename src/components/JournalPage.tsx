@@ -1,5 +1,6 @@
 import { ACHIEVEMENTS } from '../game/achievements';
-import { QUARTER_LABEL, climateById, goalById } from '../game/board';
+import { QUARTER_LABEL, climateById, goalById, marketToneLine } from '../game/board';
+import { eventById } from '../game/data';
 import { scoreOf } from '../game/score';
 import type { GameState } from '../game/types';
 
@@ -8,6 +9,7 @@ export function JournalPage({ state }: { state: GameState }) {
   const done = ACHIEVEMENTS.filter((item) => unlocked.has(item.id)).length;
   const score = scoreOf(state);
   const climate = climateById(state.climateId);
+  const monthEvent = state.eventId ? eventById(state.eventId) : null;
 
   return (
     <div className="page-grid journal">
@@ -25,10 +27,6 @@ export function JournalPage({ state }: { state: GameState }) {
             </div>
           ))}
         </div>
-        <p className="dept-kicker" style={{ marginTop: 18 }}>
-          {QUARTER_LABEL[state.quarter]} · {climate.name}
-        </p>
-        <p className="hint">{climate.headline}</p>
         {(state.boardHistory ?? []).map((item) => (
           <article key={item.quarter} className="achieve on" style={{ marginTop: 10 }}>
             <b>
@@ -48,6 +46,19 @@ export function JournalPage({ state }: { state: GameState }) {
       </section>
       <section className="panel">
         <h3>经营日志</h3>
+        <aside className="exec-summary journal-brief">
+          <p className="dept-kicker">
+            {QUARTER_LABEL[state.quarter]} · {climate.name}
+          </p>
+          <p className="exec-climate">{climate.headline}</p>
+          <p className="exec-climate">{marketToneLine(state)}</p>
+          {monthEvent && state.eventNote && (
+            <div className={`exec-event tone-${monthEvent.tone}`}>
+              <b>本月事项 · {monthEvent.title}</b>
+              <p>{state.eventNote}</p>
+            </div>
+          )}
+        </aside>
         <div className="log tall">
           {state.log.map((line, index) => (
             <p key={`${line}-${index}`}>{line}</p>

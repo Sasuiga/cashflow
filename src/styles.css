@@ -619,6 +619,12 @@ h1,
   line-height: 1.55;
 }
 
+.exec-summary > :first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+
 .exec-goal,
 .exec-event,
 .exec-outlook {
@@ -637,10 +643,6 @@ h1,
   color: var(--gold-2);
 }
 
-.exec-goal.on b {
-  color: var(--mint);
-}
-
 .exec-goal p,
 .exec-event p,
 .exec-outlook p {
@@ -650,12 +652,26 @@ h1,
   color: var(--cream);
 }
 
+.exec-goal.basic b {
+  color: var(--gold-2);
+}
+
+.exec-goal.challenge b,
+.exec-goal.challenge p {
+  color: var(--cream-dim);
+}
+
 .exec-event.tone-bad b {
   color: #f0b4a4;
 }
 
 .exec-event.tone-good b {
   color: var(--mint);
+}
+
+.journal-brief {
+  margin: 4px 0 14px;
+  padding-bottom: 12px;
 }
 
 .choice.on {
@@ -892,6 +908,23 @@ h1,
   border-bottom-color: var(--line-strong);
 }
 
+.hire-action {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.hire-action .chip {
+  width: 100%;
+  min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 12px;
+  font-size: 13px;
+  text-align: center;
+}
+
 .hire-overlay {
   z-index: 12;
 }
@@ -1099,6 +1132,11 @@ h1,
 
 .card:hover {
   transform: rotate(0deg) translateY(-4px);
+}
+
+.card.picking {
+  outline: 1px solid var(--gold);
+  box-shadow: 0 0 0 1px rgba(224, 180, 90, 0.35);
 }
 
 .card .suit {

@@ -71,6 +71,7 @@ export interface CardDef {
 export interface CardInstance {
   uid: string;
   defId: string;
+  readyMonth: number;
 }
 
 export type EventTone = 'good' | 'bad' | 'mixed';
@@ -298,9 +299,7 @@ export interface GameState {
   materialDUnlocked: boolean;
   rdProgress: number;
   rdUnlockIndex: number;
-  cardsUnlocked: boolean;
   shop: CardInstance[];
-  shopDrawn: boolean;
   cardsBoughtThisMonth: number;
   hand: CardInstance[];
   modifiers: Modifiers;
@@ -351,8 +350,7 @@ export type GameAction =
   | { type: 'BUY_MATERIALS'; items: { material: MaterialId; qty: number }[] }
   | { type: 'BORROW'; amount: number }
   | { type: 'REPAY'; amount: number }
-  | { type: 'DRAW_SHOP' }
-  | { type: 'BUY_CARD'; index: number }
+  | { type: 'BUY_CARD'; index: number; replaceUid?: string }
   | { type: 'PLAY_CARD'; uid: string }
   | { type: 'GO_PRODUCE' }
   | { type: 'BACK_TO_ACTIONS' }
