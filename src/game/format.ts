@@ -142,10 +142,10 @@ export function priceDelta(current: number, previous: number): { text: string; t
   return { text: `${signedAmount(diff)}（${pctText}）`, tone: diff > 0 ? 'up' : 'down' };
 }
 
-export function scoreTitle(netAssets: number, kind: 'bankrupt' | 'finished'): string {
+export function scoreTitle(total: number, kind: 'bankrupt' | 'finished'): string {
   if (kind === 'bankrupt') return '破产清算';
-  if (netAssets >= 180) return '商业帝国';
-  if (netAssets >= 120) return '行业新星';
-  if (netAssets >= 70) return '稳健经营';
+  if (total >= 140) return '商业帝国';
+  if (total >= 90) return '行业新星';
+  if (total >= 50) return '稳健经营';
   return '艰难度日';
 }

@@ -1,6 +1,13 @@
 import { scoreOf } from '../game/score';
 import type { GameState } from '../game/types';
 
+function bankruptCause(state: GameState): string {
+  const cash = state.lastReport?.cash ?? state.cash;
+  const net = state.lastReport?.netAssets ?? 0;
+  if (cash < 0 && net < 0) return '现金跌破零（净资产亦已为负）';
+  return '现金跌破零';
+}
+
 export function EndScreen({ state, onRestart }: { state: GameState; onRestart: () => void }) {
   const score = scoreOf(state);
   return (
@@ -12,7 +19,7 @@ export function EndScreen({ state, onRestart }: { state: GameState; onRestart: (
         </h1>
         <p className="sub">
           {state.endKind === 'bankrupt'
-            ? `第 ${state.month} 月结算后，净资产跌破零。北港制造被清算。`
+            ? `第 ${state.month} 月结算后，${bankruptCause(state)}。北港制造被清算。`
             : '十二本月报合上。活下来只是门槛，分数来自生存、董事会考核和净资产。'}
         </p>
         <p className="score-total">

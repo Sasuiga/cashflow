@@ -1718,24 +1718,7 @@ export function equityAccounts(state: GameState): { paidIn: number; surplus: num
 }
 
 export function scoreNetAssets(state: GameState): number {
-  const matGross = materialValue(state);
-  const fgGross = finishedValue(state);
-  const invGross = roundMoney(matGross + fgGross);
-  const prov = state.inventoryProvision ?? 0;
-  const matProv = invGross > 0 ? roundMoney(prov * (matGross / invGross)) : 0;
-  const fgProv = roundMoney(prov - matProv);
-  return roundMoney(
-    state.cash +
-      (state.prepaid ?? 0) +
-      receivablesNet(state) +
-      Math.max(0, matGross - matProv) * 0.5 +
-      wipValue(state) +
-      Math.max(0, fgGross - fgProv) +
-      bookAssets(state) -
-      state.debt -
-      state.wagesPayable -
-      (state.taxPayable ?? 0),
-  );
+  return netAssetsOf(state);
 }
 
 export function monthlySalary(staff: Staff): number {
@@ -4586,11 +4569,11 @@ function settleMonth(state: GameState): GameState {
     `${state.month} 月结算：${productNameLine}，现销 ${money(sale.cash)}，赊销 ${money(sale.credit)}，账面成本 ${money(cogs)}，净利润 ${money(netProfit)}。`,
   );
 
-  if (net < 0) {
+  if (state.cash < 0) {
     state.endKind = 'bankrupt';
     state.phase = 'report';
     settleQuarter(state, state.quarter);
-    pushLog(state, '净资产转负，银行上门封账。本局结束。');
+    pushLog(state, '现金转负，银行上门封账。本局结束。');
     return state;
   }
 

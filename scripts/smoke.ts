@@ -30,12 +30,14 @@ import {
   purchaseQtyOptions,
   rdRevealOptions,
   reduce,
+  scoreNetAssets,
   shopCountOf,
   traderOf,
   traderPriceMultOf,
   unitsNeeded,
   yieldExtraOf,
 } from '../src/game/engine';
+import { scoreOf } from '../src/game/score';
 import {
   AR_OVERDUE_CHANCE,
   EVENTS,
@@ -715,13 +717,14 @@ function checkStaffFactions(): void {
   assert(shopCountOf(mgmt6) === 5 && handLimitOf(mgmt6) === 7, '6 管理应满编出示/手牌');
 
   assert(passThroughRateOf(opened) === 0 && creditSaleRateOf(opened) === 0.35, '无销售无传导、赊销 35%');
-  assert(passThroughRateOf(withStaff(opened, { sales: 1 })) === 0.25, '1 销售传导 25%');
-  assert(passThroughRateOf(withStaff(opened, { sales: 2 })) === 0.35, '2 销售传导 35%');
-  assert(passThroughRateOf(withStaff(opened, { sales: 3 })) === 0.5, '3 销售传导 50%');
-  assert(creditSaleRateOf(withStaff(opened, { sales: 3 })) === 0.3, '3 销售赊销 30%');
-  assert(passThroughRateOf(withStaff(opened, { sales: 4 })) === 0.75, '4 销售成型传导 75%');
-  assert(creditSaleRateOf(withStaff(opened, { sales: 4 })) === 0.25, '4 销售赊销 25%');
-  assert(passThroughRateOf({ ...withStaff(opened, { sales: 4 }), climateId: 'priceWar' }) === 0, '价格战应掐断传导');
+  const salesBase = { ...opened, climateId: 'export' as const };
+  assert(passThroughRateOf(withStaff(salesBase, { sales: 1 })) === 0.25, '1 销售传导 25%');
+  assert(passThroughRateOf(withStaff(salesBase, { sales: 2 })) === 0.35, '2 销售传导 35%');
+  assert(passThroughRateOf(withStaff(salesBase, { sales: 3 })) === 0.5, '3 销售传导 50%');
+  assert(creditSaleRateOf(withStaff(salesBase, { sales: 3 })) === 0.3, '3 销售赊销 30%');
+  assert(passThroughRateOf(withStaff(salesBase, { sales: 4 })) === 0.75, '4 销售成型传导 75%');
+  assert(creditSaleRateOf(withStaff(salesBase, { sales: 4 })) === 0.25, '4 销售赊销 25%');
+  assert(passThroughRateOf({ ...withStaff(salesBase, { sales: 4 }), climateId: 'priceWar' }) === 0, '价格战应掐断传导');
 
   assert(traderPriceMultOf(opened, 'a') === 1.5 && traderPriceMultOf(opened, 'c') === 2, '开局加价盘应为 1.5/2');
   assert(traderPriceMultOf(withStaff(opened, { procurement: 3 }), 'a') === 1.4, '3 采购钢材加价盘 1.4');
@@ -853,6 +856,58 @@ function checkMenuActions(): void {
 
 checkMenuActions();
 settleFirstMonth();
+
+function checkCashBankrupt(): void {
+  let state = confirmBoard(reduce(createInitialState(), { type: 'START_GAME' }));
+  state = reduce(state, { type: 'CONFIRM_BRIEFING' });
+  state = reduce(state, { type: 'ACK_EVENT' });
+  state = reduce(state, { type: 'GO_PRODUCE' });
+  state.cash = -0.1;
+  state = reduce(state, { type: 'SETTLE' });
+  assert(state.endKind === 'bankrupt', `现金为负应破产，实际 ${state.endKind}`);
+  assert(state.phase === 'report', '现金破产应先出清算报告');
+  assert(
+    state.log.some((line) => line.includes('现金转负')),
+    `日志应写明现金转负，实际 ${state.log.slice(-3).join(' / ')}`,
+  );
+  assert((state.lastReport?.netAssets ?? 0) >= 0, '应允许净资产仍为正时因现金破产');
+
+  let netOnly = confirmBoard(reduce(createInitialState(), { type: 'START_GAME' }));
+  netOnly = reduce(netOnly, { type: 'CONFIRM_BRIEFING' });
+  netOnly = reduce(netOnly, { type: 'ACK_EVENT' });
+  netOnly = reduce(netOnly, { type: 'GO_PRODUCE' });
+  netOnly = {
+    ...netOnly,
+    cash: 30,
+    debt: 500,
+    loans: [{ amount: 500, originMonth: netOnly.month, dueMonth: netOnly.month + 3 }],
+  };
+  netOnly = reduce(netOnly, { type: 'SETTLE' });
+  assert(netOnly.endKind !== 'bankrupt', `仅净资产为负不应破产，实际 ${netOnly.endKind}`);
+  assert(netOnly.cash >= 0, `该用例现金应仍非负，实际 ${netOnly.cash}`);
+  assert(netAssetsOf(netOnly) < 0, `该用例净资产应为负，实际 ${netAssetsOf(netOnly)}`);
+}
+
+function checkEndScore(): void {
+  const opened = reduce(createInitialState(), { type: 'START_GAME' });
+  const book = netAssetsOf(opened);
+  assert(scoreNetAssets(opened) === book, '计分净资产应与账面净资产一致');
+  const finished = { ...opened, endKind: 'finished' as const, month: 12 };
+  const score = scoreOf(finished);
+  const netLine = score.lines.find((line) => line.label === '净资产');
+  assert(netLine?.points === Math.floor(book / 10) * 10, `净资产分应为每 10 万 10 分，实际 ${netLine?.points}`);
+  assert(score.lines.find((line) => line.label === '生存')?.points === 12, '通关生存应为 12 分');
+
+  const broke = { ...opened, endKind: 'bankrupt' as const, month: 3, cash: -1 };
+  assert(scoreOf(broke).lines.find((line) => line.label === '净资产')?.points === 0, '现金破产净资产分应为 0');
+
+  const negNet = { ...opened, endKind: 'finished' as const, month: 12, debt: 500 };
+  assert(netAssetsOf(negNet) < 0, '负资产通关用例净资产应为负');
+  assert(scoreOf(negNet).lines.find((line) => line.label === '净资产')?.points === 0, '净资产为负时该项应为 0');
+}
+
+checkCashBankrupt();
+checkEndScore();
 
 const result = play();
 if (result.phase !== 'ended' || !result.endKind) {

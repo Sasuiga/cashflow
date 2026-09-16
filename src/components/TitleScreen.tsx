@@ -21,7 +21,7 @@ export function TitleScreen({ onStart }: { onStart: () => void }) {
           </article>
           <article className="rule">
             <b>破产或年报</b>
-            <p>结算后净资产为负即破产。活过十二月后，按生存、董事会考核和净资产计分。</p>
+            <p>结算后现金为负即破产。活过十二月后，按生存、董事会考核和账面净资产计分。</p>
           </article>
         </div>
         <button className="btn" onClick={onStart}>

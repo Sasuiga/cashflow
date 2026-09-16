@@ -1,5 +1,5 @@
 import { BASIC_PENALTY, CHALLENGE_POINTS, QUARTER_LABEL, goalById } from './board';
-import { scoreNetAssets } from './engine';
+import { netAssetsOf } from './engine';
 import type { GameState } from './types';
 
 export interface ScoreLine {
@@ -16,16 +16,19 @@ export function monthsSurvived(state: GameState): number {
 
 export function scoreTitleOf(total: number, kind: 'bankrupt' | 'finished' | null): string {
   if (kind === 'bankrupt') return '破产清算';
-  if (total >= 42) return '商业帝国';
-  if (total >= 28) return '行业新星';
-  if (total >= 16) return '稳健经营';
+  if (total >= 140) return '商业帝国';
+  if (total >= 90) return '行业新星';
+  if (total >= 50) return '稳健经营';
   return '艰难度日';
 }
 
 export function scoreOf(state: GameState): { total: number; title: string; lines: ScoreLine[] } {
   const survive = monthsSurvived(state);
-  const net = Math.max(0, scoreNetAssets(state));
-  const netPoints = state.endKind === 'bankrupt' ? 0 : Math.floor(net / 40);
+  const bookNet = netAssetsOf(state);
+  const netNegative = bookNet < 0;
+  const cashNegative = state.cash < 0 || state.endKind === 'bankrupt';
+  const scoredNet = Math.max(0, bookNet);
+  const netPoints = cashNegative || netNegative ? 0 : Math.floor(scoredNet / 10) * 10;
   const boardLines = (state.boardHistory ?? []).map((item) => {
     const basic = goalById(item.basicId);
     const hits = item.challengeHits.map((id) => goalById(id).name).join('、') || '无';
@@ -43,10 +46,11 @@ export function scoreOf(state: GameState): { total: number; title: string; lines
     { label: '生存', detail: `活过 ${survive} 个月，每月 1 分`, points: survive },
     {
       label: '净资产',
-      detail:
-        state.endKind === 'bankrupt'
-          ? '破产不计'
-          : `原材料按账面净值一半计入，每 40 万 1 分，现 ${net}万`,
+      detail: cashNegative
+        ? '现金为负，不计'
+        : netNegative
+          ? '净资产为负，不计'
+          : `按账面净资产，每 10 万 10 分，现 ${scoredNet}万`,
       points: netPoints,
     },
     ...boardLines,

@@ -16,7 +16,7 @@ export function JournalPage({ state }: { state: GameState }) {
     <div className="page-grid journal">
       <section className="panel">
         <h3>本局得分 {score.total}</h3>
-        <p className="hint">分数来自生存、董事会考核和瘦身净资产。成就只作记录，不计分。</p>
+        <p className="hint">分数来自生存、董事会考核和账面净资产。成就只作记录，不计分。</p>
         <div className="score-lines compact">
           {score.lines.map((line) => (
             <div key={line.label}>
