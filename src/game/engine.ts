@@ -3476,6 +3476,9 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
   }
 
   switch (action.type) {
+    case 'TO_TITLE':
+      return createInitialState();
+
     case 'TOGGLE_BOARD_GOAL': {
       if (state.phase !== 'board') return prev;
       const id = action.id;

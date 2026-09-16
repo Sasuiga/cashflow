@@ -635,6 +635,17 @@ checkProposals();
 checkRdLabs();
 checkHirePay();
 checkArOverdue();
+
+function checkMenuActions(): void {
+  const started = reduce(createInitialState(), { type: 'START_GAME' });
+  const toTitle = reduce(started, { type: 'TO_TITLE' });
+  assert(toTitle.phase === 'title', 'TO_TITLE 应回到标题页');
+  const restarted = reduce(started, { type: 'RESTART' });
+  assert(restarted.phase === 'board' && restarted.month === 1, 'RESTART 应回到第 1 月董事会');
+  assert(restarted.cash === 24, 'RESTART 应重置开局现金');
+}
+
+checkMenuActions();
 settleFirstMonth();
 
 const result = play();

@@ -478,6 +478,7 @@ export interface GameState {
 
 export type GameAction =
   | { type: 'START_GAME' }
+  | { type: 'TO_TITLE' }
   | { type: 'TOGGLE_BOARD_GOAL'; id: string }
   | { type: 'CONFIRM_BOARD' }
   | { type: 'CONFIRM_BRIEFING' }

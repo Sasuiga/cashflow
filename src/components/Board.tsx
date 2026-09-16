@@ -3,6 +3,7 @@ import { arOverdueOf, inventoryValue, receivablesNet } from '../game/engine';
 import { MONTH_NAMES, money } from '../game/format';
 import type { GameAction, GameState } from '../game/types';
 import { FinancePage } from './FinancePage';
+import { GameMenu } from './GameMenu';
 import { JournalPage } from './JournalPage';
 import { OperationsPage } from './OperationsPage';
 
@@ -81,6 +82,7 @@ export function Board({
       {page === 'books' && <FinancePage state={state} />}
       {page === 'journal' && <JournalPage state={state} />}
       {page === 'ops' && <OperationsPage state={state} dispatch={dispatch} />}
+      <GameMenu dispatch={dispatch} />
     </div>
   );
 }

@@ -269,7 +269,7 @@ h1,
 .shell {
   width: min(1440px, calc(100% - 32px));
   margin: 0 auto;
-  padding: 18px 0 36px;
+  padding: 18px 0 96px;
 }
 
 .ops-shell {
@@ -353,6 +353,11 @@ h1,
 
 .ops-shell .ops {
   padding: 0;
+}
+
+/* 为右下角悬浮菜单按钮留出滚动余量 */
+.ops-shell .dept-stage {
+  padding-bottom: 84px;
 }
 
 .dept-stage {
@@ -2307,6 +2312,196 @@ button.job:hover {
   line-height: 1.5;
 }
 
+/* ── 悬浮菜单（右下角 FAB + 菜单面板）───────────────────── */
+.menu-fab {
+  position: fixed;
+  right: max(16px, env(safe-area-inset-right));
+  bottom: max(16px, env(safe-area-inset-bottom));
+  z-index: 9;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  border: 1px solid var(--gold);
+  background:
+    radial-gradient(140% 140% at 30% 20%, rgba(224, 180, 90, 0.18), transparent 55%),
+    var(--ink-2);
+  box-shadow:
+    0 14px 34px rgba(0, 0, 0, 0.5),
+    0 0 0 4px rgba(224, 180, 90, 0.12);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.menu-fab:hover {
+  box-shadow:
+    0 14px 34px rgba(0, 0, 0, 0.5),
+    0 0 0 4px rgba(224, 180, 90, 0.3);
+}
+
+.menu-fab:active {
+  transform: scale(0.94);
+}
+
+.menu-fab:focus-visible {
+  outline: 2px solid var(--gold-2);
+  outline-offset: 3px;
+}
+
+.menu-fab-bars {
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+}
+
+.menu-fab-bars i {
+  width: 18px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--gold);
+}
+
+.menu-fab-bars i:nth-child(2) {
+  width: 13px;
+}
+
+.menu-fab-bars i:nth-child(3) {
+  width: 8px;
+}
+
+.menu-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  background: rgba(8, 10, 7, 0.62);
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+.menu-card {
+  width: min(380px, 100%);
+  background: var(--paper);
+  color: var(--paper-ink);
+  border: 1px solid #d6c7a2;
+  box-shadow: var(--shadow);
+  padding: 22px 20px 16px;
+  animation: menu-in 0.18s ease-out;
+}
+
+@keyframes menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+}
+
+@keyframes menu-sheet-in {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+}
+
+.menu-card .kicker {
+  color: #8a7040;
+  margin-bottom: 12px;
+}
+
+.menu-card:focus {
+  outline: none;
+}
+
+.menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 1px solid #d4c39a;
+  background: #f7efd8;
+  padding: 12px 14px;
+  margin-bottom: 8px;
+  min-height: 48px;
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+}
+
+.menu-item:hover {
+  border-color: #b8892d;
+}
+
+.menu-item-text b {
+  display: block;
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+}
+
+.menu-item-text small {
+  display: block;
+  margin-top: 3px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #8a7040;
+}
+
+.menu-confirm b {
+  display: block;
+  font-family: var(--serif);
+  font-size: 22px;
+  margin-bottom: 6px;
+}
+
+.menu-confirm p {
+  margin: 0 0 14px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #6b5c3d;
+}
+
+.menu-confirm-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.menu-confirm-actions .btn {
+  padding: 10px 12px;
+  font-size: 13px;
+  letter-spacing: 0.04em;
+}
+
+.menu-card .btn.ghost {
+  color: var(--paper-ink);
+  border-color: #8a7040;
+}
+
+.menu-card .btn.ghost:hover {
+  background: rgba(138, 112, 64, 0.12);
+  border-color: #6e5528;
+}
+
+.menu-card .footer-actions {
+  margin-top: 10px;
+  justify-content: stretch;
+}
+
+.menu-card .footer-actions .btn {
+  width: 100%;
+  min-height: 44px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .menu-card {
+    animation: none;
+  }
+
+  .menu-fab {
+    transition: none;
+  }
+}
+
 @media (max-width: 1080px) {
   .layout,
   .rule-grid,
@@ -2397,7 +2592,7 @@ button.job:hover {
 
   .shell {
     width: 100%;
-    padding: 0 0 max(20px, env(safe-area-inset-bottom));
+    padding: 0 0 max(96px, calc(20px + env(safe-area-inset-bottom)));
   }
 
   .ops-shell {
@@ -2575,6 +2770,8 @@ button.job:hover {
 
   .ops-shell .flow-rail {
     padding-bottom: env(safe-area-inset-bottom);
+    /* 右侧留位给悬浮菜单按钮 */
+    padding-right: 64px;
   }
 
   .ops .sheet-wrap {
@@ -2817,5 +3014,41 @@ button.job:hover {
 
   .hire-costs div {
     grid-template-columns: 64px 1fr;
+  }
+
+  /* 菜单改为底部抽屉，与手机端的模态框保持一致 */
+  .menu-overlay {
+    display: flex;
+    align-items: flex-end;
+    justify-content: stretch;
+    padding: 0;
+    overscroll-behavior: contain;
+  }
+
+  .menu-card {
+    width: 100%;
+    max-height: 88dvh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    padding: 14px 16px calc(16px + env(safe-area-inset-bottom));
+    border-radius: 16px 16px 0 0;
+    border-left: none;
+    border-right: none;
+    border-bottom: none;
+    animation-name: menu-sheet-in;
+  }
+
+  .menu-card::before {
+    content: '';
+    display: block;
+    width: 36px;
+    height: 4px;
+    border-radius: 2px;
+    background: #8a7040;
+    margin: 0 auto 12px;
+  }
+
+  .menu-item {
+    min-height: 52px;
   }
 }
