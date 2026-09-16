@@ -564,7 +564,7 @@ export function hireEffectLines(state: GameState, role: Role, rdTrack: RdTrack =
     return [
       `本月立刻到岗，并带来 1 张市场单。本月订单 ${have} → ${have + 1} 张。`,
       `每 2 名销售人员使月初订单 +1（基础 ${BASE_MONTH_ORDERS} 张）。${baseline}`,
-      `逾期应收确认后分 3 个月催收。每人使每月追回比例 +${pctLabel(AR_RECOVER_PER_SALES)}。本次入职后首月追回 ${pctLabel(arRecoveryRate(1, state.staff.sales))} → ${pctLabel(arRecoveryRate(1, state.staff.sales + 1))}。`,
+      `逾期应收确认后分 3 个月按余额催收，收不回的部分会核销。每人使每月追回比例 +${pctLabel(AR_RECOVER_PER_SALES)}。本次入职后首月追回 ${pctLabel(arRecoveryRate(1, state.staff.sales))} → ${pctLabel(arRecoveryRate(1, state.staff.sales + 1))}。`,
       card,
     ];
   }

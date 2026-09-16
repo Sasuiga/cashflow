@@ -1,4 +1,4 @@
-import { AR_OVERDUE_CHANCE, AR_TERM_MONTHS, CREDIT_SALE_RATE, INTEREST_RATE, LOAN_DEFAULT_RATE, LOAN_LATE_FEE_RATE, LOAN_PER_MACHINE, LOAN_TERM_MONTHS, arCreditLossRate, arRecoveryRate } from '../game/data';
+import { AR_OVERDUE_CHANCE, AR_RECOVER_PER_SALES, AR_TERM_MONTHS, CREDIT_SALE_RATE, INTEREST_RATE, LOAN_DEFAULT_RATE, LOAN_LATE_FEE_RATE, LOAN_PER_MACHINE, LOAN_TERM_MONTHS, arCreditLossRate, arRecoveryRate } from '../game/data';
 import { booksForView, netProfitOf, operatingCashOf, operatingProfitOf, profitBeforeTaxOf } from '../game/engine';
 import { amount, roundMoney, signedAmount } from '../game/format';
 import type { MonthBooks, MonthLedger } from '../game/types';
@@ -284,7 +284,7 @@ export function FinancePage({ state }: { state: GameState }) {
     <div className="page-stack">
       <Statement
         title="资产负债表"
-        hint={`存货按库龄计提跌价：0–1 月不提，2 月 10%，3 月 25%，4–5 月 40%，6 月及以上 70%。应收账款到期整笔收回，${Math.round(AR_OVERDUE_CHANCE * 100)}% 概率整笔逾期后再催 3 个月（底表 ${Math.round(arRecoveryRate(1) * 100)}% / ${Math.round(arRecoveryRate(2) * 100)}% / ${Math.round(arRecoveryRate(3) * 100)}%，每名销售 +5%）。坏账准备：未到期 5%，刚逾期 20%，催收第 1 / 2 个月 ${Math.round(arCreditLossRate(1, true) * 100)}% / ${Math.round(arCreditLossRate(2, true) * 100)}%，第 3 个月 100% 后核销。货款默认 ${Math.round(CREDIT_SALE_RATE * 100)}% 赊销、账期 ${AR_TERM_MONTHS} 个月。短期借款按设备抵押：每台上限 ${LOAN_PER_MACHINE} 万，月息 ${Math.round(INTEREST_RATE * 100)}%，期限 ${LOAN_TERM_MONTHS} 个月；到期未还一次性违约金 ${Math.round(LOAN_DEFAULT_RATE * 100)}%，另加滞纳金 ${Math.round(LOAN_LATE_FEE_RATE * 100)}%/月。价款不含增值税。`}
+        hint={`存货按库龄计提跌价：0–1 月不提，2 月 10%，3 月 25%，4–5 月 40%，6 月及以上 70%。应收账款到期整笔收回，${Math.round(AR_OVERDUE_CHANCE * 100)}% 概率整笔逾期后再催 3 个月（底表 ${Math.round(arRecoveryRate(1) * 100)}% / ${Math.round(arRecoveryRate(2) * 100)}% / ${Math.round(arRecoveryRate(3) * 100)}%，每名销售 +${Math.round(AR_RECOVER_PER_SALES * 100)}%，均按余额计算）。坏账准备：未到期 5%，刚逾期 20%，催收第 1 / 2 个月 ${Math.round(arCreditLossRate(1, true) * 100)}% / ${Math.round(arCreditLossRate(2, true) * 100)}%，第 3 个月 100% 后核销。货款默认 ${Math.round(CREDIT_SALE_RATE * 100)}% 赊销、账期 ${AR_TERM_MONTHS} 个月。短期借款按设备抵押：每台上限 ${LOAN_PER_MACHINE} 万，月息 ${Math.round(INTEREST_RATE * 100)}%，期限 ${LOAN_TERM_MONTHS} 个月；到期未还一次性违约金 ${Math.round(LOAN_DEFAULT_RATE * 100)}%，另加滞纳金 ${Math.round(LOAN_LATE_FEE_RATE * 100)}%/月。价款不含增值税。`}
         prevLabel="上期"
         currLabel="本月"
         lines={balanceLines(prev, curr)}

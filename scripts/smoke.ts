@@ -535,11 +535,11 @@ function checkHirePay(): void {
 }
 
 function checkArOverdue(): void {
-  assert(arRecoveryRate(1, 0) === 0.4, '逾期首月底表应为 40%');
-  assert(arRecoveryRate(2, 0) === 0.3, '逾期次月底表应为 30%');
-  assert(arRecoveryRate(3, 0) === 0.2, '逾期第三月底表应为 20%');
-  assert(arRecoveryRate(1, 1) === 0.45, '1 名销售应使首月追回 45%');
-  assert(arRecoveryRate(1, 12) === 1, '追回比例应封顶 100%');
+  assert(arRecoveryRate(1, 0) === 0.3, '逾期首月底表应为 30%');
+  assert(arRecoveryRate(2, 0) === 0.2, '逾期次月底表应为 20%');
+  assert(arRecoveryRate(3, 0) === 0.15, '逾期第三月底表应为 15%');
+  assert(arRecoveryRate(1, 1) === 0.35, '1 名销售应使首月追回 35%');
+  assert(arRecoveryRate(1, 40) === 1, '追回比例应封顶 100%');
   assert(arCreditLossRate(-1, false) === 0.05, '未到期坏账准备应为 5%');
   assert(arCreditLossRate(0, true) === 0.2, '刚逾期坏账准备应为 20%');
   assert(arCreditLossRate(1, true) === 0.4, '催收第 1 个月坏账准备应为 40%');
@@ -567,13 +567,13 @@ function checkArOverdue(): void {
 
   state.month = 3;
   const first = collectReceivables(state, 0, true);
-  assert(first === 4, `逾期首月底表应追回 40%，实际 ${first}`);
-  assert(state.receivables[0]?.amount === 6, `逾期首月后余额应为 6，实际 ${state.receivables[0]?.amount}`);
+  assert(first === 3, `逾期首月底表应追回 30%，实际 ${first}`);
+  assert(state.receivables[0]?.amount === 7, `逾期首月后余额应为 7，实际 ${state.receivables[0]?.amount}`);
 
   state.staff.sales = 2;
   state.month = 4;
   const second = collectReceivables(state, 0, true);
-  assert(second === 2.4, `2 名销售逾期次月应追回 40%，实际 ${second}`);
+  assert(second === 2.1, `2 名销售逾期次月应追回 30%，实际 ${second}`);
 
   state = reduce(createInitialState(), { type: 'START_GAME' });
   state.month = 2;
