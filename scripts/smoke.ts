@@ -1,5 +1,6 @@
 import { booksForView, collectReceivables, createInitialState, equityAccounts, factoryLayout, hireEffectLines, loanAmountOptions, loanLimit, lowestUnlockedMargin, bomSpotCost, netAssetsOf, netProfitOf, orderCapLoads, previewLoanCharges, purchaseQtyOptions, rdRevealOptions, reduce, traderOf, unitsNeeded } from '../src/game/engine';
 import { AR_OVERDUE_CHANCE, HIRE_COST, INTEREST_RATE, IP_LEAN_RATE, LOAN_DEFAULT_RATE, LOAN_LATE_FEE_RATE, LOAN_PER_MACHINE, LOAN_TERM_MONTHS, RD_FAIL_BONUS, RD_STAFF_CAP, SALARY, arCreditLossRate, arRecoveryRate, rdSuccessRate } from '../src/game/data';
+import { explainAccount, storyChildren } from '../src/game/settlementStory';
 import { goalById } from '../src/game/board';
 import { roundMoney } from '../src/game/format';
 import type { GameState } from '../src/game/types';
@@ -260,6 +261,23 @@ function settleFirstMonth(): GameState {
       assert(report.pnlRows.some((row) => row.label === '净利润' && row.value === np), '利润表展开应落到净利润');
       assert(report.pnlRows.some((row) => row.label === '营业收入'), '利润表展开应有营业收入');
       assert(report.balanceRows.some((row) => row.label === '净资产'), '资产负债表展开应有净资产');
+      const wageKids = storyChildren(report.balanceRows, '应付职工薪酬');
+      assert(wageKids.some((row) => row.label.includes('生产人员')), '应付职工薪酬应拆出生产工费');
+      assert(wageKids.some((row) => row.label.includes('管理人员')), '应付职工薪酬应拆出管理工费');
+      const ctx = { state, books: view.curr, ledger: view.curr.ledger, facts: { ...report.facts, settled: true } };
+      const wageExplain = explainAccount('应付职工薪酬', ctx);
+      assert(wageExplain.some((row) => row.label.includes('生产人员') && row.label.includes('×')), '报表点开应付职工薪酬应看到人数×月薪');
+      assert(wageExplain.some((row) => row.label.includes('管理人员')), '报表点开应付职工薪酬应看到管理工费');
+      const materialExplain = explainAccount('其中：原材料', ctx);
+      assert(materialExplain.some((row) => row.label.includes('件')), '点开原材料应看到各材料件数和成本');
+      const faCostExplain = explainAccount('固定资产原价', ctx);
+      assert(faCostExplain.some((row) => row.label.includes('设备')), '点开固定资产原价应看到设备×单价');
+      const cashExplain = explainAccount('货币资金', ctx);
+      assert(cashExplain.some((row) => row.label.includes('月初现金')), '货币资金应按本月现金收支加总，而不是上下期对比');
+      const adminExplain = explainAccount('减：管理费用', ctx);
+      assert(adminExplain.some((row) => row.label.includes('管理人员') || row.label.includes('管理')), '点开管理费用应看到费用构成');
+      const cfExplain = explainAccount('销售商品、提供劳务收到的现金', ctx);
+      assert(cfExplain.length > 0, '现金流量表长科目名应能点开看到收款构成');
       assert(report.cashRows.some((row) => row.label === '期末现金'), '现金流量表展开应有期末现金');
       const reserve = state.surplusReserve ?? 0;
       if (np > 0) {

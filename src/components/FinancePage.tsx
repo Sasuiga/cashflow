@@ -2,9 +2,8 @@ import { useState } from 'react';
 import { AR_OVERDUE_CHANCE, AR_RECOVER_PER_SALES, AR_TERM_MONTHS, CREDIT_SALE_RATE, INTEREST_RATE, LOAN_DEFAULT_RATE, LOAN_LATE_FEE_RATE, LOAN_PER_MACHINE, LOAN_TERM_MONTHS, arCreditLossRate, arRecoveryRate } from '../game/data';
 import { booksForView, netProfitOf, operatingCashOf, operatingProfitOf, profitBeforeTaxOf } from '../game/engine';
 import { MONTH_NAMES, amount, money, roundMoney, signedMoney } from '../game/format';
-import { buildBalanceRows, buildCashRows, buildPnlRows, liveFacts, storyChildren } from '../game/settlementStory';
-import type { MonthBooks, MonthLedger, SettleRow } from '../game/types';
-import type { GameState } from '../game/types';
+import { explainAccount, liveFacts, type ExplainCtx } from '../game/settlementStory';
+import type { GameState, MonthBooks, MonthLedger, SettleRow } from '../game/types';
 
 function investCf(ledger: MonthLedger): number {
   return roundMoney(-ledger.cfCapex);
@@ -189,13 +188,24 @@ function n(books: MonthBooks | null, read: (books: MonthBooks) => number): numbe
   return books ? read(books) : null;
 }
 
-function withDetails(line: Line, rows: SettleRow[]): Line {
-  const details = storyChildren(rows, line.label);
+function withDetails(line: Line, ctx: ExplainCtx): Line {
+  const details = explainAccount(line.label, ctx);
   return details.length ? { ...line, details } : line;
 }
 
-function annotate(lines: Array<Line | { section: string }>, rows: SettleRow[]): Array<Line | { section: string }> {
-  return lines.map((line) => ('section' in line ? line : withDetails(line, rows)));
+const FACE_CHILDREN: Record<string, string[]> = {
+  存货: ['其中：原材料', '其中：在产品', '其中：库存商品'],
+};
+
+function explainedOnFace(line: Line, labels: Set<string>): boolean {
+  if (line.total) return true;
+  const children = FACE_CHILDREN[line.label];
+  return Boolean(children?.some((label) => labels.has(label)));
+}
+
+function annotate(lines: Array<Line | { section: string }>, ctx: ExplainCtx): Array<Line | { section: string }> {
+  const labels = new Set(lines.flatMap((line) => ('section' in line ? [] : [line.label])));
+  return lines.map((line) => ('section' in line || explainedOnFace(line, labels) ? line : withDetails(line, ctx)));
 }
 
 function balanceLines(curr: MonthBooks, prev: MonthBooks, older: MonthBooks | null): Array<Line | { section: string }> {
@@ -395,22 +405,15 @@ function cashFlowLines(curr: MonthLedger, prev: MonthLedger, older: MonthLedger 
   return lines;
 }
 
-function currentStories(state: GameState, prev: MonthBooks, curr: MonthBooks, currClosed: boolean) {
-  if (currClosed && curr.pnlRows?.length) {
-    return { pnl: curr.pnlRows, bs: curr.balanceRows ?? [], cf: curr.cashRows ?? [] };
-  }
-  const facts = liveFacts(state);
-  return {
-    pnl: buildPnlRows(facts, curr.ledger, operatingProfitOf(curr.ledger), profitBeforeTaxOf(curr.ledger), netProfitOf(curr.ledger)),
-    bs: buildBalanceRows(prev, curr, facts),
-    cf: buildCashRows(facts, curr.ledger, curr.cash, operatingCashOf(curr.ledger)),
-  };
+function currentExplain(state: GameState, curr: MonthBooks, currClosed: boolean): ExplainCtx {
+  const facts = currClosed && state.lastReport?.facts ? { ...state.lastReport.facts, settled: true } : liveFacts(state);
+  return { state, books: curr, ledger: curr.ledger, facts };
 }
 
 export function FinancePage({ state }: { state: GameState }) {
   const { prev, curr, older, currClosed } = booksForView(state);
-  const stories = currentStories(state, prev, curr, currClosed);
-  const income = annotate(incomeLines(curr.ledger, prev.ledger, older?.ledger ?? null), stories.pnl);
+  const ctx = currentExplain(state, curr, currClosed);
+  const income = annotate(incomeLines(curr.ledger, prev.ledger, older?.ledger ?? null), ctx);
   const monthName = MONTH_NAMES[state.month - 1] ?? `${state.month}月`;
 
   return (
@@ -424,7 +427,7 @@ export function FinancePage({ state }: { state: GameState }) {
         currTitle={currClosed ? curr.title : monthName}
         prevTitle={prev.title}
         olderTitle={older?.title ?? null}
-        lines={annotate(balanceLines(curr, prev, older), stories.bs)}
+        lines={annotate(balanceLines(curr, prev, older), ctx)}
       />
       <Statement
         title="利润表"
@@ -452,7 +455,7 @@ export function FinancePage({ state }: { state: GameState }) {
         currTitle={currClosed ? curr.title : monthName}
         prevTitle={prev.title}
         olderTitle={older?.title ?? null}
-        lines={annotate(cashFlowLines(curr.ledger, prev.ledger, older?.ledger ?? null), stories.cf)}
+        lines={annotate(cashFlowLines(curr.ledger, prev.ledger, older?.ledger ?? null), ctx)}
       />
     </div>
   );
