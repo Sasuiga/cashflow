@@ -2,7 +2,7 @@ import type { Bom, CardDef, EventDef, IpDef, IpId, MaterialDef, MaterialId, Prod
 
 export const TOTAL_MONTHS = 12;
 export const HAND_LIMIT = 5;
-export const BASE_AP = 3;
+export const BASE_AP = 2;
 export const BASE_MONTH_ORDERS = 3;
 export const MAX_MONTH_ORDERS = 6;
 export const MACHINE_COST = 10;

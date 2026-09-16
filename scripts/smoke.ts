@@ -241,6 +241,7 @@ function checkOpeningAccounts(): void {
   assert(accounts.retained === 0, `开业未分配利润应为 0，实际 ${accounts.retained}`);
   assert(opened.materialCost.a === 6.4 && opened.materialCost.b === 3.2 && opened.materialCost.c === 2, '开业原材料未按历史成本入账');
   assert(opened.machineGross === 10 && opened.factoryGross === 20, '开业固定资产未按原价入账');
+  assert(opened.maxAp === 3 && opened.ap === 3, '开业 1 名管理应维持 3 点行动点上限');
   checkBalance(opened, '开业');
 }
 
@@ -330,6 +331,14 @@ function checkRdLabs(): void {
   state = reduce(state, { type: 'CONFIRM_BRIEFING' });
   state = reduce(state, { type: 'ACK_EVENT' });
   assert(state.phase === 'actions', '应进入行动阶段');
+  assert(state.maxAp === 3, `开局 1 名管理行动点上限应为 3，实际 ${state.maxAp}`);
+  const mgmtLines = hireEffectLines(state, 'management');
+  assert(mgmtLines[0]?.includes('每名管理人员'), `招管理应说明每人 +1 行动点，实际 ${mgmtLines[0]}`);
+  assert(mgmtLines[0]?.includes('基础 2'), `招管理应说明基础 2 点，实际 ${mgmtLines[0]}`);
+  const hiredMgmt = reduce(state, { type: 'HIRE', role: 'management' });
+  assert(hiredMgmt.staff.management === 2, '应招入第二名管理');
+  assert(hiredMgmt.maxAp === 4, `再招 1 名管理应把上限提到 4，实际 ${hiredMgmt.maxAp}`);
+  assert(hiredMgmt.ap === state.ap, '本月剩余行动点不因招聘补发');
   const cash = state.cash;
   const ap = state.ap;
   const bought = reduce({ ...state, ap: 0 }, { type: 'BUY_MACHINE' });

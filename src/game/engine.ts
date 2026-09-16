@@ -528,7 +528,7 @@ function ensureRdState(state: GameState): void {
 }
 
 export function maxApFor(staff: Staff): number {
-  return BASE_AP + Math.floor(staff.management / 2);
+  return BASE_AP + Math.max(0, staff.management);
 }
 
 function orderCountFor(sales: number): number {
@@ -552,11 +552,11 @@ export function hireEffectLines(state: GameState, role: Role, rdTrack: RdTrack =
   if (role === 'management') {
     const before = maxApFor(state.staff);
     const after = maxApFor({ ...state.staff, management: state.staff.management + 1 });
-    const apLine =
-      after > before
-        ? `本次入职：行动点上限 ${before} → ${after}。本月剩余行动点不补发，下月按新上限刷新。`
-        : `本次入职：行动点上限仍为 ${before}。再招 1 名管理后升到 ${before + 1}。`;
-    return [`每 2 名管理人员提供 1 点行动点上限（基础 ${BASE_AP} 点）。`, apLine, card];
+    return [
+      `每名管理人员提供 1 点行动点上限（基础 ${BASE_AP} 点）。`,
+      `本次入职：行动点上限 ${before} → ${after}。本月剩余行动点不补发，下月按新上限刷新。`,
+      card,
+    ];
   }
   if (role === 'sales') {
     const have = state.monthOrders?.length ?? 0;
@@ -3309,6 +3309,8 @@ export function createInitialState(): GameState {
     quarterEventTones: [],
   };
   state.paidInCapital = netAssetsOf(state);
+  state.maxAp = maxApFor(state.staff);
+  state.ap = state.maxAp;
   return state;
 }
 
