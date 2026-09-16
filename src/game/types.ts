@@ -19,6 +19,7 @@ export type IpId = 'jig' | 'yield' | 'spec' | 'lean' | 'auto';
 export type CardSuit = Role;
 export type EndKind = 'bankrupt' | 'finished';
 export type TrendDir = -1 | 0 | 1;
+export type ClimateId = 'steel' | 'channel' | 'chip' | 'priceWar' | 'plastic' | 'export' | 'energy' | 'slack';
 
 export interface MarketTrend {
   materials: Record<MaterialId, TrendDir>;
@@ -91,6 +92,7 @@ export interface CardInstance {
 }
 
 export type EventTone = 'good' | 'bad' | 'mixed';
+export type DifficultyId = 'standard';
 export type EventFamily =
   | 'material'
   | 'order'
@@ -168,6 +170,7 @@ export interface EventDef {
   minMonth?: number;
   requires?: EventRequire[];
   channelOnly?: boolean;
+  climateIds?: ClimateId[];
 }
 
 export interface StockLayer {
@@ -445,6 +448,8 @@ export interface GameState {
   eventId: string | null;
   eventNote: string | null;
   usedEventIds: string[];
+  difficulty: DifficultyId;
+  eventGoodStreak: number;
   selectedProduct: ProductId | null;
   monthOrders: MonthOrder[];
   acceptedOrderIds: string[];
@@ -463,7 +468,7 @@ export interface GameState {
   milestones: string[];
   everDebt: boolean;
   quarter: 1 | 2 | 3 | 4;
-  climateId: 'steel' | 'channel' | 'chip' | 'priceWar';
+  climateId: ClimateId;
   basicGoalId: string;
   challengeGoalIds: string[];
   challengeDraft: string[];

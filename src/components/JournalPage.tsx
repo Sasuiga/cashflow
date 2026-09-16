@@ -1,6 +1,7 @@
 import { ACHIEVEMENTS } from '../game/achievements';
 import { QUARTER_LABEL, climateById, goalById, marketToneLine } from '../game/board';
 import { eventById } from '../game/data';
+import { EVENT_TONE_LABEL } from '../game/format';
 import { scoreOf } from '../game/score';
 import type { GameState } from '../game/types';
 
@@ -51,10 +52,15 @@ export function JournalPage({ state }: { state: GameState }) {
             {QUARTER_LABEL[state.quarter]} · {climate.name}
           </p>
           <p className="exec-climate">{climate.headline}</p>
+          {climate.effects.map((line) => (
+            <p key={line} className="exec-climate">
+              {line}
+            </p>
+          ))}
           <p className="exec-climate">{marketToneLine(state)}</p>
           {monthEvent && state.eventNote && (
             <div className={`exec-event tone-${monthEvent.tone}`}>
-              <b>本月事项 · {monthEvent.title}</b>
+              <b>本月事项 · {EVENT_TONE_LABEL[monthEvent.tone]} · {monthEvent.title}</b>
               <p>{state.eventNote}</p>
             </div>
           )}

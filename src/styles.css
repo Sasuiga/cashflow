@@ -597,6 +597,11 @@ h1,
   background: rgba(143, 212, 184, 0.08);
 }
 
+.event-banner.tone-mixed {
+  border-color: rgba(224, 180, 90, 0.4);
+  background: rgba(224, 180, 90, 0.08);
+}
+
 .event-banner b {
   display: block;
   margin-bottom: 6px;
@@ -685,6 +690,10 @@ h1,
   color: var(--mint);
 }
 
+.exec-event.tone-mixed b {
+  color: var(--gold-2);
+}
+
 .journal-brief {
   margin: 4px 0 14px;
   padding-bottom: 12px;
@@ -710,6 +719,11 @@ h1,
 .event-impact.tone-good {
   border-color: #8aa888;
   background: #e7f0e2;
+}
+
+.event-impact.tone-mixed {
+  border-color: #c9b06a;
+  background: #f7efd8;
 }
 
 .event-impact b {

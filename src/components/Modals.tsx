@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { MATERIALS, catalogOf, eventById } from '../game/data';
 import { booksForView, netProfitOf, operatingCashOf, rdRevealOptions, traderOf } from '../game/engine';
-import { MONTH_NAMES, RD_TRACK_LABEL, money, pctLabel, priceDelta, signedMoney } from '../game/format';
+import { MONTH_NAMES, EVENT_TONE_LABEL, RD_TRACK_LABEL, money, pctLabel, priceDelta, signedMoney } from '../game/format';
 import { QUARTER_LABEL, CHALLENGE_PICK, climateById, currentBasicGoal, currentChallengePool, quarterOutlook } from '../game/board';
 import type { GameState, RdAssign, SettleRow } from '../game/types';
 
@@ -38,6 +38,9 @@ export function BoardModal({
           {climate.headline}
         </p>
         <div className="quarter-outlook">
+          {climate.effects.map((line) => (
+            <p key={line}>{line}</p>
+          ))}
           <p>原料价格：{outlook.materials}。</p>
           <p>成品价格：{outlook.products}。</p>
           <p>成品需求：{outlook.demand}。</p>
@@ -79,10 +82,15 @@ export function BoardModal({
 export function BriefingModal({ state, onConfirm }: { state: GameState; onConfirm: () => void }) {
   const visibleMaterials = MATERIALS.filter((item) => item.id !== 'd' || state.materialDUnlocked);
   const products = catalogOf(state).filter((item) => state.unlockedProducts.includes(item.id));
+  const climate = climateById(state.climateId);
   return (
     <div className="overlay">
       <div className="modal briefing-modal">
         <h2>{MONTH_NAMES[state.month - 1]} · 行业月报</h2>
+        <p className="sheet-caption">本季定调 · {climate.name}</p>
+        <p className="lead" style={{ marginTop: 0 }}>
+          {climate.headline} {climate.effects.join(' ')}
+        </p>
         <p className="sheet-caption">原料供应</p>
         <div className="sheet-wrap briefing-sheet">
         <table className="sheet compact">
@@ -164,7 +172,7 @@ export function EventModal({
     <div className="overlay">
       <div className="modal">
         <p className="kicker" style={{ color: event.tone === 'good' ? '#3d6b52' : event.tone === 'mixed' ? '#8a7040' : '#8a3d2f' }}>
-          本月事件 · {event.monthHint} · 已落地
+          本月事件 · {EVENT_TONE_LABEL[event.tone]} · {event.monthHint} · 已落地
         </p>
         <h2>{event.title}</h2>
         <p className="lead">{event.body}</p>

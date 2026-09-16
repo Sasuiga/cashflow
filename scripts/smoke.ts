@@ -1,7 +1,7 @@
-import { booksForView, collectReceivables, createInitialState, equityAccounts, factoryLayout, hireEffectLines, loanAmountOptions, loanLimit, lowestUnlockedMargin, bomSpotCost, netAssetsOf, netProfitOf, orderCapLoads, previewLoanCharges, purchaseQtyOptions, rdRevealOptions, reduce, traderOf, unitsNeeded } from '../src/game/engine';
-import { AR_OVERDUE_CHANCE, HIRE_COST, INTEREST_RATE, IP_LEAN_RATE, LOAN_DEFAULT_RATE, LOAN_LATE_FEE_RATE, LOAN_PER_MACHINE, LOAN_TERM_MONTHS, RD_FAIL_BONUS, RD_STAFF_CAP, SALARY, arCreditLossRate, arRecoveryRate, rdSuccessRate } from '../src/game/data';
+import { booksForView, collectReceivables, createInitialState, eligibleEventsForTone, equityAccounts, eventToneWeights, factoryLayout, hireEffectLines, loanAmountOptions, loanLimit, lowestUnlockedMargin, bomSpotCost, netAssetsOf, netProfitOf, orderCapLoads, previewLoanCharges, purchaseQtyOptions, rdRevealOptions, reduce, traderOf, unitsNeeded } from '../src/game/engine';
+import { AR_OVERDUE_CHANCE, EVENTS, HIRE_COST, INTEREST_RATE, IP_LEAN_RATE, LOAN_DEFAULT_RATE, LOAN_LATE_FEE_RATE, LOAN_PER_MACHINE, LOAN_TERM_MONTHS, RD_FAIL_BONUS, RD_STAFF_CAP, SALARY, arCreditLossRate, arRecoveryRate, eventById, eventToneWeightsFor, rdSuccessRate } from '../src/game/data';
 import { explainAccount, storyChildren } from '../src/game/settlementStory';
-import { goalById } from '../src/game/board';
+import { applyClimateModifiers, CLIMATES, goalById } from '../src/game/board';
 import { roundMoney } from '../src/game/format';
 import type { GameState } from '../src/game/types';
 
@@ -65,6 +65,25 @@ function checkBoardVariety(): void {
   assert(basics.size >= 2 || new Set(pools).size >= 2, '开局目标组合应出现差异');
 }
 
+function checkClimates(): void {
+  assert(CLIMATES.length >= 8, `气候应更丰富，实际 ${CLIMATES.length}`);
+  assert(new Set(CLIMATES.map((item) => item.id)).size === CLIMATES.length, '气候 id 不可重复');
+  assert(
+    CLIMATES.every((item) => item.effects.length >= 2),
+    '每种气候应写明至少两条本季影响',
+  );
+  const deals = Array.from({ length: 24 }, () => reduce(createInitialState(), { type: 'START_GAME' }));
+  assert(new Set(deals.map((state) => state.climateId)).size >= 4, '开局气候应出现差异');
+  const energy = createInitialState();
+  energy.climateId = 'energy';
+  applyClimateModifiers(energy);
+  assert(energy.modifiers.extraCapacity === -2, `错峰限电应扣产能，实际 ${energy.modifiers.extraCapacity}`);
+  const exported = createInitialState();
+  exported.climateId = 'export';
+  applyClimateModifiers(exported);
+  assert(exported.modifiers.extraDemand === 4, `出口旺季应放宽需求，实际 ${exported.modifiers.extraDemand}`);
+}
+
 function checkMarketQuotes(): void {
   let state = reduce(createInitialState(), { type: 'START_GAME' });
   assert(typeof state.marketTrend?.materials.a === 'number', '开季应写下行情定调');
@@ -80,6 +99,56 @@ function checkMarketQuotes(): void {
   assert((state.materialSpot?.a ?? 0) >= 4 && (state.materialSpot?.a ?? 0) <= 24, `钢材现货应在 4–24，实际 ${state.materialSpot?.a}`);
   assert((state.materialSpot?.c ?? 0) <= 6, `芯片现货应不超过 6，实际 ${state.materialSpot?.c}`);
   assert((state.traderSpot?.a ?? 0) >= 4 && (state.traderSpot?.a ?? 0) <= 16, `钢材贸易商应在 4–16，实际 ${state.traderSpot?.a}`);
+}
+
+function fireEvent(id: string, streak = 0): GameState {
+  let state = confirmBoard(reduce(createInitialState(), { type: 'START_GAME' }));
+  state.eventId = id;
+  state.eventGoodStreak = streak;
+  return reduce(state, { type: 'CONFIRM_BRIEFING' });
+}
+
+function checkEventSystem(): void {
+  const ids = EVENTS.map((event) => event.id);
+  assert(new Set(ids).size === ids.length, '事件卡 id 不可重复');
+  const byTone = { good: 0, bad: 0, mixed: 0 };
+  for (const event of EVENTS) byTone[event.tone] += 1;
+  assert(byTone.good >= 16, `利好卡池应更丰富，实际 ${byTone.good}`);
+  assert(byTone.mixed >= 10, `参半卡池应更丰富，实际 ${byTone.mixed}`);
+  assert(byTone.bad >= 16, `利空卡池应保持多样，实际 ${byTone.bad}`);
+
+  const first = eventToneWeightsFor(0);
+  assert(first.good === 1 && first.bad === 1 && first.mixed === 1, '首张三类权重应相等');
+  const afterGood = eventToneWeightsFor(1);
+  assert(afterGood.good < 1 && afterGood.good >= 0.5, `连出利好后利好权重应略降，实际 ${afterGood.good}`);
+  assert(afterGood.bad === 1 && afterGood.mixed === 1, '连出利好不应改利空/参半权重');
+  const afterMore = eventToneWeightsFor(4);
+  assert(afterMore.good === 0.5, `利好连出权重应有下限，实际 ${afterMore.good}`);
+
+  const opening = createInitialState();
+  opening.month = 1;
+  opening.climateId = 'steel';
+  const weights = eventToneWeights(opening);
+  assert(weights.good === 1 && weights.bad === 1 && weights.mixed === 1, '开局抽取权重应三类均等');
+  const goods = eligibleEventsForTone(opening, 'good');
+  const bads = eligibleEventsForTone(opening, 'bad');
+  const mixed = eligibleEventsForTone(opening, 'mixed');
+  assert(goods.length >= 8, `开局利好卡池过窄，实际 ${goods.length}`);
+  assert(bads.length >= 8, `开局利空卡池过窄，实际 ${bads.length}`);
+  assert(mixed.filter((event) => !event.channelOnly).length >= 6, `开局参半不应只靠渠道气候，实际 ${mixed.length}`);
+
+  for (const event of EVENTS) {
+    const landed = fireEvent(event.id);
+    assert(typeof landed.eventNote === 'string' && landed.eventNote.length > 0, `事件 ${event.id} 应能落地`);
+  }
+
+  const goodHit = fireEvent('talentIn', 0);
+  assert(goodHit.eventGoodStreak === 1, `利好后连出计数应为 1，实际 ${goodHit.eventGoodStreak}`);
+  const mixedHit = fireEvent('paidOvertime', 2);
+  assert(mixedHit.eventGoodStreak === 2, `参半不应改连出计数，实际 ${mixedHit.eventGoodStreak}`);
+  const badHit = fireEvent('resign', 2);
+  assert(badHit.eventGoodStreak === 0, `利空后应重置利好减权，实际 ${badHit.eventGoodStreak}`);
+  assert(eventById('paidOvertime').tone === 'mixed', '加班赶工应为参半');
 }
 
 function checkSalesOrders(): void {
@@ -626,7 +695,9 @@ checkOpeningAccounts();
 checkLoans();
 checkSupplyChannels();
 checkBoardVariety();
+checkClimates();
 checkMarketQuotes();
+checkEventSystem();
 checkSalesOrders();
 checkPurchaseLots();
 checkFactoryLayout();

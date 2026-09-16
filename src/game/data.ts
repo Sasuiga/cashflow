@@ -1,4 +1,4 @@
-import type { Bom, CardDef, EventDef, IpDef, IpId, MaterialDef, MaterialId, ProductDef, ProductId, RdTrack, Role } from './types';
+import type { Bom, CardDef, DifficultyId, EventDef, EventTone, IpDef, IpId, MaterialDef, MaterialId, ProductDef, ProductId, RdTrack, Role } from './types';
 
 export const TOTAL_MONTHS = 12;
 export const HAND_LIMIT = 5;
@@ -62,6 +62,44 @@ export const SPOT_HARD_CAP: Record<MaterialId, number> = { a: 36, b: 36, c: 10, 
 export const TRADER_HARD_CAP: Record<MaterialId, number> = { a: 16, b: 16, c: 4, d: 2 };
 export const CONTRACT_COVER_MONTHS = 3;
 export const LAST_CONTRACT_SIGN_MONTH = 9;
+
+export interface EventToneBalance {
+  good: number;
+  bad: number;
+  mixed: number;
+  goodStreakPenalty: number;
+  goodWeightFloor: number;
+}
+
+export const DEFAULT_DIFFICULTY: DifficultyId = 'standard';
+
+/** 开局难度钩子：当前仅 standard，三类均等；后续 easy/hard 改这里即可。 */
+export const EVENT_TONE_BALANCE: Record<DifficultyId, EventToneBalance> = {
+  standard: {
+    good: 1,
+    bad: 1,
+    mixed: 1,
+    goodStreakPenalty: 0.18,
+    goodWeightFloor: 0.5,
+  },
+};
+
+export function eventBalanceOf(difficulty: DifficultyId = DEFAULT_DIFFICULTY): EventToneBalance {
+  return EVENT_TONE_BALANCE[difficulty] ?? EVENT_TONE_BALANCE.standard;
+}
+
+export function eventToneWeightsFor(
+  streak = 0,
+  difficulty: DifficultyId = DEFAULT_DIFFICULTY,
+): Record<EventTone, number> {
+  const bal = eventBalanceOf(difficulty);
+  const n = Math.max(0, streak);
+  return {
+    good: Math.round(Math.max(bal.goodWeightFloor, bal.good - n * bal.goodStreakPenalty) * 100) / 100,
+    bad: bal.bad,
+    mixed: bal.mixed,
+  };
+}
 
 export function inventoryWriteDownRate(ageMonths: number): number {
   if (ageMonths >= 6) return 0.7;
@@ -368,7 +406,7 @@ export const EVENTS: EventDef[] = [
     tone: 'mixed',
     family: 'order',
     weight: 2,
-    channelOnly: true,
+    climateIds: ['channel'],
   },
   {
     id: 'resign',
@@ -470,7 +508,7 @@ export const EVENTS: EventDef[] = [
     tone: 'mixed',
     family: 'order',
     weight: 2,
-    channelOnly: true,
+    climateIds: ['channel'],
   },
   {
     id: 'rushStandard',
@@ -482,7 +520,7 @@ export const EVENTS: EventDef[] = [
     family: 'order',
     weight: 2,
     minMonth: 4,
-    channelOnly: true,
+    climateIds: ['channel'],
   },
   {
     id: 'poach',
@@ -727,6 +765,177 @@ export const EVENTS: EventDef[] = [
     family: 'hr',
     weight: 2,
     minMonth: 3,
+  },
+  {
+    id: 'nightShift',
+    title: '夜班加开',
+    monthHint: '产能',
+    body: '车间主动加开一班。灯多亮几小时，本月能多走几件。',
+    impact: '本月产能上升。幅度随月份浮动。',
+    tone: 'good',
+    family: 'capacity',
+  },
+  {
+    id: 'steelAlloc',
+    title: '钢材配额到货',
+    monthHint: '原料',
+    body: '钢厂把一小波配额划给你们。一部分直接入库，本月还能多买几车。',
+    impact: '免费入库一批钢材，按市价入账；本月钢材现货额度放宽。',
+    tone: 'good',
+    family: 'material',
+  },
+  {
+    id: 'showLead',
+    title: '展会带回意向',
+    monthHint: '订单',
+    body: '展台散了几张名片。询盘不算大单，但本月能落的件数多了一截。',
+    impact: '本月需求放宽。幅度随月份浮动。',
+    tone: 'good',
+    family: 'order',
+  },
+  {
+    id: 'energyRebate',
+    title: '电费返还',
+    monthHint: '政策',
+    body: '供电所把一笔小额返还打进基本户。能垫一点车间开销。',
+    impact: '现金到账。金额随月份浮动。',
+    tone: 'good',
+    family: 'policy',
+  },
+  {
+    id: 'yieldUp',
+    title: '良率爬坡',
+    monthHint: '工艺',
+    body: '首件合格率比上周好看。同样的班次，本月能多出几件。',
+    impact: '本月产能上升。幅度随月份浮动。',
+    tone: 'good',
+    family: 'quality',
+  },
+  {
+    id: 'channelPrepay',
+    title: '渠道预付款',
+    monthHint: '回款',
+    body: '经销商先打了一笔定金。货还没出，账上先松一口气。',
+    impact: '现金到账。金额随月份浮动。',
+    tone: 'good',
+    family: 'finance',
+  },
+  {
+    id: 'spotThaw',
+    title: '现货松闸',
+    monthHint: '采购',
+    body: '厂供把本月配额松了一档。钢、塑、芯片都能多买一点。',
+    impact: '本月钢材、塑料、芯片现货额度各放宽一档。',
+    tone: 'good',
+    family: 'material',
+  },
+  {
+    id: 'scrapSale',
+    title: '边角料变现',
+    monthHint: '存货',
+    body: '废料商上门收边角。钱不多，但能换一点现金。',
+    impact: '现金到账。金额随月份浮动。',
+    tone: 'good',
+    family: 'inventory',
+  },
+  {
+    id: 'freightAid',
+    title: '物流补贴',
+    monthHint: '产能',
+    body: '园区把短驳费补了一截。货走得顺，本月产能和询盘都松一点。',
+    impact: '本月产能和需求同步放宽。幅度随月份浮动。',
+    tone: 'good',
+    family: 'capacity',
+  },
+  {
+    id: 'paidOvertime',
+    title: '加班赶工',
+    monthHint: '产能',
+    body: '车间连开夜班。产能多出来了，加班费也要从基本户划走。',
+    impact: '本月产能上升，同时支付一笔加班费。金额随月份浮动。',
+    tone: 'mixed',
+    family: 'capacity',
+  },
+  {
+    id: 'volumeDeal',
+    title: '以价换量',
+    monthHint: '订单',
+    body: '渠道愿意加单，但把单价砍了一刀。量是给了，毛利更薄。',
+    impact: '本月售价下压，需求放宽。幅度随月份浮动。',
+    tone: 'mixed',
+    family: 'price',
+  },
+  {
+    id: 'reworkSwap',
+    title: '返工换单',
+    monthHint: '订单',
+    body: '客户把一批返修换成加单。产线要让出工时，询盘却密了一档。',
+    impact: '本月产能下降，需求放宽。幅度随月份浮动。',
+    tone: 'mixed',
+    family: 'quality',
+  },
+  {
+    id: 'rushSpot',
+    title: '加急现货',
+    monthHint: '采购',
+    body: '采购把加急费打过去，钢厂把本月额度多放了几车。',
+    impact: '支付一笔加急费，本月钢材现货额度放宽。金额随月份浮动。',
+    tone: 'mixed',
+    family: 'material',
+  },
+  {
+    id: 'sampleRun',
+    title: '样品试产占线',
+    monthHint: '订单',
+    body: '客户要样品。试产占了一截工时，但询盘跟着进来了。',
+    impact: '本月产能下降，需求放宽。幅度随月份浮动。',
+    tone: 'mixed',
+    family: 'order',
+  },
+  {
+    id: 'cashCut',
+    title: '现款折扣',
+    monthHint: '行情',
+    body: '现款客户愿意多拿货，标价要让一点。',
+    impact: '本月售价下压，需求放宽。幅度随月份浮动。',
+    tone: 'mixed',
+    family: 'price',
+  },
+  {
+    id: 'weekendShift',
+    title: '周末连班',
+    monthHint: '人事',
+    body: '生产岗周末不休息。产能多出来了，当月薪酬多计一档。',
+    impact: '本月产能上升，并加计 1 名生产人员的当月薪酬。',
+    tone: 'mixed',
+    family: 'hr',
+  },
+  {
+    id: 'bridgeIn',
+    title: '过桥资金',
+    monthHint: '融资',
+    body: '财务找来一笔过桥。账上先松一口气，负债也同步记上。',
+    impact: '现金到账，同时增加等额借款。金额随月份浮动。',
+    tone: 'mixed',
+    family: 'finance',
+  },
+  {
+    id: 'safetyDrill',
+    title: '安全演练占班',
+    monthHint: '产能',
+    body: '园区要求全员演练。产线停半班，本月能出的货少一截。',
+    impact: '本月产能下降。幅度随月份浮动。',
+    tone: 'bad',
+    family: 'capacity',
+  },
+  {
+    id: 'quoteHold',
+    title: '询盘观望',
+    monthHint: '订单',
+    body: '几家客户把询盘压到下月。货架还在，本月能落的单少了一档。',
+    impact: '本月需求收紧。幅度随月份浮动。',
+    tone: 'bad',
+    family: 'order',
   },
 ];
 

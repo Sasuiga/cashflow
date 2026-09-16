@@ -1,8 +1,8 @@
-import type { GameState, MaterialId, ProductDef, ProductId, QuarterStats, TrendDir } from './types';
+import type { ClimateId, GameState, MaterialId, ProductDef, ProductId, QuarterStats, TrendDir } from './types';
 import { LOAN_PER_MACHINE, MATERIALS, catalogOf, isPremiumProduct, isVolumeProduct, unlockedCatalog } from './data';
 import { priceDelta } from './format';
 
-export type ClimateId = 'steel' | 'channel' | 'chip' | 'priceWar';
+export type { ClimateId };
 export type GoalKind = 'basic' | 'challenge';
 export type GoalAxis =
   | 'cash'
@@ -23,14 +23,29 @@ export const BASIC_PENALTY = 5;
 export const CHALLENGE_POINTS = 5;
 export const CHALLENGE_PICK = 1;
 
+export interface ClimateMods {
+  extraCapacity?: number;
+  extraDemand?: number;
+  extraOrders?: number;
+  priceBonus?: number;
+  volumeWeight?: number;
+  premiumWeight?: number;
+  biggerOrders?: boolean;
+}
+
 export interface ClimateDef {
   id: ClimateId;
   name: string;
   headline: string;
   briefing: string;
+  effects: string[];
   eventIds: string[];
   materialTrend: Partial<Record<MaterialId, TrendDir>>;
   productTrend: Partial<Record<ProductId, TrendDir>>;
+  demandTrend?: Partial<Record<ProductId, TrendDir>>;
+  quotaTrend?: Partial<Record<MaterialId, TrendDir>>;
+  spotPool?: Partial<Record<MaterialId, number[]>>;
+  mods?: ClimateMods;
 }
 
 export interface GoalDef {
@@ -51,36 +66,99 @@ export const CLIMATES: ClimateDef[] = [
     name: '钢材紧缺',
     headline: '北方钢厂惜售，现货偏紧。',
     briefing: '本季市场：钢材紧缺。钢价易涨，吃钢的走量货料本会被抬上去。',
-    eventIds: ['steelSpike', 'plasticSpike', 'moldWear', 'traderDump'],
+    effects: ['钢材报价本季易涨，走量货售价也会跟涨。', '钢材现货配额偏紧。'],
+    eventIds: ['steelSpike', 'plasticSpike', 'moldWear', 'traderDump', 'steelAlloc'],
     materialTrend: { a: 1 },
     productTrend: { basic: 1, economy: 1 },
+    quotaTrend: { a: 1 },
+    spotPool: { a: [6, 8, 10] },
   },
   {
     id: 'channel',
     name: '渠道要量',
     headline: '经销商在锁货，走量订单更密。',
-    briefing: '本季市场：渠道要量。需求偏高，交不齐单会被追责。走量货报价偏强。',
+    briefing: '本季市场：渠道要量。每月多一张单，走量货更好出，钢塑现货也松一档。',
+    effects: ['本季每月多一张市场单，走量货更容易出现，单量也偏大。', '钢材、塑料现货偏松。'],
     eventIds: ['bigOrder', 'rushOrder', 'rushStandard', 'channelHold', 'arDelay', 'customerBreak', 'priceRally'],
     materialTrend: {},
     productTrend: { basic: 1, economy: 1 },
+    demandTrend: { basic: 1, economy: 1 },
+    quotaTrend: { a: -1, b: -1 },
+    spotPool: { a: [12, 16, 20], b: [8, 10, 12] },
+    mods: { extraOrders: 1, volumeWeight: 1, biggerOrders: true },
   },
   {
     id: 'chip',
     name: '芯片交期紧张',
     headline: '分销商收紧配额，中高端更吃力。',
-    briefing: '本季市场：芯片交期紧张。芯片易涨，标准款和旗舰款售价也容易跟涨。',
+    briefing: '本季市场：芯片交期紧张。芯片易涨，标准款和旗舰款售价也容易跟涨，中高端单更少。',
+    effects: ['芯片报价易涨，标准款和旗舰款售价容易跟涨。', '芯片现货偏紧，中高端订单更少。'],
     eventIds: ['chipSqueeze', 'chipAlloc'],
     materialTrend: { c: 1 },
     productTrend: { standard: 1, premium: 1 },
+    demandTrend: { standard: -1, premium: -1, special: -1 },
+    quotaTrend: { c: 1 },
+    spotPool: { c: [1, 2] },
+    mods: { premiumWeight: -1 },
   },
   {
     id: 'priceWar',
     name: '价格战',
     headline: '同行在清库存，标价承压。',
-    briefing: '本季市场：价格战。成品报价偏弱，毛利容易被压薄。',
+    briefing: '本季市场：价格战。成品报价偏弱，询盘也冷一档，毛利容易被压薄。',
+    effects: ['成品报价本季偏弱。', '询盘偏冷，本月需求略收。'],
     eventIds: ['dump', 'quality', 'stockAge', 'dampStock', 'idleSeason', 'inspectBonus'],
     materialTrend: {},
     productTrend: { basic: -1, standard: -1, premium: -1, economy: -1, special: -1 },
+    demandTrend: { basic: -1, standard: -1, premium: -1, economy: -1, special: -1 },
+    mods: { extraDemand: -4 },
+  },
+  {
+    id: 'plastic',
+    name: '塑料紧缺',
+    headline: '华东聚合装置检修，粒子被抢。',
+    briefing: '本季市场：塑料紧缺。塑料易涨，本月能买到的塑料更少。',
+    effects: ['塑料报价本季易涨。', '塑料现货配额偏紧。'],
+    eventIds: ['plasticSpike', 'plasticRestart', 'dampStock', 'moldWear'],
+    materialTrend: { b: 1 },
+    productTrend: {},
+    quotaTrend: { b: 1 },
+    spotPool: { b: [4, 6, 8] },
+  },
+  {
+    id: 'export',
+    name: '出口旺季',
+    headline: '海外询盘变密，走量货更好出。',
+    briefing: '本季市场：出口旺季。成品报价偏强，意向单也密了一档。',
+    effects: ['成品报价本季偏强。', '海外询盘变密，本月需求放宽，单量也偏大。'],
+    eventIds: ['rebate', 'inspectBonus', 'showLead', 'freightAid', 'priceRally', 'channelPrepay'],
+    materialTrend: {},
+    productTrend: { basic: 1, standard: 1, premium: 1, economy: 1, special: 1 },
+    demandTrend: { basic: 1, standard: 1, premium: 1, economy: 1, special: 1 },
+    mods: { extraDemand: 4, biggerOrders: true },
+  },
+  {
+    id: 'energy',
+    name: '错峰限电',
+    headline: '供电所通知错峰，产线要让出半班。',
+    briefing: '本季市场：错峰限电。报价大体持稳，但本季每月产能少一档。',
+    effects: ['错峰限电，本季每月产能 -2。', '原料和成品报价大致持稳。'],
+    eventIds: ['blackout', 'utilityBill', 'energyRebate', 'nightShift', 'paidOvertime', 'weekendShift'],
+    materialTrend: {},
+    productTrend: {},
+    mods: { extraCapacity: -2 },
+  },
+  {
+    id: 'slack',
+    name: '原料松闸',
+    headline: '钢厂和塑料装置都松了，补库窗口打开。',
+    briefing: '本季市场：原料松闸。钢塑报价易跌，现货也多一档，适合把料买够。',
+    effects: ['钢材、塑料报价本季易跌。', '钢材、塑料现货偏松，好补库。'],
+    eventIds: ['traderDump', 'vendorCredit', 'spotThaw', 'steelAlloc', 'plasticRestart'],
+    materialTrend: { a: -1, b: -1 },
+    productTrend: {},
+    quotaTrend: { a: -1, b: -1 },
+    spotPool: { a: [12, 16, 20], b: [8, 10, 12] },
   },
 ];
 
@@ -95,8 +173,20 @@ export function quarterOf(month: number): 1 | 2 | 3 | 4 {
   return Math.min(4, Math.max(1, Math.ceil(month / 3))) as 1 | 2 | 3 | 4;
 }
 
-export function climateById(id: ClimateId): ClimateDef {
+export function climateById(id: string): ClimateDef {
   return CLIMATES.find((item) => item.id === id) ?? CLIMATES[0]!;
+}
+
+export function applyClimateModifiers(state: GameState): void {
+  const mods = climateById(state.climateId).mods;
+  if (!mods) return;
+  state.modifiers.extraCapacity += mods.extraCapacity ?? 0;
+  state.modifiers.extraDemand += mods.extraDemand ?? 0;
+  state.modifiers.priceBonus += mods.priceBonus ?? 0;
+}
+
+export function climateSpotPool(climateId: string, id: MaterialId): number[] | undefined {
+  return climateById(climateId).spotPool?.[id];
 }
 
 export function trendWord(dir: TrendDir): string {
@@ -131,18 +221,16 @@ function collapseTrend(parts: { name: string; dir: TrendDir }[], word: (dir: Tre
 }
 
 function demandDirOf(climateId: ClimateId, product: ProductDef): TrendDir {
-  if (climateId === 'channel' && isVolumeProduct(product)) return 1;
-  if (climateId === 'chip' && (isPremiumProduct(product) || (product.bom.c ?? 0) > 0 || product.id === 'standard')) {
-    return -1;
-  }
+  const demand = climateById(climateId).demandTrend ?? {};
+  if (demand[product.id] != null) return demand[product.id] ?? 0;
+  if (isVolumeProduct(product) && demand.basic != null) return demand.basic;
+  if (isPremiumProduct(product) && demand.premium != null) return demand.premium;
+  if (demand.standard != null) return demand.standard;
   return 0;
 }
 
 function quotaDirOf(climateId: ClimateId, materialId: MaterialId, priceTrend: TrendDir): TrendDir {
-  let dir = 0;
-  if (materialId === 'a' && climateId === 'steel') dir += 1;
-  if ((materialId === 'a' || materialId === 'b') && climateId === 'channel') dir -= 1;
-  if (materialId === 'c' && climateId === 'chip') dir += 1;
+  let dir = climateById(climateId).quotaTrend?.[materialId] ?? 0;
   if (priceTrend > 0) dir += 1;
   if (priceTrend < 0) dir -= 1;
   return clampTrend(dir);
@@ -358,7 +446,7 @@ export const GOALS: GoalDef[] = [
     name: '账上留住现金',
     desc: '第一季度结束时，现金不低于 10 万。',
     axis: 'cash',
-    climateAffinity: ['steel', 'priceWar'],
+    climateAffinity: ['steel', 'priceWar', 'energy', 'plastic'],
     reached: (state) => state.cash >= 10,
     progress: (state) => `现金 ${state.cash}万 / 10万`,
   },
@@ -369,7 +457,7 @@ export const GOALS: GoalDef[] = [
     name: '产线先转起来',
     desc: '本季累计售出不少于 18 件。',
     axis: 'volume',
-    climateAffinity: ['channel'],
+    climateAffinity: ['channel', 'export', 'slack'],
     reached: (state) => state.quarterStats.sold >= 18,
     progress: (state) => `已售 ${state.quarterStats.sold} / 18 件`,
   },
@@ -380,7 +468,7 @@ export const GOALS: GoalDef[] = [
     name: '本季走量达标',
     desc: '本季累计售出不少于 30 件。',
     axis: 'volume',
-    climateAffinity: ['channel'],
+    climateAffinity: ['channel', 'export', 'slack'],
     reached: (state) => state.quarterStats.sold >= 30,
     progress: (state) => `已售 ${state.quarterStats.sold} / 30 件`,
   },
@@ -391,7 +479,7 @@ export const GOALS: GoalDef[] = [
     name: '钢材与塑料不断档',
     desc: '本季钢材和塑料从未同时见底。',
     axis: 'stock',
-    climateAffinity: ['steel'],
+    climateAffinity: ['steel', 'plastic', 'energy'],
     reached: (state) => !state.quarterStats.stockoutAB,
     progress: (state) => (state.quarterStats.stockoutAB ? '已同时见底' : '尚未同时见底'),
   },
@@ -402,7 +490,7 @@ export const GOALS: GoalDef[] = [
     name: '钢材不断档',
     desc: '本季钢材库存从未见底。',
     axis: 'stock',
-    climateAffinity: ['steel'],
+    climateAffinity: ['steel', 'plastic', 'energy'],
     reached: (state) => !state.quarterStats.stockoutA,
     progress: (state) => (state.quarterStats.stockoutA ? '钢材已见底' : '钢材尚未见底'),
   },
@@ -434,7 +522,7 @@ export const GOALS: GoalDef[] = [
     name: '现金留到 16 万',
     desc: '第一季度结束时，现金不低于 16 万。',
     axis: 'cash',
-    climateAffinity: ['priceWar'],
+    climateAffinity: ['priceWar', 'energy'],
     reached: (state) => state.cash >= 16,
     progress: (state) => `现金 ${state.cash}万 / 16万`,
   },
@@ -466,7 +554,7 @@ export const GOALS: GoalDef[] = [
     name: '现金不低于 12 万',
     desc: '第二季度结束时，现金不低于 12 万。',
     axis: 'cash',
-    climateAffinity: ['steel', 'priceWar'],
+    climateAffinity: ['steel', 'priceWar', 'energy', 'plastic'],
     reached: (state) => state.cash >= 12,
     progress: (state) => `现金 ${state.cash}万 / 12万`,
   },
@@ -477,7 +565,7 @@ export const GOALS: GoalDef[] = [
     name: '本季走量不断',
     desc: '本季累计售出不少于 24 件。',
     axis: 'volume',
-    climateAffinity: ['channel'],
+    climateAffinity: ['channel', 'export', 'slack'],
     reached: (state) => state.quarterStats.sold >= 24,
     progress: (state) => `已售 ${state.quarterStats.sold} / 24 件`,
   },
@@ -543,7 +631,7 @@ export const GOALS: GoalDef[] = [
     name: '现金峰值到 20 万',
     desc: '本季现金峰值达到 20 万。',
     axis: 'cash',
-    climateAffinity: ['priceWar'],
+    climateAffinity: ['priceWar', 'energy'],
     reached: (state) => state.quarterStats.peakCash >= 20,
     progress: (state) => `本季现金峰值 ${state.quarterStats.peakCash} / 20 万`,
   },
@@ -554,7 +642,7 @@ export const GOALS: GoalDef[] = [
     name: '标准款交过货',
     desc: '本季至少售出 1 件非基础款。',
     axis: 'product',
-    climateAffinity: ['chip', 'channel'],
+    climateAffinity: ['chip', 'channel', 'export'],
     reached: (state) => state.quarterStats.nonBasic,
     progress: (state) => (state.quarterStats.nonBasic ? '已交付非基础款' : '尚未交付非基础款'),
   },
@@ -565,7 +653,7 @@ export const GOALS: GoalDef[] = [
     name: '至少一个月覆盖费用',
     desc: '本季至少有一个月，营业收入覆盖当月薪酬与厂区维护。',
     axis: 'cover',
-    climateAffinity: ['priceWar'],
+    climateAffinity: ['priceWar', 'energy'],
     reached: (state) => state.quarterStats.coveringMonth,
     progress: (state) => (state.quarterStats.coveringMonth ? '已有一个月覆盖费用' : '尚未出现覆盖月'),
   },
@@ -576,7 +664,7 @@ export const GOALS: GoalDef[] = [
     name: '本季出货不断',
     desc: '本季累计售出不少于 36 件。',
     axis: 'volume',
-    climateAffinity: ['channel'],
+    climateAffinity: ['channel', 'export', 'slack'],
     reached: (state) => state.quarterStats.sold >= 36,
     progress: (state) => `已售 ${state.quarterStats.sold} / 36 件`,
   },
@@ -587,7 +675,7 @@ export const GOALS: GoalDef[] = [
     name: '薪酬备付有余',
     desc: '第三季度结束时，现金不低于应付职工薪酬加 5 万。',
     axis: 'cash',
-    climateAffinity: ['steel'],
+    climateAffinity: ['steel', 'plastic', 'energy'],
     reached: (state) => state.cash >= state.wagesPayable + 5,
     progress: (state) => `现金 ${state.cash}万 / 应付职工薪酬+5 ${state.wagesPayable + 5}万`,
   },
@@ -609,7 +697,7 @@ export const GOALS: GoalDef[] = [
     name: '销售编制到 2 人',
     desc: '销售人员达到 2 人。',
     axis: 'sales',
-    climateAffinity: ['channel'],
+    climateAffinity: ['channel', 'export', 'slack'],
     reached: (state) => state.staff.sales >= 2,
     progress: (state) => `销售 ${state.staff.sales} / 2 人`,
   },
@@ -640,7 +728,7 @@ export const GOALS: GoalDef[] = [
     name: '两个月覆盖费用',
     desc: '本季至少有两个月，营业收入覆盖当月薪酬与厂区维护。',
     axis: 'cover',
-    climateAffinity: ['priceWar'],
+    climateAffinity: ['priceWar', 'energy'],
     reached: (state) => coveringCount(state) >= 2,
     progress: (state) => `覆盖月 ${coveringCount(state)} / 2`,
   },
@@ -685,7 +773,7 @@ export const GOALS: GoalDef[] = [
     name: '净资产做到 40 万',
     desc: '季末净资产不低于 40 万。',
     axis: 'net',
-    climateAffinity: ['priceWar'],
+    climateAffinity: ['priceWar', 'energy'],
     reached: (state) => netOf(state) >= 40,
     progress: (state) => (state.lastReport ? `最近结算净资产 ${state.lastReport.netAssets}万 / 40万` : '待结算后对照'),
   },
@@ -696,7 +784,7 @@ export const GOALS: GoalDef[] = [
     name: '现金与杠杆都守住',
     desc: '季末现金不低于 18 万，且短期借款不超过设备抵押上限。',
     axis: 'cash',
-    climateAffinity: ['steel'],
+    climateAffinity: ['steel', 'plastic', 'energy'],
     reached: (state) => state.cash >= 18 && state.debt <= state.machines * LOAN_PER_MACHINE,
     progress: (state) => `现金 ${state.cash}万 / 18万，负债 ${state.debt}万 / 上限 ${state.machines * LOAN_PER_MACHINE}万`,
   },
@@ -763,7 +851,7 @@ export const GOALS: GoalDef[] = [
     name: '本季走量冲 50',
     desc: '本季累计售出不少于 50 件。',
     axis: 'volume',
-    climateAffinity: ['channel'],
+    climateAffinity: ['channel', 'export', 'slack'],
     reached: (state) => state.quarterStats.sold >= 50,
     progress: (state) => `已售 ${state.quarterStats.sold} / 50 件`,
   },
@@ -774,7 +862,7 @@ export const GOALS: GoalDef[] = [
     name: '现金峰值到 40 万',
     desc: '本季现金峰值达到 40 万。',
     axis: 'cash',
-    climateAffinity: ['priceWar'],
+    climateAffinity: ['priceWar', 'energy'],
     reached: (state) => state.quarterStats.peakCash >= 40,
     progress: (state) => `本季现金峰值 ${state.quarterStats.peakCash} / 40 万`,
   },

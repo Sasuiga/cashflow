@@ -59,7 +59,9 @@ import {
   cardById,
   cardNeedsMaterial,
   catalogOf,
+  DEFAULT_DIFFICULTY,
   eventById,
+  eventToneWeightsFor,
   ipById,
   isPremiumProduct,
   isVolumeProduct,
@@ -79,6 +81,8 @@ import {
   CLIMATES,
   QUARTER_LABEL,
   climateById,
+  applyClimateModifiers,
+  climateSpotPool,
   currentBasicGoal,
   dealBasicGoal,
   dealChallengePool,
@@ -100,6 +104,7 @@ import type {
   CardInstance,
   DeptId,
   EventDef,
+  EventTone,
   GameAction,
   GameState,
   IpId,
@@ -1305,8 +1310,8 @@ function syncDemandFromOrders(state: GameState): void {
   state.demand = demand;
 }
 
-function orderSizePool(state: GameState, productId: ProductId, channel: boolean): number[] {
-  const boosted = channel;
+function orderSizePool(state: GameState, productId: ProductId): number[] {
+  const boosted = Boolean(climateById(state.climateId).mods?.biggerOrders);
   const def = productOf(state, productId);
   if (isVolumeProduct(def)) return boosted ? [10, 12, 16] : [8, 10, 12];
   if (isPremiumProduct(def)) return boosted ? [1, 2] : [1];
@@ -1321,13 +1326,14 @@ function sizeAfterDemand(state: GameState, qty: number, productId: ProductId, ex
 }
 
 function weightedProducts(state: GameState): ProductId[] {
-  const climate = climateById(state.climateId).id;
+  const climate = climateById(state.climateId);
   const copies: ProductId[] = [];
   for (const def of unlockedCatalog(state)) {
     let weight = isVolumeProduct(def) ? 3 : isPremiumProduct(def) ? 1 : 2;
     if (state.staff.sales >= 2 && isPremiumProduct(def)) weight += 1;
-    if (climate === 'chip' && ((def.bom.c ?? 0) > 0 || isPremiumProduct(def))) weight = Math.max(1, weight - 1);
-    if (climate === 'channel' && isVolumeProduct(def)) weight += 1;
+    if (isVolumeProduct(def)) weight += climate.mods?.volumeWeight ?? 0;
+    if (isPremiumProduct(def) || (def.bom.c ?? 0) > 0) weight += climate.mods?.premiumWeight ?? 0;
+    weight = Math.max(1, weight);
     for (let i = 0; i < weight; i += 1) copies.push(def.id);
   }
   return copies.length ? copies : ['basic'];
@@ -1344,8 +1350,7 @@ function rollMonthOrders(state: GameState): void {
   state.acceptedOrderIds = [];
   state.extraProduce = {};
   const climate = climateById(state.climateId);
-  const channel = climate.id === 'channel';
-  let count = orderCountFor(state.staff.sales) + (channel ? 1 : 0);
+  let count = orderCountFor(state.staff.sales) + (climate.mods?.extraOrders ?? 0);
   if ((state.modifiers.extraDemand ?? 0) <= -8) count -= 1;
   if ((state.modifiers.extraDemand ?? 0) >= 8) count += 1;
   count = clamp(count, 2, MAX_MONTH_ORDERS);
@@ -1365,7 +1370,7 @@ function rollMonthOrders(state: GameState): void {
   const volume = volumeProductOf(state);
   const volumeQty = sizeAfterDemand(
     state,
-    pick(orderSizePool(state, volume, channel)),
+    pick(orderSizePool(state, volume)),
     volume,
     state.modifiers.extraDemand ?? 0,
   );
@@ -1378,7 +1383,7 @@ function rollMonthOrders(state: GameState): void {
     const productId = pick(pool);
     const qty = sizeAfterDemand(
       state,
-      pick(orderSizePool(state, productId, channel)),
+      pick(orderSizePool(state, productId)),
       productId,
       state.modifiers.extraDemand ?? 0,
     );
@@ -1400,7 +1405,6 @@ function addMarketOrder(state: GameState, productId: ProductId, qty: number): Mo
 }
 
 function rollOneMarketOrder(state: GameState): MonthOrder {
-  const channel = climateById(state.climateId).id === 'channel';
   const pool = weightedProducts(state);
   let productId = volumeProductOf(state);
   let qty = 4;
@@ -1408,7 +1412,7 @@ function rollOneMarketOrder(state: GameState): MonthOrder {
     productId = pick(pool);
     qty = sizeAfterDemand(
       state,
-      pick(orderSizePool(state, productId, channel)),
+      pick(orderSizePool(state, productId)),
       productId,
       state.modifiers.extraDemand ?? 0,
     );
@@ -2217,13 +2221,15 @@ function rollMarket(state: GameState): void {
 
 function rollSpotQty(id: MaterialId, state: GameState): number {
   if (id === 'd' && !state.materialDUnlocked) return 0;
-  const climate = state.climateId;
+  const climatePool = climateSpotPool(state.climateId, id);
   const trend = state.marketTrend?.materials[id] ?? 0;
-  let pool: number[];
-  if (id === 'a') pool = climate === 'steel' ? [6, 8, 10] : climate === 'channel' ? [12, 16, 20] : [8, 10, 12, 16];
-  else if (id === 'b') pool = climate === 'channel' ? [8, 10, 12] : [6, 8, 10, 12];
-  else if (id === 'c') pool = climate === 'chip' ? [1, 2] : [2, 3, 4];
-  else pool = [1, 2];
+  let pool = climatePool;
+  if (!pool) {
+    if (id === 'a') pool = [8, 10, 12, 16];
+    else if (id === 'b') pool = [6, 8, 10, 12];
+    else if (id === 'c') pool = [2, 3, 4];
+    else pool = [1, 2];
+  }
   let qty = pick(pool);
   if (trend > 0) qty -= id === 'c' || id === 'd' ? 1 : 4;
   if (trend < 0) qty += id === 'c' || id === 'd' ? 1 : 4;
@@ -2248,7 +2254,8 @@ function adjustSpot(state: GameState, id: MaterialId, delta: number): number {
 
 function eventEligible(state: GameState, event: EventDef): boolean {
   if (event.minMonth && state.month < event.minMonth) return false;
-  if (event.channelOnly && state.climateId !== 'channel') return false;
+  const climateIds = event.climateIds ?? (event.channelOnly ? ['channel'] : undefined);
+  if (climateIds?.length && !climateIds.includes(state.climateId)) return false;
   for (const req of event.requires ?? []) {
     if (req === 'receivables' && !(state.receivables ?? []).length) return false;
     if (req === 'rdStaff' && state.staff.rd <= 0) return false;
@@ -2258,25 +2265,44 @@ function eventEligible(state: GameState, event: EventDef): boolean {
   return true;
 }
 
+function poolForTone(state: GameState, tone: EventTone, unusedOnly: boolean): EventDef[] {
+  return EVENTS.filter(
+    (event) =>
+      event.tone === tone &&
+      (!unusedOnly || !state.usedEventIds.includes(event.id)) &&
+      eventEligible(state, event),
+  );
+}
+
+export function eligibleEventsForTone(state: GameState, tone: EventTone): EventDef[] {
+  const unused = poolForTone(state, tone, true);
+  if (unused.length) return unused;
+  return poolForTone(state, tone, false);
+}
+
+export function eventToneWeights(state: GameState): Record<EventTone, number> {
+  return eventToneWeightsFor(state.eventGoodStreak ?? 0, state.difficulty ?? DEFAULT_DIFFICULTY);
+}
+
 function pickEvent(state: GameState): string {
-  const climate = climateById(state.climateId);
-  const recent = state.recentEventFamilies ?? [];
-  const tones = state.quarterEventTones ?? [];
-  const dryGood = tones.length >= 2 && !tones.includes('good');
-
-  let pool = EVENTS.filter((event) => !state.usedEventIds.includes(event.id) && eventEligible(state, event));
-  if (pool.length === 0) pool = EVENTS.filter((event) => eventEligible(state, event));
-  if (pool.length === 0) pool = [...EVENTS];
-
-  const weighted = pool.flatMap((event) => {
-    let weight = event.weight ?? 1;
-    if (climate.eventIds.includes(event.id)) weight += 1;
-    if (recent.includes(event.family)) weight = Math.max(1, weight - 2);
-    if (dryGood && event.tone === 'good') weight += 3;
-    if (dryGood && event.tone === 'bad') weight = Math.max(1, weight - 1);
-    return Array.from({ length: weight }, () => event.id);
+  const weights = eventToneWeights(state);
+  const tones: EventTone[] = ['good', 'bad', 'mixed'];
+  const live = tones.filter((tone) => eligibleEventsForTone(state, tone).length > 0);
+  const source = live.length ? live : tones;
+  const tickets = source.flatMap((tone) => {
+    const n = Math.max(1, Math.round(Math.max(0, weights[tone]) * 20));
+    return Array.from({ length: n }, () => tone);
   });
-  return pick(weighted);
+  const tone = pick(tickets);
+  const pool = eligibleEventsForTone(state, tone);
+  const fallback = EVENTS.filter((event) => eventEligible(state, event));
+  const use = pool.length ? pool : fallback.length ? fallback : [...EVENTS];
+  const recent = state.recentEventFamilies ?? [];
+  const fresh = use.filter((event) => !recent.includes(event.family));
+  const pickFrom = fresh.length ? fresh : use;
+  const flavored = new Set(climateById(state.climateId).eventIds ?? []);
+  const ids = pickFrom.flatMap((event) => Array.from({ length: flavored.has(event.id) ? 2 : 1 }, () => event.id));
+  return pick(ids);
 }
 
 function grantMaterial(state: GameState, id: MaterialId, qty: number): number {
@@ -2296,6 +2322,7 @@ function takeMaterial(state: GameState, id: MaterialId, qty: number): number {
 
 function prepareMonth(state: GameState): void {
   state.modifiers = emptyModifiers();
+  applyClimateModifiers(state);
   state.shop = [];
   state.cardsBoughtThisMonth = 0;
   state.selectedProduct = null;
@@ -3194,10 +3221,141 @@ function applyEvent(state: GameState): void {
         bits.push('采购岗本就空着，本月现货各砍一档');
       }
       break;
+    case 'nightShift': {
+      const cap = shockOf(shock, 4, 5, 6);
+      state.modifiers.extraCapacity += cap;
+      bits.push(`夜班加开，本月产能 +${cap}`);
+      break;
+    }
+    case 'steelAlloc': {
+      const qty = grantMaterial(state, 'a', 4);
+      addSpot(state, 'a', 4);
+      bits.push(`钢材免费入库 ${qty} 件，本月钢材现货再 +4`);
+      break;
+    }
+    case 'showLead': {
+      const demand = shockOf(shock, 4, 6, 8);
+      state.modifiers.extraDemand += demand;
+      bits.push('展会带回意向，本月订单放宽');
+      break;
+    }
+    case 'energyRebate': {
+      const amount = shockOf(shock, 1, 1.5, 2);
+      receive(state, amount, 'extra');
+      bits.push(`电费返还 ${amount} 万到账`);
+      break;
+    }
+    case 'yieldUp': {
+      const cap = shockOf(shock, 3, 4, 5);
+      state.modifiers.extraCapacity += cap;
+      bits.push(`良率爬坡，本月产能 +${cap}`);
+      break;
+    }
+    case 'channelPrepay': {
+      const amount = shockOf(shock, 2, 3, 4);
+      receive(state, amount, 'extra');
+      bits.push(`渠道预付款 ${amount} 万到账`);
+      break;
+    }
+    case 'spotThaw':
+      addSpot(state, 'a', 4);
+      addSpot(state, 'b', 4);
+      addSpot(state, 'c', 1);
+      bits.push('本月钢材现货 +4，塑料现货 +4，芯片现货 +1');
+      break;
+    case 'scrapSale': {
+      const amount = shockOf(shock, 1, 1.5, 2);
+      receive(state, amount, 'extra');
+      bits.push(`边角料变现 ${amount} 万到账`);
+      break;
+    }
+    case 'freightAid': {
+      const cap = shockOf(shock, 2, 3, 4);
+      const demand = shockOf(shock, 3, 4, 5);
+      state.modifiers.extraCapacity += cap;
+      state.modifiers.extraDemand += demand;
+      bits.push(`物流补贴，本月产能 +${cap}，订单放宽`);
+      break;
+    }
+    case 'paidOvertime': {
+      const cap = shockOf(shock, 4, 5, 6);
+      const fee = shockOf(shock, 1, 1.5, 2);
+      pay(state, fee, 'admin');
+      state.modifiers.extraCapacity += cap;
+      bits.push(`加班赶工，本月产能 +${cap}，加班费 ${fee} 万已划走`);
+      break;
+    }
+    case 'volumeDeal': {
+      const cut = shockOf(shock, 0.05, 0.08, 0.1);
+      const demand = shockOf(shock, 6, 8, 10);
+      state.modifiers.priceBonus -= cut;
+      state.modifiers.extraDemand += demand;
+      bits.push(`以价换量，本月售价 -${Math.round(cut * 100)}%，订单放宽`);
+      break;
+    }
+    case 'reworkSwap': {
+      const cap = shockOf(shock, 2, 3, 4);
+      const demand = shockOf(shock, 4, 6, 8);
+      state.modifiers.extraCapacity -= cap;
+      state.modifiers.extraDemand += demand;
+      bits.push(`返工换单，本月产能 -${cap}，订单放宽`);
+      break;
+    }
+    case 'rushSpot': {
+      const fee = shockOf(shock, 1, 1.5, 2);
+      pay(state, fee, 'extra');
+      addSpot(state, 'a', 6);
+      bits.push(`加急现货费 ${fee} 万已划走，本月钢材现货 +6`);
+      break;
+    }
+    case 'sampleRun': {
+      const cap = shockOf(shock, 2, 3, 4);
+      const demand = shockOf(shock, 3, 4, 6);
+      state.modifiers.extraCapacity -= cap;
+      state.modifiers.extraDemand += demand;
+      bits.push(`样品试产占线，本月产能 -${cap}，订单放宽`);
+      break;
+    }
+    case 'cashCut': {
+      const cut = shockOf(shock, 0.04, 0.05, 0.08);
+      const demand = shockOf(shock, 4, 5, 6);
+      state.modifiers.priceBonus -= cut;
+      state.modifiers.extraDemand += demand;
+      bits.push(`现款折扣，本月售价 -${Math.round(cut * 100)}%，订单放宽`);
+      break;
+    }
+    case 'weekendShift': {
+      const cap = shockOf(shock, 3, 4, 5);
+      state.modifiers.extraCapacity += cap;
+      accrueRoleWages(state, 'production', SALARY.production);
+      bits.push(`周末连班，本月产能 +${cap}，加计生产薪酬 ${SALARY.production} 万`);
+      break;
+    }
+    case 'bridgeIn': {
+      const amount = shockOf(shock, 3, 4, 5);
+      receive(state, amount, 'borrow');
+      bits.push(`过桥资金 ${amount} 万到账，负债同步记上`);
+      break;
+    }
+    case 'safetyDrill': {
+      const cap = shockOf(shock, 2, 3, 4);
+      state.modifiers.extraCapacity -= cap;
+      bits.push(`安全演练占班，本月产能 -${cap}`);
+      break;
+    }
+    case 'quoteHold': {
+      const demand = shockOf(shock, 3, 4, 6);
+      state.modifiers.extraDemand -= demand;
+      bits.push('询盘观望，本月订单收紧');
+      break;
+    }
     default:
       bits.push(event.impact);
       break;
   }
+
+  if (event.tone === 'good') state.eventGoodStreak = (state.eventGoodStreak ?? 0) + 1;
+  else if (event.tone === 'bad') state.eventGoodStreak = 0;
 
   state.usedEventIds = [...state.usedEventIds, event.id].slice(-EVENTS.length);
   state.recentEventFamilies = [...(state.recentEventFamilies ?? []), event.family].slice(-2);
@@ -3278,6 +3436,8 @@ export function createInitialState(): GameState {
     eventId: null,
     eventNote: null,
     usedEventIds: [],
+    difficulty: DEFAULT_DIFFICULTY,
+    eventGoodStreak: 0,
     selectedProduct: null,
     monthOrders: [],
     acceptedOrderIds: [],
@@ -3433,9 +3593,12 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
   if (!Array.isArray(state.challengeGoalIds)) state.challengeGoalIds = [];
   if (!Array.isArray(state.challengeDraft)) state.challengeDraft = [];
   if (!Array.isArray(state.usedClimateIds)) state.usedClimateIds = [];
+  if (!CLIMATES.some((item) => item.id === state.climateId)) state.climateId = 'steel';
   if (!Array.isArray(state.challengePoolIds)) state.challengePoolIds = [];
   if (!Array.isArray(state.recentEventFamilies)) state.recentEventFamilies = [];
   if (!Array.isArray(state.quarterEventTones)) state.quarterEventTones = [];
+  if (typeof state.difficulty !== 'string') state.difficulty = DEFAULT_DIFFICULTY;
+  if (typeof state.eventGoodStreak !== 'number' || Number.isNaN(state.eventGoodStreak)) state.eventGoodStreak = 0;
   if (!state.quarterStats) state.quarterStats = emptyQuarterStats(totalStaff(state.staff), state.debt, state.cash, state.machines);
   if (typeof state.quarterStats.coveringMonths !== 'number') {
     state.quarterStats.coveringMonths = state.quarterStats.coveringMonth ? 1 : 0;

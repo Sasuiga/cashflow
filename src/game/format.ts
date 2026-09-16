@@ -1,4 +1,4 @@
-import type { Bom, MaterialId, ProductId, RdProductArchetype, RdTrack, Role } from './types';
+import type { Bom, EventTone, MaterialId, ProductId, RdProductArchetype, RdTrack, Role } from './types';
 
 export const MONTH_NAMES = [
   '一月',
@@ -21,6 +21,12 @@ export const ROLE_LABEL: Record<Role, string> = {
   sales: '销售',
   rd: '研发',
   procurement: '采购',
+};
+
+export const EVENT_TONE_LABEL: Record<EventTone, string> = {
+  good: '利好',
+  bad: '利空',
+  mixed: '参半',
 };
 
 export const ROLE_HINT: Record<Role, string> = {
