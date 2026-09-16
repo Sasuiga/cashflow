@@ -14,12 +14,17 @@ import {
   INCOME_TAX_RATE,
   INTEREST_RATE,
   LOAN_PER_MACHINE,
+  LOAN_TERM_MONTHS,
+  LOAN_DEFAULT_RATE,
+  LOAN_LATE_FEE_RATE,
   STATUTORY_RESERVE_CAP,
   STATUTORY_RESERVE_RATE,
   AR_TERM_MONTHS,
   AR_WRITEOFF_PAST_DUE,
+  AR_OVERDUE_CHANCE,
+  AR_RECOVER_PER_SALES,
   CREDIT_SALE_RATE,
-  arCollectionRate,
+  arRecoveryRate,
   arCreditLossRate,
   inventoryWriteDownRate,
   MACHINE_BASE_CAP,
@@ -32,6 +37,9 @@ import {
   CONTRACT_COVER_MONTHS,
   RD_NAME_STEMS,
   RD_FAIL_BONUS,
+  RD_STAFF_CAP,
+  RD_SUCCESS_CAP,
+  RD_SUCCESS_PER_HEAD,
   IP_CATALOG,
   IP_YIELD_EVERY,
   IP_PRICE_BONUS,
@@ -93,6 +101,7 @@ import type {
   GameAction,
   GameState,
   IpId,
+  LoanLot,
   MaterialId,
   Materials,
   Modifiers,
@@ -284,6 +293,10 @@ export function rdTrackStaff(state: GameState, track: RdTrack): number {
   return track === 'product' ? state.rdProductStaff ?? 0 : state.rdTechStaff ?? 0;
 }
 
+export function rdTrackRoom(state: GameState, track: RdTrack): number {
+  return Math.max(0, RD_STAFF_CAP - rdTrackStaff(state, track));
+}
+
 export function rdTrackProgress(state: GameState, track: RdTrack): number {
   return track === 'product' ? state.rdProductProgress ?? 0 : state.rdTechProgress ?? 0;
 }
@@ -338,12 +351,14 @@ function syncRdHeadcount(state: GameState): void {
 function moveAllRdStaff(state: GameState, from: RdTrack, to: RdTrack): void {
   if (from === to) return;
   const count = rdTrackStaff(state, from);
+  const moved = Math.min(count, rdTrackRoom(state, to));
+  if (moved <= 0) return;
   if (from === 'product') {
-    state.rdProductStaff = 0;
-    state.rdTechStaff = (state.rdTechStaff ?? 0) + count;
+    state.rdProductStaff = (state.rdProductStaff ?? 0) - moved;
+    state.rdTechStaff = (state.rdTechStaff ?? 0) + moved;
   } else {
-    state.rdTechStaff = 0;
-    state.rdProductStaff = (state.rdProductStaff ?? 0) + count;
+    state.rdTechStaff = (state.rdTechStaff ?? 0) - moved;
+    state.rdProductStaff = (state.rdProductStaff ?? 0) + moved;
   }
   syncRdHeadcount(state);
 }
@@ -390,13 +405,13 @@ export function rdRevealOptions(state: GameState): RdAssignOption[] {
         });
       });
     }
-  } else if (!otherBusy && productProject) {
+  } else if (!otherBusy && rdTrackRoom(state, 'product') > 0 && productProject) {
     options.push({
       assign: { kind: 'product' },
       title: `编入产品组 · 「${productProject.name}」`,
       blurb: `加入进行中的课题，进度 ${rdTrackProgress(state, 'product')}/${rdCycleOf('product')}。`,
     });
-  } else if (!otherBusy && productRemain) {
+  } else if (!otherBusy && rdTrackRoom(state, 'product') > 0 && productRemain) {
     (['simplify', 'substitute', 'margin'] as RdProductArchetype[]).forEach((archetype) => {
       options.push({
         assign: { kind: 'product', archetype },
@@ -414,13 +429,13 @@ export function rdRevealOptions(state: GameState): RdAssignOption[] {
         blurb: ip.effect,
       });
     }
-  } else if (!otherBusy && techProject) {
+  } else if (!otherBusy && rdTrackRoom(state, 'tech') > 0 && techProject) {
     options.push({
       assign: { kind: 'tech' },
       title: `编入工艺组 · 「${techProject.name}」`,
       blurb: `加入进行中的课题，进度 ${rdTrackProgress(state, 'tech')}/${rdCycleOf('tech')}。`,
     });
-  } else if (!otherBusy) {
+  } else if (!otherBusy && rdTrackRoom(state, 'tech') > 0) {
     for (const ip of techChoices) {
       options.push({
         assign: { kind: 'tech', ipId: ip.id },
@@ -549,6 +564,7 @@ export function hireEffectLines(state: GameState, role: Role, rdTrack: RdTrack =
     return [
       `本月立刻到岗，并带来 1 张市场单。本月订单 ${have} → ${have + 1} 张。`,
       `每 2 名销售人员使月初订单 +1（基础 ${BASE_MONTH_ORDERS} 张）。${baseline}`,
+      `逾期应收确认后分 3 个月催收。每人使每月追回比例 +${pctLabel(AR_RECOVER_PER_SALES)}。本次入职后首月追回 ${pctLabel(arRecoveryRate(1, state.staff.sales))} → ${pctLabel(arRecoveryRate(1, state.staff.sales + 1))}。`,
       card,
     ];
   }
@@ -565,7 +581,7 @@ export function hireEffectLines(state: GameState, role: Role, rdTrack: RdTrack =
   const productOpen = (state.extraProducts?.length ?? 0) < MAX_RD_PRODUCTS;
   const techOpen = availableTechIps(state).length > 0;
   const lines = [
-    `编入${RD_TRACK_LABEL[track]}。人数只影响成功率（每人 20%，上限 80%）。有人值守时每月结算推进 1 个月。`,
+    `编入${RD_TRACK_LABEL[track]}。人数只影响成功率（每人 ${pctLabel(RD_SUCCESS_PER_HEAD)}，每组最多 ${RD_STAFF_CAP} 人，上限 ${pctLabel(RD_SUCCESS_CAP)}）。有人值守时每月结算推进 1 个月。`,
   ];
   if (!project) {
     lines.push(
@@ -606,6 +622,130 @@ export function loanLimit(machines: number): number {
 
 export function monthlyInterest(debt: number): number {
   return debt > 0 ? roundMoney(debt * INTEREST_RATE) : 0;
+}
+
+function loanLotsOf(state: GameState): LoanLot[] {
+  if (state.loans?.length) return state.loans.map((lot) => ({ ...lot }));
+  if (state.debt > 0) {
+    return [
+      {
+        amount: state.debt,
+        originMonth: state.month,
+        dueMonth: state.month + LOAN_TERM_MONTHS,
+      },
+    ];
+  }
+  return [];
+}
+
+function repayLoanLots(lots: LoanLot[], amount: number): LoanLot[] {
+  let left = roundMoney(amount);
+  const remain = lots.map((lot) => ({ ...lot }));
+  const order = remain
+    .map((_, index) => index)
+    .sort((a, b) => remain[a]!.dueMonth - remain[b]!.dueMonth || remain[a]!.originMonth - remain[b]!.originMonth || a - b);
+  for (const index of order) {
+    if (left <= 0) break;
+    const lot = remain[index]!;
+    const take = roundMoney(Math.min(left, lot.amount));
+    lot.amount = roundMoney(lot.amount - take);
+    left = roundMoney(left - take);
+  }
+  return remain.filter((lot) => lot.amount > 0.05);
+}
+
+function loanChargesOf(
+  lots: LoanLot[],
+  month: number,
+): { interest: number; defaultFee: number; lateFee: number } {
+  const debt = roundMoney(lots.reduce((sum, lot) => sum + lot.amount, 0));
+  const interest = monthlyInterest(debt);
+  let defaultFee = 0;
+  let lateFee = 0;
+  for (const lot of lots) {
+    if (month < lot.dueMonth) continue;
+    if (!lot.defaultCharged) defaultFee = roundMoney(defaultFee + roundMoney(lot.amount * LOAN_DEFAULT_RATE));
+    lateFee = roundMoney(lateFee + roundMoney(lot.amount * LOAN_LATE_FEE_RATE));
+  }
+  return { interest, defaultFee, lateFee };
+}
+
+export function previewLoanCharges(
+  state: GameState,
+  adjust?: { borrow?: number; repay?: number },
+): { interest: number; defaultFee: number; lateFee: number } {
+  let lots = loanLotsOf(state);
+  if (adjust?.repay) lots = repayLoanLots(lots, adjust.repay);
+  if (adjust?.borrow) {
+    const n = roundMoney(adjust.borrow);
+    if (n > 0) {
+      lots.push({
+        amount: n,
+        originMonth: state.month,
+        dueMonth: state.month + LOAN_TERM_MONTHS,
+      });
+    }
+  }
+  return loanChargesOf(lots, state.month);
+}
+
+export function loanOverdueOf(state: GameState): number {
+  return roundMoney(
+    loanLotsOf(state).reduce((sum, lot) => (state.month > lot.dueMonth ? sum + lot.amount : sum), 0),
+  );
+}
+
+export function loanDueThisMonthOf(state: GameState): number {
+  return roundMoney(
+    loanLotsOf(state).reduce((sum, lot) => (state.month === lot.dueMonth ? sum + lot.amount : sum), 0),
+  );
+}
+
+function ensureLoans(state: GameState): void {
+  if (!state.loans) state.loans = loanLotsOf(state);
+  syncDebt(state);
+}
+
+function syncDebt(state: GameState): void {
+  if (!state.loans) state.loans = [];
+  state.debt = roundMoney(state.loans.reduce((sum, lot) => sum + lot.amount, 0));
+}
+
+function addLoan(state: GameState, amount: number): void {
+  ensureLoans(state);
+  const n = roundMoney(amount);
+  if (n <= 0) return;
+  state.loans.push({
+    amount: n,
+    originMonth: state.month,
+    dueMonth: state.month + LOAN_TERM_MONTHS,
+  });
+  syncDebt(state);
+}
+
+function applyLoanRepay(state: GameState, amount: number): void {
+  ensureLoans(state);
+  state.loans = repayLoanLots(state.loans, amount);
+  syncDebt(state);
+}
+
+function applyLoanCharges(state: GameState): { interest: number; defaultFee: number; lateFee: number } {
+  ensureLoans(state);
+  const charges = loanChargesOf(state.loans, state.month);
+  pay(state, charges.interest, 'finance');
+  const penalty = roundMoney(charges.defaultFee + charges.lateFee);
+  if (penalty > 0) pay(state, penalty, 'extra');
+  for (const lot of state.loans) {
+    if (state.month >= lot.dueMonth) lot.defaultCharged = true;
+  }
+  if (charges.defaultFee > 0 || charges.lateFee > 0) {
+    const bits: string[] = [];
+    if (charges.defaultFee > 0) bits.push(`违约金 ${money(charges.defaultFee)}`);
+    if (charges.lateFee > 0) bits.push(`滞纳金 ${money(charges.lateFee)}`);
+    pushLog(state, `短期借款到期未还，已计提 ${bits.join('、')}。`);
+    noteDept(state, 'finance', `到期未还：${bits.join('、')}`, false);
+  }
+  return charges;
 }
 
 export function capacityOf(state: GameState): number {
@@ -793,7 +933,8 @@ export function operatingProfitOf(ledger: MonthLedger): number {
       ledger.admin -
       (ledger.rd ?? 0) -
       ledger.finance -
-      (ledger.creditImpairment ?? 0) -
+      (ledger.creditImpairment ?? 0) +
+      (ledger.creditReversal ?? 0) -
       (ledger.assetImpairment ?? 0),
   );
 }
@@ -1054,6 +1195,20 @@ export function purchaseQtyOptions(remaining: number, crate = 1): number[] {
   const half = remaining / 2;
   const mid = opts.reduce((best, n) => (Math.abs(n - half) < Math.abs(best - half) ? n : best));
   return [...new Set([opts[0], mid, opts[opts.length - 1]])].sort((a, b) => a - b);
+}
+
+export function loanAmountOptions(max: number): number[] {
+  const cap = roundMoney(Math.max(0, max));
+  if (cap <= 0) return [];
+  if (cap <= 2) return [cap];
+  const opts = purchaseQtyOptions(cap, 2).filter((n) => n < cap - 1e-6);
+  opts.push(cap);
+  if (opts.length <= 3) return opts;
+  const half = cap / 2;
+  const mid = opts
+    .slice(0, -1)
+    .reduce((best, n) => (Math.abs(n - half) < Math.abs(best - half) ? n : best), opts[0]!);
+  return [...new Set([opts[0], mid, cap])].sort((a, b) => a - b);
 }
 
 export function materialCrateSize(id: MaterialId): number {
@@ -1404,6 +1559,7 @@ export function emptyLedger(): MonthLedger {
     extraExpense: 0,
     rd: 0,
     creditImpairment: 0,
+    creditReversal: 0,
     assetImpairment: 0,
     incomeTax: 0,
     cfSales: 0,
@@ -1573,7 +1729,7 @@ function receive(state: GameState, amount: number, kind: 'sales' | 'extra' | 'bo
     state.ledger.cfOtherOpIn = roundMoney(state.ledger.cfOtherOpIn + n);
   }
   if (kind === 'borrow') {
-    state.debt = roundMoney(state.debt + n);
+    addLoan(state, n);
     state.ledger.cfBorrow = roundMoney(state.ledger.cfBorrow + n);
     if (state.quarterStats) state.quarterStats.borrowed = true;
   }
@@ -1850,7 +2006,10 @@ function arTermOf(state: GameState): number {
 
 function overdueAmount(state: GameState): number {
   return roundMoney(
-    (state.receivables ?? []).reduce((sum, lot) => (state.month - lot.dueMonth >= 1 ? sum + lot.amount : sum), 0),
+    (state.receivables ?? []).reduce(
+      (sum, lot) => (lot.overdue || state.month - lot.dueMonth >= 1 ? sum + lot.amount : sum),
+      0,
+    ),
   );
 }
 
@@ -1862,7 +2021,8 @@ function targetBadDebtProvision(state: GameState): number {
   return roundMoney(
     (state.receivables ?? []).reduce((sum, lot) => {
       const past = state.month - lot.dueMonth;
-      return sum + lot.amount * arCreditLossRate(past);
+      const overdue = Boolean(lot.overdue) || past >= 1;
+      return sum + lot.amount * arCreditLossRate(past, overdue);
     }, 0),
   );
 }
@@ -1871,21 +2031,47 @@ function remeasureBadDebt(state: GameState): number {
   const target = Math.min(targetBadDebtProvision(state), receivablesGross(state));
   const delta = roundMoney(target - (state.badDebtProvision ?? 0));
   state.badDebtProvision = target;
-  if (delta !== 0) state.ledger.creditImpairment = roundMoney((state.ledger.creditImpairment ?? 0) + delta);
+  if (delta > 0) state.ledger.creditImpairment = roundMoney((state.ledger.creditImpairment ?? 0) + delta);
+  if (delta < 0) state.ledger.creditReversal = roundMoney((state.ledger.creditReversal ?? 0) - delta);
   return delta;
 }
 
-function collectReceivables(state: GameState, bonus = 0, dueAndOverdueOnly = true): number {
+function chargeReceivableWriteOff(state: GameState, amount: number): void {
+  const written = roundMoney(amount);
+  if (written <= 0) return;
+  const allowance = state.badDebtProvision ?? 0;
+  const used = roundMoney(Math.min(allowance, written));
+  state.badDebtProvision = roundMoney(allowance - used);
+  const extra = roundMoney(written - used);
+  if (extra > 0) state.ledger.creditImpairment = roundMoney((state.ledger.creditImpairment ?? 0) + extra);
+}
+
+export function collectReceivables(state: GameState, bonus = 0, dueAndOverdueOnly = true): number {
   if (!state.receivables) state.receivables = [];
   let collected = 0;
   const kept: ReceivableLot[] = [];
+  const sales = state.staff.sales ?? 0;
   for (const lot of state.receivables) {
     const past = state.month - lot.dueMonth;
-    if (dueAndOverdueOnly && past < 0) {
+    if (lot.overdue || past >= 1) lot.overdue = true;
+    if (dueAndOverdueOnly && past < 0 && !lot.overdue) {
       kept.push(lot);
       continue;
     }
-    const rate = Math.min(1, Math.max(0, arCollectionRate(past) + bonus));
+    let rate = 0;
+    if (lot.overdue) {
+      rate = past <= 0 ? 0 : arRecoveryRate(past, sales);
+      if (bonus > 0 && past >= 1) rate = Math.min(1, rate + bonus);
+    } else if (past === 0) {
+      if (bonus >= 1 || Math.random() >= AR_OVERDUE_CHANCE) {
+        rate = 1;
+      } else {
+        lot.overdue = true;
+        noteDept(state, 'finance', `应收账款 ${money(lot.amount)} 整笔逾期，下月起催收`);
+        rate = 0;
+      }
+    }
+    rate = Math.min(1, Math.max(0, rate));
     const take = roundMoney(lot.amount * rate);
     if (take > 0) {
       state.cash = roundMoney(state.cash + take);
@@ -1906,14 +2092,17 @@ function writeOffAgedReceivables(state: GameState): number {
   const kept: ReceivableLot[] = [];
   for (const lot of state.receivables) {
     const past = state.month - lot.dueMonth;
-    if (past >= AR_WRITEOFF_PAST_DUE) {
+    if ((lot.overdue || past >= 1) && past >= AR_WRITEOFF_PAST_DUE) {
       written = roundMoney(written + lot.amount);
-      state.ledger.creditImpairment = roundMoney((state.ledger.creditImpairment ?? 0) + lot.amount);
     } else {
       kept.push(lot);
     }
   }
   state.receivables = kept;
+  if (written > 0) {
+    chargeReceivableWriteOff(state, written);
+    noteDept(state, 'finance', `逾期应收 ${money(written)} 已核销`);
+  }
   return written;
 }
 
@@ -1956,8 +2145,11 @@ function ensureImpairmentState(state: GameState): void {
     });
   }
   if (!state.receivables) state.receivables = [];
+  ensureLoans(state);
   if (typeof state.inventoryProvision !== 'number') state.inventoryProvision = 0;
   if (typeof state.badDebtProvision !== 'number') state.badDebtProvision = 0;
+  if (typeof state.ledger.creditReversal !== 'number') state.ledger.creditReversal = 0;
+  if (typeof state.ledger.creditImpairment !== 'number') state.ledger.creditImpairment = 0;
   if (!state.modifiers) state.modifiers = emptyModifiers();
   if (typeof state.modifiers.collectionBonus !== 'number') state.modifiers.collectionBonus = 0;
   if (typeof state.modifiers.creditSaleRate !== 'number') state.modifiers.creditSaleRate = 0;
@@ -2194,7 +2386,8 @@ function pnlSettlementLines(ledger: MonthLedger, reserve: number): SettlementLin
   push('减：管理费用', -ledger.admin, 'bad');
   push('减：研发费用', -(ledger.rd ?? 0), 'bad');
   push('减：财务费用', -ledger.finance, 'bad');
-  push('减：信用减值损失', -(ledger.creditImpairment ?? 0), (ledger.creditImpairment ?? 0) >= 0 ? 'bad' : 'good');
+  push('减：信用减值损失', -(ledger.creditImpairment ?? 0), 'bad');
+  push('加：坏账准备转回', ledger.creditReversal ?? 0, 'good');
   push('减：资产减值损失', -(ledger.assetImpairment ?? 0), (ledger.assetImpairment ?? 0) >= 0 ? 'bad' : 'good');
   push('营业利润', operatingProfitOf(ledger), operatingProfitOf(ledger) >= 0 ? 'good' : 'bad', true);
   push('加：营业外收入', ledger.extraIncome, 'good');
@@ -2387,7 +2580,7 @@ function resolveRd(state: GameState, track: RdTrack): string {
       return body;
     }
     setRdFailBonus(state, 'product', RD_FAIL_BONUS);
-      const body = `${draft.name} 没跑通，进度清零。若继续攻关，下次成功率 +10%（仍封顶 80%）。`;
+      const body = `${draft.name} 没跑通，进度清零。若继续攻关，下次成功率 +${pctLabel(RD_FAIL_BONUS)}（仍封顶 ${pctLabel(RD_SUCCESS_CAP)}）。`;
     state.pendingRdReveals = [
       ...(state.pendingRdReveals ?? []),
       { track, success: false, title: `${draft.name} 未过关`, body, chance, staff },
@@ -2410,7 +2603,7 @@ function resolveRd(state: GameState, track: RdTrack): string {
     return body;
   }
   setRdFailBonus(state, 'tech', RD_FAIL_BONUS);
-  const body = `${ip.name} 样件没过，进度清零。若继续攻关，下次成功率 +10%（仍封顶 80%）。`;
+  const body = `${ip.name} 样件没过，进度清零。若继续攻关，下次成功率 +${pctLabel(RD_FAIL_BONUS)}（仍封顶 ${pctLabel(RD_SUCCESS_CAP)}）。`;
   state.pendingRdReveals = [
     ...(state.pendingRdReveals ?? []),
     { track, success: false, title: `${ip.name} 未过关`, body, chance, staff },
@@ -2721,7 +2914,7 @@ function applyEvent(state: GameState): void {
         const amount = Math.min(call, state.debt, Math.max(0, state.cash));
         if (amount > 0) {
           pay(state, amount, 'repay');
-          state.debt = roundMoney(state.debt - amount);
+          applyLoanRepay(state, amount);
           if (state.quarterStats) state.quarterStats.repaid = true;
           bits.push(`银行抽贷，强制收回 ${money(amount)}`);
         }
@@ -2831,7 +3024,7 @@ function applyEvent(state: GameState): void {
       }
       state.receivables = state.receivables.map((lot) => ({ ...lot, dueMonth: lot.dueMonth + 1 }));
       const delta = remeasureBadDebt(state);
-      bits.push(`全部应收到期日推迟 1 个月${delta ? `，信用减值 ${money(delta)}` : ''}`);
+      bits.push(`全部应收到期日推迟 1 个月${delta > 0 ? `，信用减值 ${money(delta)}` : delta < 0 ? `，坏账准备转回 ${money(-delta)}` : ''}`);
       break;
     }
     case 'customerBreak': {
@@ -2840,12 +3033,12 @@ function applyEvent(state: GameState): void {
         bits.push('账上暂无应收账款可核销');
         break;
       }
-      const overdue = state.receivables.filter((lot) => state.month - lot.dueMonth >= 1);
+      const overdue = state.receivables.filter((lot) => lot.overdue || state.month - lot.dueMonth >= 1);
       const pool = overdue.length ? overdue : state.receivables;
       const target = [...pool].sort((a, b) => b.amount - a.amount)[0]!;
       const write = overdue.length ? target.amount : roundMoney(target.amount * 0.5);
       target.amount = roundMoney(target.amount - write);
-      state.ledger.creditImpairment = roundMoney((state.ledger.creditImpairment ?? 0) + write);
+      chargeReceivableWriteOff(state, write);
       state.receivables = state.receivables.filter((lot) => lot.amount > 0.05);
       remeasureBadDebt(state);
       bits.push(`核销应收账款 ${money(write)}`);
@@ -3011,6 +3204,7 @@ export function createInitialState(): GameState {
     month: 1,
     cash: 24,
     debt: 0,
+    loans: [],
     wagesPayable: 0,
     wagesAccruedThisMonth: 0,
     wagesAccruedByRole: emptyWageAccrual(),
@@ -3327,10 +3521,6 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
         pushLog(state, '现金不够买下一台设备。');
         return state;
       }
-      if (!spendAp(state)) {
-        pushLog(state, '行动点不足。');
-        return state;
-      }
       pay(state, MACHINE_COST, 'capex');
       state.machines += 1;
       state.machineGross = roundMoney((state.machineGross ?? 0) + MACHINE_COST);
@@ -3344,10 +3534,6 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
         pushLog(state, '扩建资金不足。');
         return state;
       }
-      if (!spendAp(state)) {
-        pushLog(state, '行动点不足。');
-        return state;
-      }
       pay(state, FACTORY_COST, 'capex');
       state.factories += 1;
       state.factoryGross = roundMoney((state.factoryGross ?? 0) + FACTORY_COST);
@@ -3358,17 +3544,21 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
 
     case 'HIRE': {
       if (state.phase !== 'actions') return prev;
-      if (state.cash < HIRE_COST) {
+      const hireFee = HIRE_COST[action.role];
+      if (state.cash < hireFee) {
         pushLog(state, '招聘费不足。');
         return state;
       }
-      if (!spendAp(state)) {
-        pushLog(state, '行动点不足。');
-        return state;
-      }
-      pay(state, HIRE_COST, 'admin');
       if (action.role === 'rd') {
         ensureRdState(state);
+        const track = action.rdTrack ?? 'product';
+        if (rdTrackStaff(state, track) >= RD_STAFF_CAP) {
+          pushLog(state, `${RD_TRACK_LABEL[track]}已满员（${RD_STAFF_CAP} 人），不能再编入。`);
+          return state;
+        }
+      }
+      pay(state, hireFee, 'admin');
+      if (action.role === 'rd') {
         const track = action.rdTrack ?? 'product';
         if (track === 'product') {
           state.rdProductStaff = (state.rdProductStaff ?? 0) + 1;
@@ -3392,7 +3582,10 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
         rd: 'rd',
         procurement: 'store',
       };
-      let hireNote = `招聘${ROLE_LABEL[action.role]} 1人。招聘费 ${money(HIRE_COST)} 已付，月薪 ${money(SALARY[action.role])} 计入应付职工薪酬`;
+      let hireNote =
+        hireFee > 0
+          ? `招聘${ROLE_LABEL[action.role]} 1人。招聘费 ${money(hireFee)} 已付，月薪 ${money(SALARY[action.role])} 计入应付职工薪酬`
+          : `招聘${ROLE_LABEL[action.role]} 1人。免招聘费，月薪 ${money(SALARY[action.role])} 计入应付职工薪酬`;
       if (action.role === 'sales') {
         const order = rollOneMarketOrder(state);
         hireNote += `。立刻带来${skuName(state, order.productId)} ${order.qty} 件`;
@@ -3518,6 +3711,11 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
 
     case 'BORROW': {
       if (state.phase !== 'actions') return prev;
+      ensureLoans(state);
+      if (loanOverdueOf(state) > 0) {
+        pushLog(state, '有到期未还借款，须先还款才能再借。');
+        return state;
+      }
       const room = Math.max(0, loanLimit(state.machines) - state.debt);
       const amount = Math.min(action.amount, room);
       if (amount <= 0) {
@@ -3529,11 +3727,13 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
         return state;
       }
       receive(state, amount, 'borrow');
+      const dueMonth = state.month + LOAN_TERM_MONTHS;
+      const dueLabel = MONTH_NAMES[dueMonth - 1] ?? `${dueMonth}月`;
       const interest = monthlyInterest(state.debt);
       noteDept(
         state,
         'finance',
-        `借入 ${money(amount)}，负债现为 ${money(state.debt)} / 上限 ${money(loanLimit(state.machines))}，月末将计提财务费用 ${money(interest)}`,
+        `借入 ${money(amount)}，期限 ${LOAN_TERM_MONTHS} 个月（${dueLabel}到期），负债现为 ${money(state.debt)} / 上限 ${money(loanLimit(state.machines))}，月末将计提财务费用 ${money(interest)}`,
       );
       return state;
     }
@@ -3546,7 +3746,7 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
         return state;
       }
       pay(state, amount, 'repay');
-      state.debt = roundMoney(state.debt - amount);
+      applyLoanRepay(state, amount);
       if (state.quarterStats) state.quarterStats.repaid = true;
       noteDept(state, 'finance', `偿还 ${money(amount)}，负债现为 ${money(state.debt)}`);
       return state;
@@ -3587,10 +3787,6 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
         pushLog(state, `「${def.name}」本月立项，下月才能落地。`);
         return state;
       }
-      if (state.cash < def.cost) {
-        pushLog(state, `现金不够支付「${def.name}」落地费用。`);
-        return state;
-      }
       if (cardNeedsMaterial(held.defId)) {
         const id = action.material;
         if (!id || (id === 'd' && !state.materialDUnlocked)) {
@@ -3602,7 +3798,6 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
         pushLog(state, '行动点不足，无法落地。');
         return state;
       }
-      pay(state, def.cost, 'admin');
       state.hand.splice(index, 1);
       const text = playCardEffect(state, held.defId, action.material);
       if (state.quarterStats) state.quarterStats.playedCard = true;
@@ -3792,14 +3987,14 @@ function settleMonth(state: GameState): GameState {
 
   const wagesPaid = roundMoney(state.wagesPayable - salaries);
   payAccruedWages(state, wagesPaid);
-  const interest = monthlyInterest(state.debt);
-  pay(state, interest, 'finance');
+  const loanCharges = applyLoanCharges(state);
+  const interest = loanCharges.interest;
   if (state.quarterStats && revenue >= salaries + upkeep) {
     state.quarterStats.coveringMonth = true;
     state.quarterStats.coveringMonths = (state.quarterStats.coveringMonths ?? 0) + 1;
   }
 
-  let penalty = 0;
+  let penalty = roundMoney(loanCharges.defaultFee + loanCharges.lateFee);
   for (const order of (state.monthOrders ?? []).filter((item) => item.kind === 'contract')) {
     const taken = (state.acceptedOrderIds ?? []).includes(order.id);
     if (taken) {

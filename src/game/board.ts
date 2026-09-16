@@ -1,5 +1,5 @@
 import type { GameState, MaterialId, ProductDef, ProductId, QuarterStats, TrendDir } from './types';
-import { MATERIALS, catalogOf, isPremiumProduct, isVolumeProduct, unlockedCatalog } from './data';
+import { LOAN_PER_MACHINE, MATERIALS, catalogOf, isPremiumProduct, isVolumeProduct, unlockedCatalog } from './data';
 import { priceDelta } from './format';
 
 export type ClimateId = 'steel' | 'channel' | 'chip' | 'priceWar';
@@ -672,10 +672,10 @@ export const GOALS: GoalDef[] = [
     name: '负债可控、净资产达标',
     desc: '季末短期借款不超过设备抵押上限，且净资产不低于 30 万。',
     axis: 'leverage',
-    reached: (state) => state.debt <= state.machines * 5 && netOf(state) >= 30,
+    reached: (state) => state.debt <= state.machines * LOAN_PER_MACHINE && netOf(state) >= 30,
     progress: (state) => {
       const net = netOf(state);
-      return `负债 ${state.debt}万 / 上限 ${state.machines * 5}万，净资产 ${net}万 / 30万`;
+      return `负债 ${state.debt}万 / 上限 ${state.machines * LOAN_PER_MACHINE}万，净资产 ${net}万 / 30万`;
     },
   },
   {
@@ -697,8 +697,8 @@ export const GOALS: GoalDef[] = [
     desc: '季末现金不低于 18 万，且短期借款不超过设备抵押上限。',
     axis: 'cash',
     climateAffinity: ['steel'],
-    reached: (state) => state.cash >= 18 && state.debt <= state.machines * 5,
-    progress: (state) => `现金 ${state.cash}万 / 18万，负债 ${state.debt}万 / 上限 ${state.machines * 5}万`,
+    reached: (state) => state.cash >= 18 && state.debt <= state.machines * LOAN_PER_MACHINE,
+    progress: (state) => `现金 ${state.cash}万 / 18万，负债 ${state.debt}万 / 上限 ${state.machines * LOAN_PER_MACHINE}万`,
   },
   {
     id: 'q4-flagship',

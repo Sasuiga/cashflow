@@ -1,5 +1,5 @@
-import { createInitialState, equityAccounts, factoryLayout, hireEffectLines, lowestUnlockedMargin, bomSpotCost, netAssetsOf, netProfitOf, orderCapLoads, purchaseQtyOptions, rdRevealOptions, reduce, traderOf, unitsNeeded } from '../src/game/engine';
-import { IP_LEAN_RATE, RD_FAIL_BONUS, rdSuccessRate } from '../src/game/data';
+import { collectReceivables, createInitialState, equityAccounts, factoryLayout, hireEffectLines, loanAmountOptions, loanLimit, lowestUnlockedMargin, bomSpotCost, netAssetsOf, netProfitOf, orderCapLoads, previewLoanCharges, purchaseQtyOptions, rdRevealOptions, reduce, traderOf, unitsNeeded } from '../src/game/engine';
+import { AR_OVERDUE_CHANCE, HIRE_COST, INTEREST_RATE, IP_LEAN_RATE, LOAN_DEFAULT_RATE, LOAN_LATE_FEE_RATE, LOAN_PER_MACHINE, LOAN_TERM_MONTHS, RD_FAIL_BONUS, RD_STAFF_CAP, SALARY, arCreditLossRate, arRecoveryRate, rdSuccessRate } from '../src/game/data';
 import { goalById } from '../src/game/board';
 import { roundMoney } from '../src/game/format';
 import type { GameState } from '../src/game/types';
@@ -93,6 +93,7 @@ function checkSalesOrders(): void {
   assert(lines[0]?.includes(`本月订单 ${orders.length} → ${orders.length + 1} 张`), `招销售当月应加一张，实际 ${lines[0]}`);
   assert(lines[1]?.includes('每 2 名销售人员使月初订单 +1'), `招销售应说明下月按两人加一张，实际 ${lines[1]}`);
   assert(lines[1]?.includes('下月月初订单仍为 3 张'), `一名销售不应抬高下月基数，实际 ${lines[1]}`);
+  assert(lines[2]?.includes('追回'), `招销售应说明逾期追回加成，实际 ${lines[2]}`);
 }
 
 function checkPurchaseLots(): void {
@@ -178,6 +179,56 @@ function checkProposals(): void {
   assert(blocked.hand.length === 1, '当月不能落地刚立项的提案');
   const twice = reduce(state, { type: 'BUY_CARD', index: 0 });
   assert(twice.hand.length === 1 && twice.cardsBoughtThisMonth === 1, '每月只能立项一份');
+
+  state.hand[0]!.readyMonth = state.month;
+  state.cash = 0;
+  const uid = state.hand[0]!.uid;
+  state = reduce(state, { type: 'PLAY_CARD', uid, material: 'a' });
+  assert(state.hand.length === 0, '次月应能落地已立项提案');
+  assert(picked.defId === 'bridge' ? state.cash === 5 : state.cash === 0, '落地不应另扣现金');
+}
+
+function checkLoans(): void {
+  assert(LOAN_PER_MACHINE === 10, `每台抵押额度应为 10 万，实际 ${LOAN_PER_MACHINE}`);
+  assert(INTEREST_RATE === 0.04, `普通借款月息应为 4%，实际 ${INTEREST_RATE}`);
+  assert(LOAN_TERM_MONTHS === 3, `借款期限应为 3 个月，实际 ${LOAN_TERM_MONTHS}`);
+  assert(loanLimit(1) === 10 && loanLimit(2) === 20, '抵押额度应按台数放大');
+  assert(loanAmountOptions(10).join(',') === '2,4,10', `1 台额度挡位应为 2/4/10，实际 ${loanAmountOptions(10)}`);
+  assert(loanAmountOptions(5).join(',') === '2,4,5', `额度 5 万时最大挡应是 5，实际 ${loanAmountOptions(5)}`);
+  assert(loanAmountOptions(1).join(',') === '1', `还可借 1 万时应只出 1 万挡，实际 ${loanAmountOptions(1)}`);
+  assert(loanAmountOptions(0).length === 0, '没有可借可还时不应出挡位');
+  assert(loanAmountOptions(20).at(-1) === 20, '两台设备时最大挡应为 20 万');
+
+  const due = previewLoanCharges({
+    ...createInitialState(),
+    month: 4,
+    debt: 10,
+    loans: [{ amount: 10, originMonth: 1, dueMonth: 4 }],
+  });
+  assert(due.interest === 0.4, `10 万借款月息应为 0.4 万，实际 ${due.interest}`);
+  assert(due.defaultFee === roundMoney(10 * LOAN_DEFAULT_RATE), `到期未还违约金应为 ${roundMoney(10 * LOAN_DEFAULT_RATE)}，实际 ${due.defaultFee}`);
+  assert(due.lateFee === roundMoney(10 * LOAN_LATE_FEE_RATE), `到期未还滞纳金应为 ${roundMoney(10 * LOAN_LATE_FEE_RATE)}，实际 ${due.lateFee}`);
+
+  const current = previewLoanCharges({
+    ...createInitialState(),
+    month: 1,
+    debt: 4,
+    loans: [{ amount: 4, originMonth: 1, dueMonth: 4 }],
+  });
+  assert(current.defaultFee === 0 && current.lateFee === 0, '未到期不应计提违约金或滞纳金');
+
+  let state = confirmBoard(reduce(createInitialState(), { type: 'START_GAME' }));
+  state = reduce(state, { type: 'CONFIRM_BRIEFING' });
+  state = reduce(state, { type: 'ACK_EVENT' });
+  const cash = state.cash;
+  const ap = state.ap;
+  state = reduce(state, { type: 'BORROW', amount: 10 });
+  assert(state.debt === 10, `应借入 10 万，实际 ${state.debt}`);
+  assert(state.cash === roundMoney(cash + 10), '借款应立刻到账');
+  assert(state.ap === ap - 1, '借款应耗 1 AP');
+  assert(state.loans.length === 1 && state.loans[0]?.dueMonth === state.month + LOAN_TERM_MONTHS, '新借款应按 3 个月记到期');
+  const blocked = reduce(state, { type: 'BORROW', amount: 2 });
+  assert(blocked.debt === 10, '超过设备抵押上限后不应再借入');
 }
 
 function checkOpeningAccounts(): void {
@@ -241,11 +292,11 @@ function settleFirstMonth(): GameState {
 
 function checkRdLabs(): void {
   assert(rdSuccessRate(0) === 0, '无人时成功率应为 0');
-  assert(rdSuccessRate(1) === 0.2, '1 人成功率应为 20%');
-  assert(rdSuccessRate(4) === 0.8, '4 人成功率应为 80% 上限');
-  assert(rdSuccessRate(6) === 0.8, '超过 4 人仍应封顶 80%');
-  assert(rdSuccessRate(1, 0.1) === 0.3, '失败经验应抬高小团队成功率');
-  assert(rdSuccessRate(4, 0.1) === 0.8, '失败经验不能突破 80% 上限');
+  assert(rdSuccessRate(1) === 0.3, '1 人成功率应为 30%');
+  assert(rdSuccessRate(3) === 0.9, '3 人成功率应为 90% 上限');
+  assert(rdSuccessRate(4) === 0.9, '超过 3 人仍应封顶 90%');
+  assert(rdSuccessRate(1, 0.1) === 0.4, '失败经验应抬高小团队成功率');
+  assert(rdSuccessRate(3, 0.1) === 0.9, '失败经验不能突破 90% 上限');
 
   let state = confirmBoard(reduce(createInitialState(), { type: 'START_GAME' }));
   state = reduce(state, { type: 'CONFIRM_BRIEFING' });
@@ -253,6 +304,12 @@ function checkRdLabs(): void {
   assert(state.phase === 'actions', '应进入行动阶段');
   const cash = state.cash;
   const ap = state.ap;
+  const bought = reduce({ ...state, ap: 0 }, { type: 'BUY_MACHINE' });
+  assert(bought.machines === state.machines + 1, '没有行动点也应能买设备');
+  assert(bought.ap === 0, '买设备不应消耗行动点');
+  const expanded = reduce({ ...state, ap: 0, cash: roundMoney(Math.max(state.cash, 20)) }, { type: 'EXPAND_FACTORY' });
+  assert(expanded.factories === state.factories + 1, '没有行动点也应能扩建厂区');
+  assert(expanded.ap === 0, '扩建厂区不应消耗行动点');
   const productLines = hireEffectLines(state, 'rd', 'product');
   assert(productLines[0]?.includes('产品实验室'), `招研发应说明编入产品实验室，实际 ${productLines[0]}`);
   assert(productLines[0]?.includes('成功率'), `招研发应说明人数只影响成功率，实际 ${productLines[0]}`);
@@ -264,6 +321,17 @@ function checkRdLabs(): void {
   assert(state.staff.rd === 1 && state.rdProductStaff === 1 && state.rdTechStaff === 0, '第一名研发应编入产品组');
   assert(state.rdProductProgress === 0, `入职不应推进进度，实际 ${state.rdProductProgress}`);
   assert(!state.rdProductDraft, '入职不应自动开题');
+  {
+    let packed = state;
+    packed = reduce(packed, { type: 'HIRE', role: 'rd', rdTrack: 'product' });
+    packed = reduce(packed, { type: 'HIRE', role: 'rd', rdTrack: 'product' });
+    assert(packed.rdProductStaff === RD_STAFF_CAP, `产品组应能招满 ${RD_STAFF_CAP} 人`);
+    const cashBefore = packed.cash;
+    const blocked = reduce(packed, { type: 'HIRE', role: 'rd', rdTrack: 'product' });
+    assert(blocked.rdProductStaff === RD_STAFF_CAP, '产品组第 4 人不应入职');
+    assert(blocked.staff.rd === packed.staff.rd, '满员招聘不应增加编制');
+    assert(blocked.cash === cashBefore, '满员招聘不应扣招聘费');
+  }
   state = reduce(state, { type: 'OPEN_PRODUCT_RD', archetype: 'margin' });
   assert(state.rdProductDraft, '选定方向后应生成课题');
   assert(state.rdProductDraft?.name.endsWith('款'), `产品名应以款结尾，实际 ${state.rdProductDraft?.name}`);
@@ -275,13 +343,15 @@ function checkRdLabs(): void {
   const draftCost = bomSpotCost(state, state.rdProductDraft!.bom);
   const draftMargin = roundMoney(state.rdProductDraft!.basePrice - draftCost);
   assert(draftMargin > floor, `新 BOM 毛利应高于现有最低档 ${floor}，实际 ${draftMargin}`);
-  assert(state.cash === roundMoney(cash - 2), '招聘费应为 2 万');
-  assert(state.ap === ap - 1, '招聘应消耗 1 AP');
+  assert(state.cash === roundMoney(cash - HIRE_COST.rd), '研发招聘费应为 2 万');
+  assert(state.ap === ap, '招聘不应消耗行动点');
 
+  state.ap = 0;
   state = reduce(state, { type: 'HIRE', role: 'rd', rdTrack: 'tech', ipId: 'jig' });
   assert(state.rdProductStaff === 1 && state.rdTechStaff === 1, '第二名研发应编入工艺组');
   assert(state.rdTechProgress === 0, `工艺入职不应推进进度，实际 ${state.rdTechProgress}`);
   assert(state.rdTechProjectId === 'jig', '第一次编入工艺组时应选定工装夹具');
+  assert(state.ap === 0, '没有行动点也应能招聘');
 
   state = reduce(state, { type: 'GO_PRODUCE' });
   for (const order of state.monthOrders ?? []) {
@@ -446,7 +516,77 @@ function checkSupplyChannels(): void {
   assert(leanNeed.a === 10 && leanNeed.b === 5, `节材五折后 10 件基础款应为 10 钢 5 塑，实际 ${leanNeed.a}/${leanNeed.b}`);
 }
 
+function checkHirePay(): void {
+  let state = confirmBoard(reduce(createInitialState(), { type: 'START_GAME' }));
+  state = reduce(state, { type: 'CONFIRM_BRIEFING' });
+  state = reduce(state, { type: 'ACK_EVENT' });
+  const cash = state.cash;
+  const production = reduce(state, { type: 'HIRE', role: 'production' });
+  assert(production.staff.production === state.staff.production + 1, '应能招聘生产人员');
+  assert(production.cash === cash, '生产人员不应收招聘费');
+  const management = reduce(state, { type: 'HIRE', role: 'management' });
+  assert(management.cash === roundMoney(cash - HIRE_COST.management), '管理人员招聘费应等于一个月工资');
+  assert(HIRE_COST.management === SALARY.management, '管理人员招聘费应等于月薪');
+  const sales = reduce(state, { type: 'HIRE', role: 'sales' });
+  assert(sales.cash === roundMoney(cash - HIRE_COST.sales), '销售人员招聘费应等于一个月工资');
+  const procurement = reduce(state, { type: 'HIRE', role: 'procurement' });
+  assert(procurement.cash === roundMoney(cash - HIRE_COST.procurement), '采购人员招聘费应等于一个月工资');
+  assert(HIRE_COST.rd === 2, '研发招聘费应为 2 万');
+}
+
+function checkArOverdue(): void {
+  assert(arRecoveryRate(1, 0) === 0.4, '逾期首月底表应为 40%');
+  assert(arRecoveryRate(2, 0) === 0.3, '逾期次月底表应为 30%');
+  assert(arRecoveryRate(3, 0) === 0.2, '逾期第三月底表应为 20%');
+  assert(arRecoveryRate(1, 1) === 0.45, '1 名销售应使首月追回 45%');
+  assert(arRecoveryRate(1, 12) === 1, '追回比例应封顶 100%');
+  assert(arCreditLossRate(-1, false) === 0.05, '未到期坏账准备应为 5%');
+  assert(arCreditLossRate(0, true) === 0.2, '刚逾期坏账准备应为 20%');
+  assert(arCreditLossRate(1, true) === 0.4, '催收第 1 个月坏账准备应为 40%');
+  assert(arCreditLossRate(2, true) === 0.7, '催收第 2 个月坏账准备应为 70%');
+  assert(arCreditLossRate(3, true) === 1, '催收第 3 个月坏账准备应为 100%');
+
+  const orig = Math.random;
+  let state = reduce(createInitialState(), { type: 'START_GAME' });
+  state.month = 2;
+  state.receivables = [{ amount: 10, originMonth: 1, dueMonth: 2 }];
+  Math.random = () => 0.5;
+  const paid = collectReceivables(state, 0, true);
+  Math.random = orig;
+  assert(paid === 10, `到期未逾期应整笔收回，实际 ${paid}`);
+  assert((state.receivables ?? []).length === 0, '按时结清后应收应清空');
+
+  state = reduce(createInitialState(), { type: 'START_GAME' });
+  state.month = 2;
+  state.receivables = [{ amount: 10, originMonth: 1, dueMonth: 2 }];
+  Math.random = () => 0;
+  const missed = collectReceivables(state, 0, true);
+  Math.random = orig;
+  assert(missed === 0, `刚确认逾期当月不应催收，实际 ${missed}`);
+  assert(state.receivables[0]?.overdue === true && state.receivables[0]?.amount === 10, '逾期应留下整笔');
+
+  state.month = 3;
+  const first = collectReceivables(state, 0, true);
+  assert(first === 4, `逾期首月底表应追回 40%，实际 ${first}`);
+  assert(state.receivables[0]?.amount === 6, `逾期首月后余额应为 6，实际 ${state.receivables[0]?.amount}`);
+
+  state.staff.sales = 2;
+  state.month = 4;
+  const second = collectReceivables(state, 0, true);
+  assert(second === 2.4, `2 名销售逾期次月应追回 40%，实际 ${second}`);
+
+  state = reduce(createInitialState(), { type: 'START_GAME' });
+  state.month = 2;
+  state.receivables = [{ amount: 10, originMonth: 1, dueMonth: 2 }];
+  Math.random = () => 0;
+  const forced = collectReceivables(state, 1, true);
+  Math.random = orig;
+  assert(forced === 10, `催收提案应在到期月整笔收回，实际 ${forced}`);
+  assert(AR_OVERDUE_CHANCE === 0.1, '到期逾期概率应为 10%');
+}
+
 checkOpeningAccounts();
+checkLoans();
 checkSupplyChannels();
 checkBoardVariety();
 checkMarketQuotes();
@@ -456,6 +596,8 @@ checkFactoryLayout();
 checkSpotPurchase();
 checkProposals();
 checkRdLabs();
+checkHirePay();
+checkArOverdue();
 settleFirstMonth();
 
 const result = play();

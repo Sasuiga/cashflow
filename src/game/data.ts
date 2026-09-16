@@ -19,23 +19,37 @@ export const STATUTORY_RESERVE_CAP = 0.5;
 export const CREDIT_SALE_RATE = 0.35;
 export const AR_TERM_MONTHS = 1;
 export const AR_WRITEOFF_PAST_DUE = 3;
+export const AR_OVERDUE_CHANCE = 0.1;
+export const AR_RECOVER_MONTHS = 3;
+export const AR_RECOVER_RATES = [0.4, 0.3, 0.2] as const;
+export const AR_RECOVER_PER_SALES = 0.05;
 export const SLOTS_PER_FACTORY = 3;
 export const FACTORY_UPKEEP = 1;
-export const LOAN_PER_MACHINE = 5;
-export const INTEREST_RATE = 0.1;
-export const HIRE_COST = 2;
+export const LOAN_PER_MACHINE = 10;
+export const INTEREST_RATE = 0.04;
+export const LOAN_TERM_MONTHS = 3;
+export const LOAN_DEFAULT_RATE = 0.1;
+export const LOAN_LATE_FEE_RATE = 0.05;
 export const SALARY: Record<Role, number> = {
   production: 0.5,
-  management: 1,
+  management: 0.8,
   sales: 1,
   rd: 1.5,
-  procurement: 1,
+  procurement: 0.8,
+};
+export const HIRE_COST: Record<Role, number> = {
+  production: 0,
+  management: SALARY.management,
+  sales: SALARY.sales,
+  rd: 2,
+  procurement: SALARY.procurement,
 };
 export const ROLES: Role[] = ['production', 'management', 'sales', 'rd', 'procurement'];
 export const PRODUCT_RD_MONTHS = 3;
 export const TECH_RD_MONTHS = 2;
-export const RD_SUCCESS_PER_HEAD = 0.2;
-export const RD_SUCCESS_CAP = 0.8;
+export const RD_STAFF_CAP = 3;
+export const RD_SUCCESS_PER_HEAD = 0.3;
+export const RD_SUCCESS_CAP = 0.9;
 export const RD_FAIL_BONUS = 0.1;
 export const IP_YIELD_EVERY = 5;
 export const IP_PRICE_BONUS = 0.08;
@@ -57,19 +71,17 @@ export function inventoryWriteDownRate(ageMonths: number): number {
   return 0;
 }
 
-export function arCollectionRate(monthsPastDue: number): number {
-  if (monthsPastDue < 0) return 0;
-  if (monthsPastDue === 0) return 0.65;
-  if (monthsPastDue === 1) return 0.4;
-  if (monthsPastDue === 2) return 0.2;
-  return 0;
+export function arRecoveryRate(monthsPastDue: number, sales = 0): number {
+  if (monthsPastDue < 1 || monthsPastDue > AR_RECOVER_MONTHS) return 0;
+  const base = AR_RECOVER_RATES[monthsPastDue - 1] ?? 0;
+  return Math.round(Math.min(1, Math.max(0, base + Math.max(0, sales) * AR_RECOVER_PER_SALES)) * 100) / 100;
 }
 
-export function arCreditLossRate(monthsPastDue: number): number {
-  if (monthsPastDue < 0) return 0.05;
-  if (monthsPastDue === 0) return 0.1;
-  if (monthsPastDue === 1) return 0.2;
-  if (monthsPastDue === 2) return 0.5;
+export function arCreditLossRate(monthsPastDue: number, overdue = monthsPastDue >= 1): number {
+  if (!overdue) return 0.05;
+  if (monthsPastDue <= 0) return 0.2;
+  if (monthsPastDue === 1) return 0.4;
+  if (monthsPastDue === 2) return 0.7;
   return 1;
 }
 
@@ -200,7 +212,8 @@ export function rdCycleOf(track: RdTrack): number {
 }
 
 export function rdSuccessRate(staff: number, failBonus = 0): number {
-  const raw = Math.max(0, staff) * RD_SUCCESS_PER_HEAD + Math.max(0, failBonus);
+  const heads = Math.min(RD_STAFF_CAP, Math.max(0, staff));
+  const raw = heads * RD_SUCCESS_PER_HEAD + Math.max(0, failBonus);
   return Math.round(Math.min(RD_SUCCESS_CAP, raw) * 100) / 100;
 }
 

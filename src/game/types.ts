@@ -180,6 +180,14 @@ export interface ReceivableLot {
   amount: number;
   originMonth: number;
   dueMonth: number;
+  overdue?: boolean;
+}
+
+export interface LoanLot {
+  amount: number;
+  originMonth: number;
+  dueMonth: number;
+  defaultCharged?: boolean;
 }
 
 export interface Modifiers {
@@ -267,6 +275,7 @@ export interface MonthLedger {
   extraExpense: number;
   rd: number;
   creditImpairment: number;
+  creditReversal: number;
   assetImpairment: number;
   incomeTax: number;
   cfSales: number;
@@ -312,6 +321,7 @@ export interface GameState {
   month: number;
   cash: number;
   debt: number;
+  loans: LoanLot[];
   wagesPayable: number;
   wagesAccruedThisMonth: number;
   wagesAccruedByRole: Record<Role, number>;

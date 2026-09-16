@@ -7,7 +7,12 @@ import {
   FACTORY_UPKEEP,
   HAND_LIMIT,
   HIRE_COST,
+  INTEREST_RATE,
   LAST_CONTRACT_SIGN_MONTH,
+  LOAN_DEFAULT_RATE,
+  LOAN_LATE_FEE_RATE,
+  LOAN_PER_MACHINE,
+  LOAN_TERM_MONTHS,
   MACHINE_BASE_CAP,
   MACHINE_COST,
   MACHINE_LIFE_MONTHS,
@@ -15,6 +20,9 @@ import {
   IP_CATALOG,
   MAX_RD_PRODUCTS,
   PRODUCT_RD_MONTHS,
+  RD_STAFF_CAP,
+  RD_SUCCESS_CAP,
+  RD_SUCCESS_PER_HEAD,
   TECH_RD_MONTHS,
   catalogOf,
   ROLES,
@@ -45,14 +53,16 @@ import {
   finishedProvisionOf,
   hireEffectLines,
   isProposalReady,
+  loanDueThisMonthOf,
   loanLimit,
+  loanOverdueOf,
   materialMaxAge,
   materialProvisionOf,
   maxExtraProduce,
-  monthlyInterest,
   monthlySalary,
   monthOutlook,
   orderCapLoads,
+  previewLoanCharges,
   productionPlan,
   productOf,
   rdCapacityBonus,
@@ -63,6 +73,7 @@ import {
   receivablesNet,
   procurementOf,
   purchaseQtyOptions,
+  loanAmountOptions,
   materialCrateSize,
   sellPriceOf,
   spotOf,
@@ -73,7 +84,6 @@ import { MONTH_NAMES, RD_ARCHETYPE_BLURB, RD_ARCHETYPE_LABEL, RD_TRACK_LABEL, RO
 import { goalById, q3ProcurementFree } from '../game/board';
 import type { GameAction, GameState, IpId, MaterialId, MonthOrder, ProductDef, ProductId, RdProductArchetype, RdTrack, Role } from '../game/types';
 
-const LOAN = [2, 4, 8];
 const EXTRA = [0, 2, 4, 6];
 type PlantKind = 'machine' | 'factory';
 
@@ -228,7 +238,7 @@ function RdLabCard({
     : (track === 'product' ? remainProduct <= 0 : remainTech <= 0)
       ? 100
       : 0;
-  const pips = [1, 2, 3, 4];
+  const pips = Array.from({ length: RD_STAFF_CAP }, (_, index) => index + 1);
   return (
     <article className={['rd-lab', staff > 0 ? 'on' : ''].filter(Boolean).join(' ')}>
       <span className="suit">{RD_TRACK_LABEL[track]}</span>
@@ -247,7 +257,9 @@ function RdLabCard({
         {pips.map((n) => (
           <i key={n} className={staff >= n ? 'on' : undefined} />
         ))}
-        <em>{staff} 人在岗</em>
+        <em>
+          {staff}/{RD_STAFF_CAP} 人在岗
+        </em>
       </div>
       {track === 'product' && acting && canOpenProductRd(state) ? (
         <div className="rd-ip-picks" style={{ marginTop: 10 }}>
@@ -334,7 +346,6 @@ function plantConfirmCopy(state: GameState, kind: PlantKind) {
       ongoing: [`按 ${MACHINE_LIFE_MONTHS} 个月计提折旧。`, '不增加厂区月维护。'],
       costs: [
         { label: '设备款', value: money(MACHINE_COST), note: '当月现金支付，记入固定资产' },
-        { label: '行动点', value: '1 AP', note: '确认后立即消耗' },
       ],
       blocked: full
         ? '厂区机位已满，请先扩建厂区。'
@@ -362,7 +373,6 @@ function plantConfirmCopy(state: GameState, kind: PlantKind) {
     ],
     costs: [
       { label: '扩建费', value: money(FACTORY_COST), note: '当月现金支付，记入固定资产' },
-      { label: '行动点', value: '1 AP', note: '确认后立即消耗' },
     ],
     blocked: state.cash < FACTORY_COST ? '现金不够支付扩建费。' : undefined,
     canConfirm: state.cash >= FACTORY_COST,
@@ -655,14 +665,23 @@ export function OperationsPage({
   const cartTotal = buyCartCost(state, cartItems);
   const cartOk = cartItems.length > 0 && state.cash >= cartTotal;
   const room = Math.max(0, loanLimit(state.machines) - state.debt);
-  const borrowAmt = Math.min(loanAmt, room);
-  const repayAmt = Math.min(loanAmt, state.debt, Math.max(0, state.cash));
-  const currentInterest = monthlyInterest(state.debt);
-  const afterBorrowInterest = monthlyInterest(state.debt + borrowAmt);
-  const extraInterest = roundMoney(afterBorrowInterest - currentInterest);
-  const afterRepayInterest = monthlyInterest(roundMoney(state.debt - repayAmt));
-  const savedInterest = roundMoney(currentInterest - afterRepayInterest);
-  const canBorrow = canAct && borrowAmt > 0;
+  const repayable = Math.min(state.debt, Math.max(0, state.cash));
+  const loanOptions = loanAmountOptions(Math.max(room, repayable));
+  const pickedLoan = loanOptions.includes(loanAmt) ? loanAmt : (loanOptions[loanOptions.length - 1] ?? 0);
+  const borrowAmt = Math.min(pickedLoan, room);
+  const repayAmt = Math.min(pickedLoan, repayable);
+  const currentCharges = previewLoanCharges(state);
+  const afterBorrowCharges = previewLoanCharges(state, { borrow: borrowAmt });
+  const afterRepayCharges = previewLoanCharges(state, { repay: repayAmt });
+  const currentInterest = currentCharges.interest;
+  const extraInterest = roundMoney(afterBorrowCharges.interest - currentInterest);
+  const savedInterest = roundMoney(currentInterest - afterRepayCharges.interest);
+  const savedPenalty = roundMoney(
+    currentCharges.defaultFee + currentCharges.lateFee - afterRepayCharges.defaultFee - afterRepayCharges.lateFee,
+  );
+  const loanOverdue = loanOverdueOf(state);
+  const loanDue = loanDueThisMonthOf(state);
+  const canBorrow = canAct && borrowAmt > 0 && loanOverdue <= 0;
   const canRepay = acting && repayAmt > 0;
   const products = catalogOf(state).filter((item) => state.unlockedProducts.includes(item.id));
   const cardWeights = ROLES.map((role) => ({
@@ -789,7 +808,7 @@ export function OperationsPage({
               {acting
                 ? pendingAdopt !== null
                   ? `待执行已满（${HAND_LIMIT}）。点选一份换下，或取消。`
-                  : '每月可免费立项一份，次月才能落地。落地耗 1 AP 并支付费用。不立项也完全合法。'
+                  : '每月可免费立项一份，次月才能落地。落地只耗 1 AP，不另付现金。不立项也完全合法。'
                 : '事件结束后才能立项和落地。编制决定本月会出现哪类提案。'}
             </p>
             {state.shop.length > 0 ? (
@@ -807,9 +826,7 @@ export function OperationsPage({
                       <div className="suit">{ROLE_LABEL[def.suit]}类提案</div>
                       <h4>{def.name}</h4>
                       <p>{def.blurb}</p>
-                      <div className="cost">
-                        落地 {money(def.cost)} · 1 AP
-                      </div>
+                      <div className="cost">落地 1 AP</div>
                       {acting ? (
                         adopted ? (
                           <div className="cost">本月已立项</div>
@@ -861,9 +878,7 @@ export function OperationsPage({
                       </div>
                       <h4>{def.name}</h4>
                       <p>{def.blurb}</p>
-                      <div className="cost">
-                        落地 {money(def.cost)} · 1 AP
-                      </div>
+                      <div className="cost">落地 1 AP</div>
                       {replacing ? (
                         <button
                           className="btn small"
@@ -881,13 +896,13 @@ export function OperationsPage({
                           <button
                             className="btn small"
                             style={{ marginTop: 10 }}
-                            disabled={!canAct || state.cash < def.cost}
+                            disabled={!canAct}
                             onClick={() => {
                               if (cardNeedsMaterial(def.id)) setPlayCardUid(card.uid);
                               else dispatch({ type: 'PLAY_CARD', uid: card.uid });
                             }}
                           >
-                            落地「{def.name}」 · 耗 1 AP · 付现 {money(def.cost)}
+                            落地「{def.name}」 · 耗 1 AP
                           </button>
                         ) : (
                           <div className="cost">下月才能落地</div>
@@ -905,7 +920,7 @@ export function OperationsPage({
               </p>
             )}
           </div>
-          <HireBar role="management" disabled={!canAct} onHire={setHireRole} />
+          <HireBar role="management" disabled={!acting} onHire={setHireRole} />
         </Stage>
         )}
 
@@ -967,7 +982,7 @@ export function OperationsPage({
               </div>
             )}
           </Actions>
-          <HireBar role="sales" disabled={!canAct} onHire={setHireRole} />
+          <HireBar role="sales" disabled={!acting} onHire={setHireRole} />
         </Stage>
         )}
 
@@ -1224,7 +1239,7 @@ export function OperationsPage({
               </tbody>
             </table>
           </Facts>
-          <HireBar role="procurement" disabled={!canAct} onHire={setHireRole} />
+          <HireBar role="procurement" disabled={!acting} onHire={setHireRole} />
         </Stage>
         )}
 
@@ -1256,13 +1271,13 @@ export function OperationsPage({
             onBack={() => dispatch({ type: 'BACK_TO_ACTIONS' })}
           />
           <div className="hire-action plant-actions">
-            <button className="chip" disabled={!canAct} onClick={() => setHireRole('production')}>
+            <button className="chip" disabled={!acting} onClick={() => setHireRole('production')}>
               招聘生产人员
             </button>
-            <button className="chip" disabled={!canAct} onClick={() => setPlantKind('machine')}>
+            <button className="chip" disabled={!acting} onClick={() => setPlantKind('machine')}>
               购买设备
             </button>
-            <button className="chip" disabled={!canAct} onClick={() => setPlantKind('factory')}>
+            <button className="chip" disabled={!acting} onClick={() => setPlantKind('factory')}>
               扩建厂区
             </button>
           </div>
@@ -1274,7 +1289,7 @@ export function OperationsPage({
         <Stage
           id="rd"
           title="研发部"
-          summary={`产品组 ${rdTrackStaff(state, 'product')} 人 · 工艺组 ${rdTrackStaff(state, 'tech')} 人 · 知识产权 ${(state.ownedIps ?? []).length}/${IP_CATALOG.length}`}
+          summary={`产品组 ${rdTrackStaff(state, 'product')}/${RD_STAFF_CAP} 人 · 工艺组 ${rdTrackStaff(state, 'tech')}/${RD_STAFF_CAP} 人 · 知识产权 ${(state.ownedIps ?? []).length}/${IP_CATALOG.length}`}
         >
           <Facts>
             <div className="rd-labs">
@@ -1292,7 +1307,7 @@ export function OperationsPage({
               />
             </div>
             <p className="hint" style={{ marginTop: 12 }}>
-              产品课题 3 个月，开题时自选简化、替代芯片或冲毛利；工艺课题 2 个月，招人或派人时选择知识产权。每人 +20% 成功率，上限 80%。有人值守才走表，招人不加速进度。
+              产品课题 3 个月，开题时自选简化、替代芯片或冲毛利；工艺课题 2 个月，招人或派人时选择知识产权。每人 +{pctLabel(RD_SUCCESS_PER_HEAD)} 成功率，每组最多 {RD_STAFF_CAP} 人、上限 {pctLabel(RD_SUCCESS_CAP)}。有人值守才走表，招人不加速进度。
               {rdCapacityBonus(state) > 0 ? ` 已装备知识产权为本月产能 +${rdCapacityBonus(state)}。` : ''}
             </p>
           </Facts>
@@ -1304,7 +1319,7 @@ export function OperationsPage({
               <p className="hint">{(state.extraProducts ?? []).map((item) => item.name).join('、')}</p>
             </Facts>
           )}
-          <HireBar role="rd" disabled={!canAct} onHire={setHireRole} />
+          <HireBar role="rd" disabled={!acting} onHire={setHireRole} />
         </Stage>
         )}
 
@@ -1312,11 +1327,11 @@ export function OperationsPage({
         <Stage
           id="treasury"
           title="财务部"
-          intro="现金不够时借款，有余钱再还。赊销尚未收回的部分，记在应收账款。"
+          intro={`现金不够时按设备抵押借款，每台上限 ${money(LOAN_PER_MACHINE)}，期限 ${LOAN_TERM_MONTHS} 个月、月息 ${pctLabel(INTEREST_RATE)}。到期必须还清，否则一次性违约金 ${pctLabel(LOAN_DEFAULT_RATE)}，另加滞纳金 ${pctLabel(LOAN_LATE_FEE_RATE)}/月。货款默认赊销，账期内整笔收回；少数批次会整笔逾期，再分 3 个月催收。`}
           summary={
             [
               state.debt > 0
-                ? `借款 ${money(state.debt)} · 利息 ${money(currentInterest)}/月 · 还可借 ${money(room)}`
+                ? `借款 ${money(state.debt)} · 利息 ${money(currentInterest)}/月${loanOverdue > 0 ? ` · 逾期 ${money(loanOverdue)}` : loanDue > 0 ? ` · 本月到期 ${money(loanDue)}` : ''} · 还可借 ${money(room)}`
                 : `无借款 · 设备抵押额度 ${money(loanLimit(state.machines))}`,
               arGross > 0 ? `应收 ${money(arNet)}${overdue > 0 ? ` · 逾期 ${money(overdue)}` : ''}` : '本月还没有应收',
             ].join(' · ')
@@ -1334,32 +1349,102 @@ export function OperationsPage({
                 {money(loanLimit(state.machines))} · 还可借 {money(room)}
               </span>
             </div>
+            <div className="row">
+              <span>期限 / 月息</span>
+              <span>
+                {LOAN_TERM_MONTHS} 个月 · {pctLabel(INTEREST_RATE)}
+              </span>
+            </div>
             {currentInterest > 0 && (
               <div className="row">
                 <span>预计本月利息</span>
                 <span>{money(currentInterest)}</span>
               </div>
             )}
+            {loanDue > 0 && (
+              <div className="row">
+                <span>本月到期</span>
+                <span>
+                  {money(loanDue)}
+                  {currentCharges.defaultFee + currentCharges.lateFee > 0
+                    ? ` · 若不还清将加收违约金 ${money(currentCharges.defaultFee)}、滞纳金 ${money(currentCharges.lateFee)}`
+                    : ''}
+                </span>
+              </div>
+            )}
+            {loanOverdue > 0 && (
+              <div className="row">
+                <span>其中逾期</span>
+                <span>
+                  {money(loanOverdue)}
+                  {currentCharges.lateFee > 0 ? ` · 本月滞纳金 ${money(currentCharges.lateFee)}` : ''}
+                  {currentCharges.defaultFee > 0 ? ` · 违约金 ${money(currentCharges.defaultFee)}` : ''}
+                </span>
+              </div>
+            )}
+            {(state.loans ?? []).length > 0 && (
+              <div className="sheet-wrap" style={{ marginTop: 12 }}>
+                <table className="sheet dark">
+                  <thead>
+                    <tr>
+                      <th>发生月</th>
+                      <th className="num">到期月</th>
+                      <th className="num">金额</th>
+                      <th className="num">状态</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(state.loans ?? []).map((lot, index) => {
+                      const past = state.month - lot.dueMonth;
+                      const status =
+                        past < 0
+                          ? `${lot.dueMonth - state.month} 个月后到期`
+                          : past === 0
+                            ? '本月到期，必须还款'
+                            : `逾期 ${past} 个月`;
+                      return (
+                        <tr key={`${lot.originMonth}-${lot.dueMonth}-${index}`}>
+                          <td>{MONTH_NAMES[lot.originMonth - 1] ?? `${lot.originMonth}月`}</td>
+                          <td className="num">{MONTH_NAMES[lot.dueMonth - 1] ?? `${lot.dueMonth}月`}</td>
+                          <td className="num">{money(lot.amount)}</td>
+                          <td className="num">{status}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </Facts>
-          <Actions note={acting ? undefined : '资金调度要等事件结束后才能做。'}>
+          <Actions
+            note={
+              !acting
+                ? '资金调度要等事件结束后才能做。'
+                : loanOverdue > 0
+                  ? '有到期未还借款，须先还款才能再借。'
+                  : undefined
+            }
+          >
             <div className="qty-row">
-              {LOAN.map((n) => (
-                <button key={n} className={loanAmt === n ? 'chip on' : 'chip'} onClick={() => setLoanAmt(n)}>
+              {loanOptions.map((n) => (
+                <button key={n} className={pickedLoan === n ? 'chip on' : 'chip'} onClick={() => setLoanAmt(n)}>
                   {money(n)}
                 </button>
               ))}
             </div>
             <div className="qty-row loan-actions" style={{ marginTop: 8 }}>
               <button className="btn small" disabled={!canBorrow} onClick={() => dispatch({ type: 'BORROW', amount: borrowAmt })}>
-                {`借入 ${money(borrowAmt)} · 耗 1 AP${
+                {`借入 ${money(borrowAmt)} · 耗 1 AP · 期限 ${LOAN_TERM_MONTHS} 个月${
                   extraInterest > 0
-                    ? ` · 财务费用 ${signedMoney(extraInterest)}/月${currentInterest > 0 ? `（合计 ${money(afterBorrowInterest)}）` : ''}`
+                    ? ` · 财务费用 ${signedMoney(extraInterest)}/月${currentInterest > 0 ? `（合计 ${money(afterBorrowCharges.interest)}）` : ''}`
                     : ''
                 }`}
               </button>
               <button className="btn small ghost" disabled={!canRepay} onClick={() => dispatch({ type: 'REPAY', amount: repayAmt })}>
-                {`偿还 ${money(repayAmt > 0 ? repayAmt : loanAmt)} · 不耗 AP${
-                  savedInterest > 0 ? ` · 财务费用 ${signedMoney(-savedInterest)}/月` : ''
+                {`偿还 ${money(repayAmt > 0 ? repayAmt : pickedLoan)} · 不耗 AP${
+                  savedInterest > 0 || savedPenalty > 0
+                    ? ` · 财务费用 ${signedMoney(-(savedInterest + savedPenalty))}/月`
+                    : ''
                 }`}
               </button>
             </div>
@@ -1392,12 +1477,16 @@ export function OperationsPage({
                   <tbody>
                     {lots.map((lot, index) => {
                       const past = state.month - lot.dueMonth;
-                      const status =
-                        past < 0
+                      const overdueLot = Boolean(lot.overdue) || past >= 1;
+                      const status = overdueLot
+                        ? past <= 0
+                          ? '本月确认逾期，下月起催收'
+                          : past >= 3
+                            ? '本月核销'
+                            : `逾期催收第 ${past} 个月`
+                        : past < 0
                           ? `${lot.dueMonth - state.month} 个月后到期`
-                          : past === 0
-                            ? '本月到期'
-                            : `逾期 ${past} 个月`;
+                          : '本月到期';
                       return (
                         <tr key={`${lot.originMonth}-${lot.dueMonth}-${index}`}>
                           <td>{MONTH_NAMES[lot.originMonth - 1] ?? `${lot.originMonth}月`}</td>
@@ -1450,7 +1539,7 @@ export function OperationsPage({
                 <button
                   type="button"
                   className="rd-hire-pick"
-                  disabled={state.cash < HIRE_COST || !canAct}
+                  disabled={state.cash < HIRE_COST.rd || !acting || rdTrackStaff(state, 'product') >= RD_STAFF_CAP}
                   onClick={() => {
                     dispatch({ type: 'HIRE', role: 'rd', rdTrack: 'product' });
                     setHireRole(null);
@@ -1459,10 +1548,10 @@ export function OperationsPage({
                   <span className="suit">{RD_TRACK_LABEL.product}</span>
                   <b>编入{RD_TRACK_LABEL.product}</b>
                   <span>
-                    {currentProductProject(state)?.name ??
-                      ((state.extraProducts?.length ?? 0) < MAX_RD_PRODUCTS ? '入职后在研发部开题' : '课题已结')}
-                    {' · '}
-                    成功率提升至 {pctLabel(rdTrackRate(state, 'product', 1))}
+                    {rdTrackStaff(state, 'product') >= RD_STAFF_CAP
+                      ? `已满员（${RD_STAFF_CAP} 人）`
+                      : `${currentProductProject(state)?.name ??
+                          ((state.extraProducts?.length ?? 0) < MAX_RD_PRODUCTS ? '入职后在研发部开题' : '课题已结')} · ${rdTrackStaff(state, 'product')}/${RD_STAFF_CAP} 人 · 成功率提升至 ${pctLabel(rdTrackRate(state, 'product', 1))}`}
                   </span>
                   <ul>
                     {hireEffectLines(state, 'rd', 'product')
@@ -1476,7 +1565,7 @@ export function OperationsPage({
                   <button
                     type="button"
                     className="rd-hire-pick"
-                    disabled={state.cash < HIRE_COST || !canAct}
+                    disabled={state.cash < HIRE_COST.rd || !acting || rdTrackStaff(state, 'tech') >= RD_STAFF_CAP}
                     onClick={() => {
                       dispatch({ type: 'HIRE', role: 'rd', rdTrack: 'tech' });
                       setHireRole(null);
@@ -1485,9 +1574,9 @@ export function OperationsPage({
                     <span className="suit">{RD_TRACK_LABEL.tech}</span>
                     <b>编入{RD_TRACK_LABEL.tech}</b>
                     <span>
-                      {currentTechProject(state)?.name}
-                      {' · '}
-                      成功率提升至 {pctLabel(rdTrackRate(state, 'tech', 1))}
+                      {rdTrackStaff(state, 'tech') >= RD_STAFF_CAP
+                        ? `已满员（${RD_STAFF_CAP} 人）`
+                        : `${currentTechProject(state)?.name} · ${rdTrackStaff(state, 'tech')}/${RD_STAFF_CAP} 人 · 成功率提升至 ${pctLabel(rdTrackRate(state, 'tech', 1))}`}
                     </span>
                     <ul>
                       {hireEffectLines(state, 'rd', 'tech')
@@ -1505,7 +1594,7 @@ export function OperationsPage({
                         <button
                           type="button"
                           className="rd-hire-pick"
-                          disabled={state.cash < HIRE_COST || !canAct}
+                          disabled={state.cash < HIRE_COST.rd || !acting || rdTrackStaff(state, 'tech') >= RD_STAFF_CAP}
                           onClick={() => {
                             dispatch({ type: 'HIRE', role: 'rd', rdTrack: 'tech' });
                             setHireRole(null);
@@ -1513,7 +1602,11 @@ export function OperationsPage({
                         >
                           <span className="suit">{RD_TRACK_LABEL.tech}</span>
                           <b>编入工艺实验室</b>
-                          <span>工艺专利已经齐了 · 成功率提升至 {pctLabel(rdTrackRate(state, 'tech', 1))}</span>
+                          <span>
+                            {rdTrackStaff(state, 'tech') >= RD_STAFF_CAP
+                              ? `已满员（${RD_STAFF_CAP} 人）`
+                              : `工艺专利已经齐了 · ${rdTrackStaff(state, 'tech')}/${RD_STAFF_CAP} 人 · 成功率提升至 ${pctLabel(rdTrackRate(state, 'tech', 1))}`}
+                          </span>
                         </button>
                       ) : (
                         availableTechIps(state).map((ip) => (
@@ -1521,7 +1614,7 @@ export function OperationsPage({
                             key={ip.id}
                             type="button"
                             className="rd-hire-pick"
-                            disabled={state.cash < HIRE_COST || !canAct}
+                            disabled={state.cash < HIRE_COST.rd || !acting || rdTrackStaff(state, 'tech') >= RD_STAFF_CAP}
                             onClick={() => {
                               dispatch({ type: 'HIRE', role: 'rd', rdTrack: 'tech', ipId: ip.id });
                               setHireRole(null);
@@ -1529,7 +1622,11 @@ export function OperationsPage({
                           >
                             <span className="suit">{ip.effect}</span>
                             <b>{ip.name}</b>
-                            <span>{ip.blurb}</span>
+                            <span>
+                              {rdTrackStaff(state, 'tech') >= RD_STAFF_CAP
+                                ? `已满员（${RD_STAFF_CAP} 人）`
+                                : `${ip.blurb} · ${rdTrackStaff(state, 'tech')}/${RD_STAFF_CAP} 人`}
+                            </span>
                           </button>
                         ))
                       )}
@@ -1547,21 +1644,18 @@ export function OperationsPage({
             <div className="hire-costs">
               <div>
                 <em>招聘费</em>
-                <strong>{money(HIRE_COST)}</strong>
-                <span>当月现金支付，记入管理费用</span>
+                <strong>{HIRE_COST[hireRole] > 0 ? money(HIRE_COST[hireRole]) : '免费'}</strong>
+                <span>
+                  {HIRE_COST[hireRole] > 0 ? '当月现金支付，记入管理费用' : '入职不收招聘费'}
+                </span>
               </div>
               <div>
                 <em>月薪</em>
                 <strong>{money(SALARY[hireRole])}</strong>
                 <span>本月计入应付职工薪酬，下月结算时支付</span>
               </div>
-              <div>
-                <em>行动点</em>
-                <strong>1 AP</strong>
-                <span>确认后立即消耗</span>
-              </div>
             </div>
-            {state.cash < HIRE_COST && <p className="hint">现金不够支付招聘费。</p>}
+            {state.cash < HIRE_COST[hireRole] && <p className="hint">现金不够支付招聘费。</p>}
             <div className="footer-actions">
               <button className="btn ghost" onClick={() => setHireRole(null)}>
                 取消
@@ -1569,7 +1663,7 @@ export function OperationsPage({
               {hireRole === 'rd' ? null : (
                 <button
                   className="btn"
-                  disabled={state.cash < HIRE_COST || !canAct}
+                  disabled={state.cash < HIRE_COST[hireRole] || !acting}
                   onClick={() => {
                     dispatch({ type: 'HIRE', role: hireRole });
                     setHireRole(null);
@@ -1597,7 +1691,7 @@ export function OperationsPage({
                   key={item.id}
                   type="button"
                   className="chip"
-                  disabled={!canAct || state.cash < cardById(playCard.defId).cost}
+                  disabled={!canAct}
                   onClick={() => {
                     dispatch({ type: 'PLAY_CARD', uid: playCard.uid, material: item.id });
                     setPlayCardUid(null);
@@ -1655,7 +1749,7 @@ export function OperationsPage({
                     </button>
                     <button
                       className="btn"
-                      disabled={!copy.canConfirm || !canAct}
+                      disabled={!copy.canConfirm || !acting}
                       onClick={() => {
                         if (plantKind === 'machine') dispatch({ type: 'BUY_MACHINE' });
                         else {
