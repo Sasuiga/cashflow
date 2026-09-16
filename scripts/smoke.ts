@@ -1,4 +1,4 @@
-import { collectReceivables, createInitialState, equityAccounts, factoryLayout, hireEffectLines, loanAmountOptions, loanLimit, lowestUnlockedMargin, bomSpotCost, netAssetsOf, netProfitOf, orderCapLoads, previewLoanCharges, purchaseQtyOptions, rdRevealOptions, reduce, traderOf, unitsNeeded } from '../src/game/engine';
+import { booksForView, collectReceivables, createInitialState, equityAccounts, factoryLayout, hireEffectLines, loanAmountOptions, loanLimit, lowestUnlockedMargin, bomSpotCost, netAssetsOf, netProfitOf, orderCapLoads, previewLoanCharges, purchaseQtyOptions, rdRevealOptions, reduce, traderOf, unitsNeeded } from '../src/game/engine';
 import { AR_OVERDUE_CHANCE, HIRE_COST, INTEREST_RATE, IP_LEAN_RATE, LOAN_DEFAULT_RATE, LOAN_LATE_FEE_RATE, LOAN_PER_MACHINE, LOAN_TERM_MONTHS, RD_FAIL_BONUS, RD_STAFF_CAP, SALARY, arCreditLossRate, arRecoveryRate, rdSuccessRate } from '../src/game/data';
 import { goalById } from '../src/game/board';
 import { roundMoney } from '../src/game/format';
@@ -251,6 +251,16 @@ function settleFirstMonth(): GameState {
       checkBalance(state, '一月结算');
       assert(state.paidInCapital === paidIn, '实收资本在月结后不应变动');
       const np = netProfitOf(state.ledger);
+      const report = state.lastReport;
+      if (!report) throw new Error('一月结算应生成底稿');
+      const view = booksForView(state);
+      assert(view.currClosed, '一月结算后本月列应为期末');
+      assert(view.prev.title === '开业', `上月期末应为开业，实际 ${view.prev.title}`);
+      assert(view.older == null, '一月不应有上上月期末');
+      assert(report.pnlRows.some((row) => row.label === '净利润' && row.value === np), '利润表展开应落到净利润');
+      assert(report.pnlRows.some((row) => row.label === '营业收入'), '利润表展开应有营业收入');
+      assert(report.balanceRows.some((row) => row.label === '净资产'), '资产负债表展开应有净资产');
+      assert(report.cashRows.some((row) => row.label === '期末现金'), '现金流量表展开应有期末现金');
       const reserve = state.surplusReserve ?? 0;
       if (np > 0) {
         assert(reserve === roundMoney(np * 0.1), `盈利月法定盈余公积应为净利润 10%，净利润 ${np} 公积 ${reserve}`);

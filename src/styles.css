@@ -953,13 +953,44 @@ h1,
   margin: 0 0 16px;
 }
 
-.settle-story div {
-  padding: 10px 12px;
+.settle-card {
   border: 1px solid #e4d7b4;
   background: #f7efd8;
 }
 
-.settle-story em {
+.settle-card-cover {
+  width: 100%;
+  display: block;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: inherit;
+  padding: 10px 36px 10px 12px;
+  position: relative;
+}
+
+.settle-card-cover::after {
+  content: '';
+  position: absolute;
+  top: 18px;
+  right: 14px;
+  width: 8px;
+  height: 8px;
+  border-right: 1.5px solid #8a7040;
+  border-bottom: 1.5px solid #8a7040;
+  transform: rotate(45deg);
+}
+
+.settle-card.open .settle-card-cover::after {
+  top: 22px;
+  transform: rotate(-135deg);
+}
+
+.settle-card.open .settle-card-cover {
+  border-bottom: 1px solid #e4d7b4;
+}
+
+.settle-card-cover em {
   display: block;
   font-style: normal;
   font-size: 11px;
@@ -968,17 +999,91 @@ h1,
   margin-bottom: 4px;
 }
 
-.settle-story b {
+.settle-card-cover b {
   display: block;
   font-family: var(--serif);
   font-size: 18px;
   margin-bottom: 4px;
 }
 
-.settle-story span {
+.settle-card-cover span {
   display: block;
   font-size: 13px;
   color: #5c5138;
+}
+
+.settle-card-body {
+  padding: 4px 12px 12px;
+}
+
+.settle-empty {
+  margin: 8px 0 4px;
+  font-size: 13px;
+  color: #5c5138;
+}
+
+.settle-rows {
+  display: grid;
+}
+
+.settle-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: start;
+  padding: 8px 0;
+  border-bottom: 1px dashed rgba(42, 36, 22, 0.16);
+  font-size: 14px;
+}
+
+.settle-row:last-child {
+  border-bottom: none;
+}
+
+.settle-row span {
+  display: block;
+}
+
+.settle-row small {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #6d6248;
+}
+
+.settle-row strong {
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+.settle-row.level-0.label-only {
+  padding-top: 12px;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: #8a7040;
+  border-bottom: none;
+}
+
+.settle-row.level-1 {
+  padding-left: 12px;
+  font-size: 13px;
+}
+
+.settle-row.level-2 {
+  padding-left: 24px;
+  font-size: 12px;
+  color: #5c5138;
+}
+
+.settle-row.total {
+  font-weight: 650;
+  border-bottom-color: rgba(42, 36, 22, 0.28);
+}
+
+.settle-row .muted {
+  color: #6d6248;
+  font-weight: 500;
 }
 
 .dept-stage .dept {
@@ -2023,6 +2128,68 @@ button.job:hover {
   letter-spacing: 0.12em;
   color: #8a7040;
   border-bottom: 1px solid #c9b88a;
+}
+
+.sheet thead th small {
+  display: block;
+  margin-top: 3px;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0;
+  color: var(--cream-dim);
+  text-transform: none;
+}
+
+.sheet-toggle {
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  text-decoration: underline dotted rgba(224, 180, 90, 0.55);
+  text-underline-offset: 3px;
+}
+
+.sheet-toggle:hover,
+.sheet-click:hover .sheet-toggle {
+  color: var(--gold-2);
+}
+
+.sheet-explain td {
+  padding: 0 10px 10px 22px;
+}
+
+.sheet-explain-list {
+  display: grid;
+  gap: 6px;
+  padding: 8px 10px;
+  border: 1px solid rgba(224, 180, 90, 0.16);
+  background: rgba(16, 20, 15, 0.35);
+  font-size: 12px;
+  color: var(--cream-dim);
+}
+
+.sheet-explain-list div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+}
+
+.sheet-explain-list .level-2 {
+  padding-left: 12px;
+}
+
+.sheet-explain-list small {
+  display: block;
+  margin-top: 2px;
+  line-height: 1.4;
+}
+
+.sheet-explain-list strong {
+  font-weight: 650;
+  white-space: nowrap;
 }
 
 .sheet tbody tr:last-child td {

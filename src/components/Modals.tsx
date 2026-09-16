@@ -1,8 +1,9 @@
+import { useState, type ReactNode } from 'react';
 import { MATERIALS, catalogOf, eventById } from '../game/data';
 import { booksForView, netProfitOf, operatingCashOf, rdRevealOptions, traderOf } from '../game/engine';
 import { MONTH_NAMES, RD_TRACK_LABEL, money, pctLabel, priceDelta, signedMoney } from '../game/format';
 import { QUARTER_LABEL, CHALLENGE_PICK, climateById, currentBasicGoal, currentChallengePool, quarterOutlook } from '../game/board';
-import type { GameState, RdAssign } from '../game/types';
+import type { GameState, RdAssign, SettleRow } from '../game/types';
 
 export function BoardModal({
   state,
@@ -183,6 +184,7 @@ export function EventModal({
 
 export function ReportModal({ state, onNext }: { state: GameState; onNext: () => void }) {
   const report = state.lastReport;
+  const [open, setOpen] = useState<'pnl' | 'bs' | 'cf' | null>(null);
   if (!report) return null;
   const closing = Boolean(state.endKind);
   const { prev, curr } = booksForView(state);
@@ -192,6 +194,10 @@ export function ReportModal({ state, onNext }: { state: GameState; onNext: () =>
   const currInv = Math.max(0, (curr.inventory ?? 0) - (curr.inventoryProvision ?? 0));
   const prevAr = prev.receivablesNet ?? Math.max(0, (prev.receivables ?? 0) - (prev.badDebtProvision ?? 0));
   const currAr = curr.receivablesNet ?? Math.max(0, (curr.receivables ?? 0) - (curr.badDebtProvision ?? 0));
+  const pnlRows = report.pnlRows?.length
+    ? report.pnlRows
+    : report.lines.map((line) => ({ label: line.label, value: line.value, tone: line.tone }));
+  const toggle = (id: 'pnl' | 'bs' | 'cf') => setOpen((current) => (current === id ? null : id));
   return (
     <div className="overlay">
       <div className="modal">
@@ -204,33 +210,36 @@ export function ReportModal({ state, onNext }: { state: GameState; onNext: () =>
           {report.leftover ? `，库存 ${report.leftover}` : ''}。
         </p>
         <div className="settle-story">
-          <div>
-            <em>利润表</em>
-            <b className={netProfit >= 0 ? 'good' : 'bad'}>净利润 {signedMoney(netProfit)}</b>
-            <span>营业收入 {money(report.revenue)}</span>
-          </div>
-          <div>
-            <em>现金流量表</em>
-            <b className={opCash >= 0 ? 'good' : 'bad'}>经营现金流 {signedMoney(opCash)}</b>
-            <span>期末现金 {money(report.cash)}</span>
-          </div>
-          <div>
-            <em>资产负债表</em>
-            <b className={report.netAssets >= 0 ? 'good' : 'bad'}>净资产 {money(report.netAssets)}</b>
-            <span>
-              存货 {money(prevInv)} → {money(currInv)} · 应收 {money(prevAr)} → {money(currAr)}
-            </span>
-          </div>
-        </div>
-        <div className="ledger">
-          {report.lines.map((line) => (
-            <div key={line.label}>
-              <span>{line.label}</span>
-              <span className={line.tone === 'good' ? 'good' : line.tone === 'bad' ? 'bad' : ''}>
-                {signedMoney(line.value)}
-              </span>
-            </div>
-          ))}
+          <SettleCard
+            title="利润表"
+            headline={`净利润 ${signedMoney(netProfit)}`}
+            headlineTone={netProfit >= 0 ? 'good' : 'bad'}
+            cover={`营业收入 ${money(report.revenue)}`}
+            open={open === 'pnl'}
+            onToggle={() => toggle('pnl')}
+          >
+            <SettleRows rows={pnlRows} />
+          </SettleCard>
+          <SettleCard
+            title="资产负债表"
+            headline={`净资产 ${money(report.netAssets)}`}
+            headlineTone={report.netAssets >= 0 ? 'good' : 'bad'}
+            cover={`存货 ${money(prevInv)} → ${money(currInv)} · 应收 ${money(prevAr)} → ${money(currAr)}`}
+            open={open === 'bs'}
+            onToggle={() => toggle('bs')}
+          >
+            <SettleRows rows={report.balanceRows ?? []} />
+          </SettleCard>
+          <SettleCard
+            title="现金流量表"
+            headline={`经营现金流 ${signedMoney(opCash)}`}
+            headlineTone={opCash >= 0 ? 'good' : 'bad'}
+            cover={`期末现金 ${money(report.cash)}`}
+            open={open === 'cf'}
+            onToggle={() => toggle('cf')}
+          >
+            <SettleRows rows={report.cashRows ?? []} />
+          </SettleCard>
         </div>
         {report.rdNote && <p className="lead">{report.rdNote}</p>}
         <div className="footer-actions">
@@ -239,6 +248,66 @@ export function ReportModal({ state, onNext }: { state: GameState; onNext: () =>
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function SettleCard({
+  title,
+  headline,
+  headlineTone,
+  cover,
+  open,
+  onToggle,
+  children,
+}: {
+  title: string;
+  headline: string;
+  headlineTone: 'good' | 'bad';
+  cover: string;
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div className={`settle-card${open ? ' open' : ''}`}>
+      <button type="button" className="settle-card-cover" aria-expanded={open} onClick={onToggle}>
+        <em>{title}</em>
+        <b className={headlineTone}>{headline}</b>
+        <span>{cover}</span>
+      </button>
+      {open ? <div className="settle-card-body">{children}</div> : null}
+    </div>
+  );
+}
+
+function SettleRows({ rows }: { rows: SettleRow[] }) {
+  if (!rows.length) return <p className="settle-empty">本月这一张表没有可展开的明细。</p>;
+  return (
+    <div className="settle-rows">
+      {rows.map((row, index) => (
+        <div
+          key={`${row.label}-${index}`}
+          className={[
+            'settle-row',
+            `level-${row.level ?? 0}`,
+            row.total ? 'total' : '',
+            row.value == null ? 'label-only' : '',
+          ]
+            .filter(Boolean)
+            .join(' ')}
+        >
+          <div>
+            <span>{row.label}</span>
+            {row.detail ? <small>{row.detail}</small> : null}
+          </div>
+          {row.value != null ? (
+            <strong className={row.tone === 'good' ? 'good' : row.tone === 'bad' ? 'bad' : 'muted'}>
+              {row.signed === false ? money(row.value) : signedMoney(row.value)}
+            </strong>
+          ) : null}
+        </div>
+      ))}
     </div>
   );
 }

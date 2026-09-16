@@ -210,6 +210,60 @@ export interface SettlementLine {
   tone?: 'good' | 'bad' | 'mute';
 }
 
+export interface SettleRow {
+  label: string;
+  detail?: string;
+  value?: number;
+  tone?: 'good' | 'bad' | 'mute';
+  level?: 0 | 1 | 2;
+  total?: boolean;
+  signed?: boolean;
+}
+
+export interface SettlementSku {
+  name: string;
+  produced: number;
+  sold: number;
+  leftover: number;
+  unitPrice: number;
+  revenue: number;
+  cogs: number;
+  materialIn: number;
+  conversionIn: number;
+  openingQty: number;
+}
+
+export interface SettlementWage {
+  role: Role;
+  count: number;
+  unit: number;
+  total: number;
+}
+
+export interface SettlementFacts {
+  skus: SettlementSku[];
+  wages: SettlementWage[];
+  rdProductStaff: number;
+  rdTechStaff: number;
+  produced: boolean;
+  factories: number;
+  machines: number;
+  machineDep: number;
+  factoryDep: number;
+  upkeep: number;
+  cashSales: number;
+  creditSales: number;
+  arCollected: number;
+  arWritten: number;
+  interest: number;
+  defaultFee: number;
+  lateFee: number;
+  contractPenalty: number;
+  taxPaid: number;
+  reserve: number;
+  settled?: boolean;
+}
+
 export interface IpDef {
   id: IpId;
   name: string;
@@ -261,6 +315,10 @@ export interface SettlementReport {
   netAssets: number;
   rdNote: string | null;
   lines: SettlementLine[];
+  facts: SettlementFacts;
+  pnlRows: SettleRow[];
+  balanceRows: SettleRow[];
+  cashRows: SettleRow[];
 }
 
 export interface MonthLedger {
@@ -314,6 +372,9 @@ export interface MonthBooks {
   retainedEarnings: number;
   equity: number;
   ledger: MonthLedger;
+  pnlRows?: SettleRow[];
+  balanceRows?: SettleRow[];
+  cashRows?: SettleRow[];
 }
 
 export interface GameState {

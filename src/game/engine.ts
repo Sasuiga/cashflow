@@ -47,6 +47,7 @@ import {
   IP_AUTO_PER_MACHINE,
   IP_LEAN_RATE,
   SALARY,
+  ROLES,
   SLOTS_PER_FACTORY,
   SPOT_HARD_CAP,
   SPOT_STAFF_ADD,
@@ -92,6 +93,7 @@ import {
   trendWord,
 } from './board';
 import { MONTH_NAMES, RD_ARCHETYPE_BLURB, RD_ARCHETYPE_LABEL, RD_TRACK_LABEL, ROLE_LABEL, bomLabel, factoryName, materialName, money, pctLabel, productName, roundMoney } from './format';
+import { buildBalanceRows, buildCashRows, buildPnlRows } from './settlementStory';
 import type {
   Bom,
   BuyChannel,
@@ -117,8 +119,11 @@ import type {
   RdTrack,
   ReceivableLot,
   Role,
+  SettlementFacts,
   SettlementLine,
   SettlementReport,
+  SettlementSku,
+  SettlementWage,
   Staff,
   StockLayer,
   TrendDir,
@@ -1747,16 +1752,22 @@ function unlockAchievement(state: GameState, id: string): void {
 export function booksForView(state: GameState): {
   prev: MonthBooks;
   curr: MonthBooks;
+  older: MonthBooks | null;
   currClosed: boolean;
 } {
   const settledThisMonth = state.lastReport?.month === state.month;
-  const prev = settledThisMonth
-    ? (state.closedBooks[state.closedBooks.length - 2] ?? state.openBooks)
-    : (state.closedBooks[state.closedBooks.length - 1] ?? state.openBooks);
-  const curr = settledThisMonth
-    ? (state.closedBooks[state.closedBooks.length - 1] ?? snapshotBooks(state, MONTH_NAMES[state.month - 1] ?? '本月'))
-    : snapshotBooks(state, '本月');
-  return { prev, curr, currClosed: settledThisMonth };
+  const closed = state.closedBooks;
+  const opening = state.openBooks;
+  if (settledThisMonth) {
+    const curr = closed[closed.length - 1] ?? snapshotBooks(state, MONTH_NAMES[state.month - 1] ?? '本月');
+    const prev = closed[closed.length - 2] ?? opening;
+    const older = closed[closed.length - 3] ?? (closed.length >= 2 ? opening : null);
+    return { prev, curr, older, currClosed: true };
+  }
+  const curr = snapshotBooks(state, '本月');
+  const prev = closed[closed.length - 1] ?? opening;
+  const older = closed[closed.length - 2] ?? (closed.length >= 1 ? opening : null);
+  return { prev, curr, older, currClosed: false };
 }
 
 export function checkAchievements(state: GameState): void {
@@ -2321,14 +2332,14 @@ function consumeBom(state: GameState, id: ProductId, count: number): number {
   return cost;
 }
 
-function accrueDepreciation(state: GameState): number {
+function accrueDepreciation(state: GameState): { total: number; machine: number; factory: number } {
   const machineNbv = Math.max(0, (state.machineGross ?? 0) - (state.accumDepMachines ?? 0));
   const factoryNbv = Math.max(0, (state.factoryGross ?? 0) - (state.accumDepFactories ?? 0));
   const machineDep = roundMoney(Math.min((state.depreciableMachineGross ?? 0) / MACHINE_LIFE_MONTHS, machineNbv));
   const factoryDep = roundMoney(Math.min((state.depreciableFactoryGross ?? 0) / FACTORY_LIFE_MONTHS, factoryNbv));
   state.accumDepMachines = roundMoney((state.accumDepMachines ?? 0) + machineDep);
   state.accumDepFactories = roundMoney((state.accumDepFactories ?? 0) + factoryDep);
-  return roundMoney(machineDep + factoryDep);
+  return { total: roundMoney(machineDep + factoryDep), machine: machineDep, factory: factoryDep };
 }
 
 function chargeAdmin(state: GameState, amount: number): void {
@@ -3913,18 +3924,43 @@ export function reduce(prev: GameState, action: GameAction): GameState {
 
 function settleMonth(state: GameState): GameState {
   ensureImpairmentState(state);
+  syncFinishedBooks(state);
   forfeitContractLot(state);
   const plan = productionPlan(state);
   const salaries = syncMonthWages(state);
   const producedEntries = (Object.entries(plan.produce) as Array<[ProductId, number]>).filter(([, qty]) => qty > 0);
   const made = producedEntries.reduce((sum, [, qty]) => sum + qty, 0);
   const produced = producedEntries.reduce((sum, [, qty]) => sum + qty + yieldExtraOf(qty, state), 0);
+  const openingById: Partial<Record<ProductId, { qty: number; cost: number }>> = {};
+  for (const id of state.unlockedProducts) {
+    openingById[id] = { qty: state.finished[id] ?? 0, cost: state.finishedCost[id] ?? 0 };
+  }
+  const skuMap = new Map<ProductId, SettlementSku>();
+  const ensureSku = (id: ProductId): SettlementSku => {
+    const existing = skuMap.get(id);
+    if (existing) return existing;
+    const opening = openingById[id];
+    const created: SettlementSku = {
+      name: skuName(state, id),
+      produced: 0,
+      sold: 0,
+      leftover: 0,
+      unitPrice: sellPriceOf(state, id),
+      revenue: 0,
+      cogs: 0,
+      materialIn: 0,
+      conversionIn: 0,
+      openingQty: opening?.qty ?? 0,
+    };
+    skuMap.set(id, created);
+    return created;
+  };
 
   const depreciation = accrueDepreciation(state);
   const upkeep = roundMoney(state.factories * FACTORY_UPKEEP);
   if (made > 0) {
     pay(state, upkeep, 'opOut');
-    const conversion = roundMoney((state.wip ?? 0) + depreciation + upkeep);
+    const conversion = roundMoney((state.wip ?? 0) + depreciation.total + upkeep);
     let allocated = 0;
     producedEntries.forEach(([productId, qty], index) => {
       const materialCost = consumeBom(state, productId, qty);
@@ -3940,11 +3976,15 @@ function settleMonth(state: GameState): GameState {
         roundMoney(materialCost + share),
         state.month,
       );
+      const sku = ensureSku(productId);
+      sku.produced = output;
+      sku.materialIn = materialCost;
+      sku.conversionIn = share;
     });
     state.wip = 0;
     syncFinishedBooks(state);
   } else {
-    chargeAdmin(state, roundMoney((state.wip ?? 0) + depreciation));
+    chargeAdmin(state, roundMoney((state.wip ?? 0) + depreciation.total));
     state.wip = 0;
     pay(state, upkeep, 'admin');
   }
@@ -3961,8 +4001,15 @@ function settleMonth(state: GameState): GameState {
       sold += result.sold;
       leftover += result.leftover;
       cogs = roundMoney(cogs + result.cogs);
-      revenue = roundMoney(revenue + result.sold * sellPriceOf(state, id));
+      const lineRevenue = roundMoney(result.sold * sellPriceOf(state, id));
+      revenue = roundMoney(revenue + lineRevenue);
       soldNames.push(`${skuName(state, id)} ${result.sold}件`);
+      const sku = ensureSku(id);
+      sku.sold = result.sold;
+      sku.leftover = result.leftover;
+      sku.revenue = lineRevenue;
+      sku.cogs = result.cogs;
+      sku.unitPrice = sellPriceOf(state, id);
       if (state.quarterStats) {
         if (id !== 'basic') {
           state.quarterStats.nonBasic = true;
@@ -3974,14 +4021,19 @@ function settleMonth(state: GameState): GameState {
       }
     } else {
       leftover += state.finished[id] ?? 0;
+      const remain = state.finished[id] ?? 0;
+      if (remain > 0 || (openingById[id]?.qty ?? 0) > 0) {
+        const sku = ensureSku(id);
+        sku.leftover = remain;
+      }
     }
   }
   if (state.quarterStats) state.quarterStats.sold += sold;
 
   const cfSalesBefore = state.ledger.cfSales;
   const sale = recognizeSale(state, revenue);
-  collectReceivables(state, state.modifiers.collectionBonus ?? 0, true);
-  writeOffAgedReceivables(state);
+  const arCollected = collectReceivables(state, state.modifiers.collectionBonus ?? 0, true);
+  const arWritten = writeOffAgedReceivables(state);
   remeasureInventoryProvision(state);
   remeasureBadDebt(state);
 
@@ -3995,12 +4047,14 @@ function settleMonth(state: GameState): GameState {
   }
 
   let penalty = roundMoney(loanCharges.defaultFee + loanCharges.lateFee);
+  let contractPenalty = 0;
   for (const order of (state.monthOrders ?? []).filter((item) => item.kind === 'contract')) {
     const taken = (state.acceptedOrderIds ?? []).includes(order.id);
     if (taken) {
       if (order.okLog) pushLog(state, order.okLog);
     } else {
       penalty = roundMoney(penalty + (order.penalty ?? 0));
+      contractPenalty = roundMoney(contractPenalty + (order.penalty ?? 0));
       if (order.penalty) pay(state, order.penalty, 'extra');
       pushLog(state, order.failLog ?? `合同 ${skuName(state, order.productId)} ${order.qty} 件未交，已扣违约金。`);
     }
@@ -4015,6 +4069,37 @@ function settleMonth(state: GameState): GameState {
   const reserve = appropriateStatutoryReserve(state, netProfit);
   const net = netAssetsOf(state);
   const productNameLine = soldNames.join('、') || '未接单';
+  const wages: SettlementWage[] = ROLES.map((role) => ({
+    role,
+    count: state.staff[role] ?? 0,
+    unit: SALARY[role],
+    total: state.wagesAccruedByRole?.[role] ?? 0,
+  }));
+  const facts: SettlementFacts = {
+    skus: [...skuMap.values()],
+    wages,
+    rdProductStaff: state.rdProductStaff ?? 0,
+    rdTechStaff: state.rdTechStaff ?? 0,
+    produced: made > 0,
+    factories: state.factories,
+    machines: state.machines,
+    machineDep: depreciation.machine,
+    factoryDep: depreciation.factory,
+    upkeep,
+    cashSales: sale.cash,
+    creditSales: sale.credit,
+    arCollected,
+    arWritten,
+    interest,
+    defaultFee: loanCharges.defaultFee,
+    lateFee: loanCharges.lateFee,
+    contractPenalty,
+    taxPaid,
+    reserve,
+    settled: true,
+  };
+  const prevBooks = state.closedBooks[state.closedBooks.length - 1] ?? state.openBooks;
+  const currBooks = snapshotBooks(state, MONTH_NAMES[state.month - 1] ?? `${state.month}月`);
   const report: SettlementReport = {
     month: state.month,
     productName: productNameLine,
@@ -4033,11 +4118,18 @@ function settleMonth(state: GameState): GameState {
     netAssets: net,
     rdNote,
     lines: pnlSettlementLines(state.ledger, reserve),
+    facts,
+    pnlRows: buildPnlRows(facts, state.ledger, operatingProfitOf(state.ledger), profitBeforeTaxOf(state.ledger), netProfit),
+    balanceRows: buildBalanceRows(prevBooks, currBooks, facts),
+    cashRows: buildCashRows(facts, state.ledger, state.cash, operatingCashOf(state.ledger)),
   };
 
   state.prevReport = state.lastReport;
   state.lastReport = report;
-  state.closedBooks = [...state.closedBooks, snapshotBooks(state, MONTH_NAMES[state.month - 1] ?? `${state.month}月`)];
+  currBooks.pnlRows = report.pnlRows;
+  currBooks.balanceRows = report.balanceRows;
+  currBooks.cashRows = report.cashRows;
+  state.closedBooks = [...state.closedBooks, currBooks];
   pushLog(
     state,
     `${state.month} 月结算：${productNameLine}，现销 ${money(sale.cash)}，赊销 ${money(sale.credit)}，账面成本 ${money(cogs)}，净利润 ${money(netProfit)}。`,
