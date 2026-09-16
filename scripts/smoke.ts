@@ -1,5 +1,67 @@
-import { booksForView, collectReceivables, createInitialState, eligibleEventsForTone, equityAccounts, eventToneWeights, factoryLayout, hireEffectLines, loanAmountOptions, loanLimit, lowestUnlockedMargin, bomSpotCost, netAssetsOf, netProfitOf, orderCapLoads, previewLoanCharges, purchaseQtyOptions, rdRevealOptions, reduce, traderOf, unitsNeeded } from '../src/game/engine';
-import { AR_OVERDUE_CHANCE, EVENTS, HIRE_COST, INTEREST_RATE, IP_LEAN_RATE, LOAN_DEFAULT_RATE, LOAN_LATE_FEE_RATE, LOAN_PER_MACHINE, LOAN_TERM_MONTHS, RD_FAIL_BONUS, RD_STAFF_CAP, SALARY, arCreditLossRate, arRecoveryRate, eventById, eventToneWeightsFor, rdSuccessRate } from '../src/game/data';
+import {
+  booksForView,
+  buyLineCost,
+  canUseOvertime,
+  capacityOf,
+  cardBuyLimitOf,
+  collectReceivables,
+  contractApFreeOf,
+  contractCoverMonthsOf,
+  createInitialState,
+  creditSaleRateOf,
+  eligibleEventsForTone,
+  equityAccounts,
+  eventToneWeights,
+  factoryBuyDiscountOf,
+  factoryLayout,
+  flexCapacityOf,
+  handLimitOf,
+  hireEffectLines,
+  loanAmountOptions,
+  loanLimit,
+  lowestUnlockedMargin,
+  bomSpotCost,
+  maxLiveContractsOf,
+  netAssetsOf,
+  netProfitOf,
+  orderCapLoads,
+  passThroughRateOf,
+  previewLoanCharges,
+  purchaseQtyOptions,
+  rdRevealOptions,
+  reduce,
+  shopCountOf,
+  traderOf,
+  traderPriceMultOf,
+  unitsNeeded,
+  yieldExtraOf,
+} from '../src/game/engine';
+import {
+  AR_OVERDUE_CHANCE,
+  EVENTS,
+  HIRE_COST,
+  INTEREST_RATE,
+  IP_LEAN_RATE,
+  LOAN_DEFAULT_RATE,
+  LOAN_LATE_FEE_RATE,
+  LOAN_PER_MACHINE,
+  LOAN_TERM_MONTHS,
+  MAX_ACTIVE_IPS,
+  PROD_FIELD_YIELD_EVERY,
+  PROD_FLEX_CAP,
+  PROD_OVERTIME_CAP,
+  PROD_OVERTIME_COST,
+  RD_FAIL_BONUS,
+  RD_STAFF_CAP,
+  SALARY,
+  STARTING_CASH,
+  arCreditLossRate,
+  arRecoveryRate,
+  eventById,
+  eventToneWeightsFor,
+  rdCycleOf,
+  rdSuccessRate,
+} from '../src/game/data';
 import { explainAccount, storyChildren } from '../src/game/settlementStory';
 import { applyClimateModifiers, CLIMATES, goalById } from '../src/game/board';
 import { roundMoney } from '../src/game/format';
@@ -163,7 +225,8 @@ function checkSalesOrders(): void {
   assert(lines[0]?.includes(`本月订单 ${orders.length} → ${orders.length + 1} 张`), `招销售当月应加一张，实际 ${lines[0]}`);
   assert(lines[1]?.includes('每 2 名销售人员使月初订单 +1'), `招销售应说明下月按两人加一张，实际 ${lines[1]}`);
   assert(lines[1]?.includes('下月月初订单仍为 3 张'), `一名销售不应抬高下月基数，实际 ${lines[1]}`);
-  assert(lines[2]?.includes('追回'), `招销售应说明逾期追回加成，实际 ${lines[2]}`);
+  assert(lines[3]?.includes('追回'), `招销售应说明逾期追回加成，实际 ${lines[3]}`);
+  assert(lines[2]?.includes('跟进'), `招销售应说明售价跟进原料，实际 ${lines[2]}`);
 }
 
 function checkPurchaseLots(): void {
@@ -179,14 +242,14 @@ function checkFactoryLayout(): void {
   assert(plants.length === 1, `开局应有一座厂区，实际 ${plants.length}`);
   assert(plants[0]?.name === '一号厂区', `开局厂区名应为 一号厂区，实际 ${plants[0]?.name}`);
   assert(plants[0]?.machineCount === 1, `开局应有 1 台设备，实际 ${plants[0]?.machineCount}`);
-  assert(plants[0]?.machines[0]?.workers === 2, `开局 1 号机应有 2 人，实际 ${plants[0]?.machines[0]?.workers}`);
-  assert(plants[0]?.machines[0]?.cap === 14, `开局 1 号机产能应为 14，实际 ${plants[0]?.machines[0]?.cap}`);
-  assert(plants[0]?.cap === 14, `开局厂区产能应为 14，实际 ${plants[0]?.cap}`);
+  assert(plants[0]?.machines[0]?.workers === 1, `开局 1 号机应有 1 人，实际 ${plants[0]?.machines[0]?.workers}`);
+  assert(plants[0]?.machines[0]?.cap === 10, `开局 1 号机产能应为 10，实际 ${plants[0]?.machines[0]?.cap}`);
+  assert(plants[0]?.cap === 10, `开局厂区产能应为 10，实际 ${plants[0]?.cap}`);
   assert(plants[0]?.machines[1]?.filled === false, '开局 2 号机位应空置');
 
   const overflowed = factoryLayout({ ...opened, staff: { ...opened.staff, production: 5 } }, 0);
   assert(overflowed[0]?.overflow === 1, `5 名生产工应对 1 台设备超编 1 人，实际 ${overflowed[0]?.overflow}`);
-  assert(overflowed[0]?.cap === 23, `超编后厂区产能应为 23，实际 ${overflowed[0]?.cap}`);
+  assert(overflowed[0]?.cap === 25, `超编后厂区产能应为 25（含满第一台弹性 +2），实际 ${overflowed[0]?.cap}`);
 
   const expanded = factoryLayout({ ...opened, factories: 2, slots: 6, machines: 4 }, 10);
   assert(expanded.length === 2, `两座厂区应拆成两个标签，实际 ${expanded.length}`);
@@ -195,7 +258,7 @@ function checkFactoryLayout(): void {
   assert(expanded[1]?.name === '二号厂区', `第二座应为二号厂区，实际 ${expanded[1]?.name}`);
 
   const penalized = factoryLayout({ ...opened, modifiers: { ...opened.modifiers, extraCapacity: -3 } }, 0);
-  assert(penalized[0]?.cap === 11, `事件减产能后一号厂区应为 11，实际 ${penalized[0]?.cap}`);
+  assert(penalized[0]?.cap === 7, `事件减产能后一号厂区应为 7，实际 ${penalized[0]?.cap}`);
 
   const scheduled = orderCapLoads({
     ...opened,
@@ -310,7 +373,7 @@ function checkOpeningAccounts(): void {
   assert(accounts.retained === 0, `开业未分配利润应为 0，实际 ${accounts.retained}`);
   assert(opened.materialCost.a === 6.4 && opened.materialCost.b === 3.2 && opened.materialCost.c === 2, '开业原材料未按历史成本入账');
   assert(opened.machineGross === 10 && opened.factoryGross === 20, '开业固定资产未按原价入账');
-  assert(opened.maxAp === 3 && opened.ap === 3, '开业 1 名管理应维持 3 点行动点上限');
+  assert(opened.maxAp === 2 && opened.ap === 2, '开业无管理应维持 2 点行动点上限');
   checkBalance(opened, '开业');
 }
 
@@ -333,11 +396,9 @@ function settleFirstMonth(): GameState {
       assert(report.balanceRows.some((row) => row.label === '净资产'), '资产负债表展开应有净资产');
       const wageKids = storyChildren(report.balanceRows, '应付职工薪酬');
       assert(wageKids.some((row) => row.label.includes('生产人员')), '应付职工薪酬应拆出生产工费');
-      assert(wageKids.some((row) => row.label.includes('管理人员')), '应付职工薪酬应拆出管理工费');
       const ctx = { state, books: view.curr, ledger: view.curr.ledger, facts: { ...report.facts, settled: true } };
       const wageExplain = explainAccount('应付职工薪酬', ctx);
       assert(wageExplain.some((row) => row.label.includes('生产人员') && row.label.includes('×')), '报表点开应付职工薪酬应看到人数×月薪');
-      assert(wageExplain.some((row) => row.label.includes('管理人员')), '报表点开应付职工薪酬应看到管理工费');
       const materialExplain = explainAccount('其中：原材料', ctx);
       assert(materialExplain.some((row) => row.label.includes('件')), '点开原材料应看到各材料件数和成本');
       const faCostExplain = explainAccount('固定资产原价', ctx);
@@ -400,13 +461,13 @@ function checkRdLabs(): void {
   state = reduce(state, { type: 'CONFIRM_BRIEFING' });
   state = reduce(state, { type: 'ACK_EVENT' });
   assert(state.phase === 'actions', '应进入行动阶段');
-  assert(state.maxAp === 3, `开局 1 名管理行动点上限应为 3，实际 ${state.maxAp}`);
+  assert(state.maxAp === 2, `开局无管理行动点上限应为 2，实际 ${state.maxAp}`);
   const mgmtLines = hireEffectLines(state, 'management');
   assert(mgmtLines[0]?.includes('每名管理人员'), `招管理应说明每人 +1 行动点，实际 ${mgmtLines[0]}`);
   assert(mgmtLines[0]?.includes('基础 2'), `招管理应说明基础 2 点，实际 ${mgmtLines[0]}`);
   const hiredMgmt = reduce(state, { type: 'HIRE', role: 'management' });
-  assert(hiredMgmt.staff.management === 2, '应招入第二名管理');
-  assert(hiredMgmt.maxAp === 4, `再招 1 名管理应把上限提到 4，实际 ${hiredMgmt.maxAp}`);
+  assert(hiredMgmt.staff.management === 1, '应招入第一名管理');
+  assert(hiredMgmt.maxAp === 3, `招 1 名管理应把上限提到 3，实际 ${hiredMgmt.maxAp}`);
   assert(hiredMgmt.ap === state.ap, '本月剩余行动点不因招聘补发');
   const cash = state.cash;
   const ap = state.ap;
@@ -419,7 +480,14 @@ function checkRdLabs(): void {
   const productLines = hireEffectLines(state, 'rd', 'product');
   assert(productLines[0]?.includes('产品实验室'), `招研发应说明编入产品实验室，实际 ${productLines[0]}`);
   assert(productLines[0]?.includes('成功率'), `招研发应说明人数只影响成功率，实际 ${productLines[0]}`);
-  assert(productLines[1]?.includes('开题'), `开局产品课题应说明入职后开题，实际 ${productLines[1]}`);
+  assert(
+    productLines.some((line) => line.includes('开题')),
+    `开局产品课题应说明入职后开题，实际 ${productLines.join(' / ')}`,
+  );
+  assert(
+    productLines.some((line) => line.includes('2 个月')),
+    `产品组应提示满编课题改为 2 个月，实际 ${productLines.join(' / ')}`,
+  );
   assert(!productLines.some((line) => line.includes('本次：')), `已开题信息不该在招聘说明里重复，实际 ${productLines.join(' / ')}`);
 
   const floor = lowestUnlockedMargin(state);
@@ -580,7 +648,7 @@ function play(): GameState {
 }
 
 function checkSupplyChannels(): void {
-  assert(IP_LEAN_RATE === 0.5, `节材应为五折，实际 ${IP_LEAN_RATE}`);
+  assert(IP_LEAN_RATE === 0.25, `节材应为七五折（省 25%），实际 ${IP_LEAN_RATE}`);
   let state = confirmBoard(reduce(createInitialState(), { type: 'START_GAME' }));
   state = reduce(state, { type: 'CONFIRM_BRIEFING' });
   state = reduce(state, { type: 'ACK_EVENT' });
@@ -619,7 +687,73 @@ function checkSupplyChannels(): void {
   assert(state.ap === ap - 1, '签约应耗 1 AP');
 
   const leanNeed = unitsNeeded({ ...createInitialState(), ownedIps: ['lean'] }, 'basic', 10);
-  assert(leanNeed.a === 10 && leanNeed.b === 5, `节材五折后 10 件基础款应为 10 钢 5 塑，实际 ${leanNeed.a}/${leanNeed.b}`);
+  assert(leanNeed.a === 15 && leanNeed.b === 8, `节材七五折后 10 件基础款应为 15 钢 8 塑，实际 ${leanNeed.a}/${leanNeed.b}`);
+}
+
+function withStaff(base: GameState, patch: Partial<GameState['staff']> & { machines?: number; cash?: number }): GameState {
+  const next = {
+    ...base,
+    staff: { ...base.staff, ...patch },
+    machines: patch.machines ?? base.machines,
+    cash: patch.cash ?? base.cash,
+  };
+  return next;
+}
+
+function checkStaffFactions(): void {
+  const opened = reduce(createInitialState(), { type: 'START_GAME' });
+  assert(opened.cash === STARTING_CASH, `开局现金应为 ${STARTING_CASH}，实际 ${opened.cash}`);
+  assert(opened.staff.production === 1 && opened.staff.management === 0, '开局应为 1 工 0 管理');
+  assert(opened.maxAp === 2 && capacityOf(opened) === 10, `开局 AP 2、产能 10，实际 AP ${opened.maxAp} 产能 ${capacityOf(opened)}`);
+  assert(shopCountOf(opened) === 3 && handLimitOf(opened) === 5 && cardBuyLimitOf(opened) === 1, '无管理时应维持基础提案吞吐');
+
+  const mgmt2 = withStaff(opened, { management: 2 });
+  assert(shopCountOf(mgmt2) === 4 && handLimitOf(mgmt2) === 6 && cardBuyLimitOf(mgmt2) === 1, '2 管理应加出示和手牌，不加立项');
+  const mgmt5 = withStaff(opened, { management: 5 });
+  assert(shopCountOf(mgmt5) === 4 && cardBuyLimitOf(mgmt5) === 2, '5 管理应每月立项 2 份');
+  const mgmt6 = withStaff(opened, { management: 6 });
+  assert(shopCountOf(mgmt6) === 5 && handLimitOf(mgmt6) === 7, '6 管理应满编出示/手牌');
+
+  assert(passThroughRateOf(opened) === 0 && creditSaleRateOf(opened) === 0.35, '无销售无传导、赊销 35%');
+  assert(passThroughRateOf(withStaff(opened, { sales: 1 })) === 0.25, '1 销售传导 25%');
+  assert(passThroughRateOf(withStaff(opened, { sales: 2 })) === 0.35, '2 销售传导 35%');
+  assert(passThroughRateOf(withStaff(opened, { sales: 3 })) === 0.5, '3 销售传导 50%');
+  assert(creditSaleRateOf(withStaff(opened, { sales: 3 })) === 0.3, '3 销售赊销 30%');
+  assert(passThroughRateOf(withStaff(opened, { sales: 4 })) === 0.75, '4 销售成型传导 75%');
+  assert(creditSaleRateOf(withStaff(opened, { sales: 4 })) === 0.25, '4 销售赊销 25%');
+  assert(passThroughRateOf({ ...withStaff(opened, { sales: 4 }), climateId: 'priceWar' }) === 0, '价格战应掐断传导');
+
+  assert(traderPriceMultOf(opened, 'a') === 1.5 && traderPriceMultOf(opened, 'c') === 2, '开局加价盘应为 1.5/2');
+  assert(traderPriceMultOf(withStaff(opened, { procurement: 3 }), 'a') === 1.4, '3 采购钢材加价盘 1.4');
+  assert(factoryBuyDiscountOf(withStaff(opened, { procurement: 3 })) === 0, '3 采购尚无厂供折扣');
+  assert(factoryBuyDiscountOf(withStaff(opened, { procurement: 4 })) === 0.1, '4 采购厂供九折');
+  assert(contractApFreeOf(withStaff(opened, { procurement: 4 })), '4 采购签协议不耗 AP');
+  assert(maxLiveContractsOf(withStaff(opened, { procurement: 4 })) === 1, '4 采购仍只能 1 份协议');
+  const proc5 = withStaff(opened, { procurement: 5 });
+  assert(traderPriceMultOf(proc5, 'a') === 1.3 && traderPriceMultOf(proc5, 'c') === 1.6, '5 采购加价盘再降');
+  assert(maxLiveContractsOf(proc5) === 2 && contractCoverMonthsOf(proc5) === 4, '5 采购双协议锁 4 月');
+  assert(
+    buyLineCost(withStaff(opened, { procurement: 4 }), 'a', 10, 'spot') ===
+      roundMoney(opened.materialPrices.a * 10 * 0.9),
+    '4 采购厂供应按九折计价',
+  );
+
+  assert(flexCapacityOf(opened) === 0, '开局无弹性产能');
+  assert(flexCapacityOf(withStaff(opened, { production: 4 })) === PROD_FLEX_CAP, '满第一台应有弹性产能');
+  assert(capacityOf(withStaff(opened, { production: 4 })) === 22 + PROD_FLEX_CAP, `4 工 1 机产能应为 ${22 + PROD_FLEX_CAP}`);
+  const overtimeReady = withStaff(opened, { production: 6, machines: 2, cash: 10 });
+  overtimeReady.phase = 'actions';
+  overtimeReady.overtimeUsedThisMonth = false;
+  assert(canUseOvertime(overtimeReady), '6 工 2 机应可连班');
+  assert(!canUseOvertime(withStaff(opened, { production: 6, machines: 1 })), '缺第二台设备不能连班');
+  const field = withStaff(opened, { production: 8, machines: 2 });
+  assert(yieldExtraOf(20, field) === 2, `现场出成每 ${PROD_FIELD_YIELD_EVERY} 件 +1，20 件应得 2`);
+  assert(yieldExtraOf(20, { ...field, ownedIps: ['yield'] }) === 4, '有良率专利时按每 5 件 +1，不叠现场出成');
+
+  assert(rdCycleOf('product', 1) === 3 && rdCycleOf('product', 3) === 2, '产品组满编课题改为 2 月');
+  assert(rdCycleOf('tech', 3) === 2, '工艺课题始终 2 月');
+  assert(MAX_ACTIVE_IPS === 2, '工艺同时只生效 2 项');
+  assert(PROD_OVERTIME_CAP === 4 && PROD_OVERTIME_COST === 0.5, '连班应为 +4 产能、加班费 0.5 万');
 }
 
 function checkHirePay(): void {
@@ -694,6 +828,7 @@ function checkArOverdue(): void {
 checkOpeningAccounts();
 checkLoans();
 checkSupplyChannels();
+checkStaffFactions();
 checkBoardVariety();
 checkClimates();
 checkMarketQuotes();
@@ -713,7 +848,7 @@ function checkMenuActions(): void {
   assert(toTitle.phase === 'title', 'TO_TITLE 应回到标题页');
   const restarted = reduce(started, { type: 'RESTART' });
   assert(restarted.phase === 'board' && restarted.month === 1, 'RESTART 应回到第 1 月董事会');
-  assert(restarted.cash === 24, 'RESTART 应重置开局现金');
+  assert(restarted.cash === STARTING_CASH, 'RESTART 应重置开局现金');
 }
 
 checkMenuActions();

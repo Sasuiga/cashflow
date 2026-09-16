@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from 'react';
-import { MATERIALS, catalogOf, eventById } from '../game/data';
+import { MATERIALS, MAX_ACTIVE_IPS, catalogOf, eventById } from '../game/data';
 import { booksForView, netProfitOf, operatingCashOf, rdRevealOptions, traderOf } from '../game/engine';
 import { MONTH_NAMES, EVENT_TONE_LABEL, RD_TRACK_LABEL, money, pctLabel, priceDelta, signedMoney } from '../game/format';
 import { QUARTER_LABEL, CHALLENGE_PICK, climateById, currentBasicGoal, currentChallengePool, quarterOutlook } from '../game/board';
@@ -346,7 +346,9 @@ export function RdRevealModal({
             {reveal.success
               ? reveal.track === 'product'
                 ? '新产品已开线，销售部会接到对应订单。'
-                : '知识产权已装备到产线，持续生效，不资本化。'
+                : state.pendingIpReplace
+                  ? `同时只能生效 ${MAX_ACTIVE_IPS} 项，请先让出一项。`
+                  : '知识产权已装备到产线，同时最多生效 2 项。'
               : '进度已清零。继续原题则下次成功率 +10%。'}
           </p>
         </div>
@@ -354,7 +356,7 @@ export function RdRevealModal({
         <div className="rd-assign">
           {options.map((item) => (
             <button
-              key={`${item.assign.kind}-${item.assign.kind === 'tech' ? item.assign.ipId ?? 'join' : ''}-${item.title}`}
+              key={`${item.assign.kind}-${item.assign.kind === 'tech' ? item.assign.ipId ?? 'join' : item.assign.kind === 'replace' ? item.assign.dropId : ''}-${item.title}`}
               type="button"
               className="choice"
               onClick={() => onAssign(item.assign)}

@@ -325,6 +325,11 @@ export function quotedMoveLog(state: GameState): string {
     materials.length > 0 ? `原料方面，${materials.join('，')}。` : '原料报价较上月没有明显台阶。',
     products.length > 0 ? `成品这边，${products.join('，')}。` : '成品市价较上月没有明显台阶。',
   ];
+  const passed = Object.entries(state.passThroughDelta ?? {}).filter(([, n]) => (n ?? 0) > 0);
+  if (passed.length > 0) parts.push('销售把原料涨价跟进了一截报价。');
+  else if (state.climateId === 'priceWar' && (state.staff.sales ?? 0) > 0) {
+    parts.push('价格战月份，售价跟不上原料。');
+  }
   return parts.join('');
 }
 

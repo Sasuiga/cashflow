@@ -17,7 +17,7 @@ export function TitleScreen({ onStart }: { onStart: () => void }) {
           </article>
           <article className="rule">
             <b>五条基本盘</b>
-            <p>扩建产线、招聘五类员工、按 BOM 采购、按设备抵押融资。断料有三条活路：改配方、做供应链、付钱抢货。销售部开出订单，整张交得出才接；产能有余可以超产入库。</p>
+            <p>扩建产线、招聘五类员工、按 BOM 采购、按设备抵押融资。开局只有一台设备和一名工人，办公室编制要自己招。断料有三条活路：改配方、做供应链、付钱抢货。销售部开出订单，整张交得出才接；产能有余可以超产入库。</p>
           </article>
           <article className="rule">
             <b>破产或年报</b>

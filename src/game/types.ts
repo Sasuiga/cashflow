@@ -287,6 +287,7 @@ export type RdAssign =
   | { kind: 'retry' }
   | { kind: 'product'; archetype?: RdProductArchetype }
   | { kind: 'tech'; ipId?: IpId }
+  | { kind: 'replace'; dropId: IpId }
   | { kind: 'idle' };
 
 export interface RdAssignOption {
@@ -423,6 +424,10 @@ export interface GameState {
   traderSpot: Record<MaterialId, number>;
   prepaid: number;
   supplyContract: SupplyContract | null;
+  supplyContracts: SupplyContract[];
+  overtimeUsedThisMonth: boolean;
+  passThroughDelta: Partial<Record<ProductId, number>>;
+  pendingIpReplace: IpId | null;
   quarterSpotBonus: Partial<Record<MaterialId, number>>;
   demand: Partial<Record<ProductId, number>>;
   unlockedProducts: ProductId[];
@@ -497,8 +502,9 @@ export type GameAction =
   | { type: 'BUY_MATERIAL'; material: MaterialId; qty: number }
   | { type: 'BUY_MATERIALS'; items: { material: MaterialId; qty: number; channel?: BuyChannel }[] }
   | { type: 'SIGN_CONTRACT'; material: MaterialId; monthlyQty: number }
-  | { type: 'COLLECT_CONTRACT' }
-  | { type: 'CANCEL_CONTRACT' }
+  | { type: 'COLLECT_CONTRACT'; material?: MaterialId }
+  | { type: 'CANCEL_CONTRACT'; material?: MaterialId }
+  | { type: 'USE_OVERTIME' }
   | { type: 'BORROW'; amount: number }
   | { type: 'REPAY'; amount: number }
   | { type: 'BUY_CARD'; index: number; replaceUid?: string }

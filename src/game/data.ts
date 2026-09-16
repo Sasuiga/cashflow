@@ -3,6 +3,7 @@ import type { Bom, CardDef, DifficultyId, EventDef, EventTone, IpDef, IpId, Mate
 export const TOTAL_MONTHS = 12;
 export const HAND_LIMIT = 5;
 export const BASE_AP = 2;
+export const STARTING_CASH = 18;
 export const BASE_MONTH_ORDERS = 3;
 export const MAX_MONTH_ORDERS = 6;
 export const MACHINE_COST = 10;
@@ -55,7 +56,37 @@ export const IP_YIELD_EVERY = 5;
 export const IP_PRICE_BONUS = 0.08;
 export const IP_JIG_CAPACITY = 4;
 export const IP_AUTO_PER_MACHINE = 2;
-export const IP_LEAN_RATE = 0.5;
+export const IP_LEAN_RATE = 0.25;
+export const MAX_ACTIVE_IPS = 2;
+export const PROD_FLEX_STAFF = 4;
+export const PROD_FLEX_CAP = 2;
+export const PROD_OVERTIME_STAFF = 6;
+export const PROD_OVERTIME_MACHINES = 2;
+export const PROD_OVERTIME_CAP = 4;
+export const PROD_OVERTIME_COST = 0.5;
+export const PROD_FIELD_YIELD_STAFF = 8;
+export const PROD_FIELD_YIELD_MACHINES = 2;
+export const PROD_FIELD_YIELD_EVERY = 10;
+export const MGMT_SHOP_TIER = 2;
+export const MGMT_SHOP_MAX_TIER = 6;
+export const MGMT_BUY_TIER = 5;
+export const MGMT_HAND_TIER = 2;
+export const MGMT_HAND_MAX_TIER = 6;
+export const SALES_PASS_1 = 0.25;
+export const SALES_PASS_2 = 0.35;
+export const SALES_PASS_3 = 0.5;
+export const SALES_PASS_4 = 0.75;
+export const SALES_CREDIT_3 = 0.3;
+export const SALES_CREDIT_4 = 0.25;
+export const PROC_TRADER_TIER = 3;
+export const PROC_DISCOUNT_TIER = 4;
+export const PROC_CONTRACT_FREE_TIER = 4;
+export const PROC_DUAL_CONTRACT_TIER = 5;
+export const PROC_FACTORY_DISCOUNT = 0.1;
+export const CONTRACT_COVER_MONTHS_LONG = 4;
+export const LAUNCH_QTY_VOLUME = 12;
+export const LAUNCH_QTY_STANDARD = 8;
+export const LAUNCH_QTY_PREMIUM = 4;
 export const TRADER_PRICE_MULT: Record<MaterialId, number> = { a: 1.5, b: 1.5, c: 2, d: 2 };
 export const SPOT_STAFF_ADD: Record<MaterialId, number> = { a: 4, b: 4, c: 1, d: 0 };
 export const SPOT_HARD_CAP: Record<MaterialId, number> = { a: 36, b: 36, c: 10, d: 5 };
@@ -235,7 +266,7 @@ export const IP_CATALOG: IpDef[] = [
     id: 'lean',
     name: '节材配方',
     blurb: '下料损耗被压住，批量越大越省。',
-    effect: '生产耗料按五折计，批量越大越省',
+    effect: '生产耗料按七五折计，批量越大越省',
   },
   {
     id: 'auto',
@@ -245,8 +276,9 @@ export const IP_CATALOG: IpDef[] = [
   },
 ];
 
-export function rdCycleOf(track: RdTrack): number {
-  return track === 'product' ? PRODUCT_RD_MONTHS : TECH_RD_MONTHS;
+export function rdCycleOf(track: RdTrack, staff = 0): number {
+  if (track === 'tech') return TECH_RD_MONTHS;
+  return staff >= RD_STAFF_CAP ? TECH_RD_MONTHS : PRODUCT_RD_MONTHS;
 }
 
 export function rdSuccessRate(staff: number, failBonus = 0): number {

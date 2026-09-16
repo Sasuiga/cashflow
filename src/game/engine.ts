@@ -10,6 +10,7 @@ import {
   FACTORY_LIFE_MONTHS,
   FACTORY_UPKEEP,
   HAND_LIMIT,
+  STARTING_CASH,
   HIRE_COST,
   INCOME_TAX_RATE,
   INTEREST_RATE,
@@ -33,8 +34,37 @@ import {
   MATERIALS,
   MATERIAL_IDS,
   MAX_RD_PRODUCTS,
-  LAST_CONTRACT_SIGN_MONTH,
   CONTRACT_COVER_MONTHS,
+  CONTRACT_COVER_MONTHS_LONG,
+  MAX_ACTIVE_IPS,
+  PROD_FLEX_STAFF,
+  PROD_FLEX_CAP,
+  PROD_OVERTIME_STAFF,
+  PROD_OVERTIME_MACHINES,
+  PROD_OVERTIME_CAP,
+  PROD_OVERTIME_COST,
+  PROD_FIELD_YIELD_STAFF,
+  PROD_FIELD_YIELD_MACHINES,
+  PROD_FIELD_YIELD_EVERY,
+  MGMT_SHOP_TIER,
+  MGMT_SHOP_MAX_TIER,
+  MGMT_BUY_TIER,
+  MGMT_HAND_TIER,
+  MGMT_HAND_MAX_TIER,
+  SALES_PASS_1,
+  SALES_PASS_2,
+  SALES_PASS_3,
+  SALES_PASS_4,
+  SALES_CREDIT_3,
+  SALES_CREDIT_4,
+  PROC_TRADER_TIER,
+  PROC_DISCOUNT_TIER,
+  PROC_CONTRACT_FREE_TIER,
+  PROC_DUAL_CONTRACT_TIER,
+  PROC_FACTORY_DISCOUNT,
+  LAUNCH_QTY_VOLUME,
+  LAUNCH_QTY_STANDARD,
+  LAUNCH_QTY_PREMIUM,
   RD_NAME_STEMS,
   RD_FAIL_BONUS,
   RD_STAFF_CAP,
@@ -131,6 +161,7 @@ import type {
   SettlementWage,
   Staff,
   StockLayer,
+  SupplyContract,
   TrendDir,
 } from './types';
 
@@ -294,9 +325,18 @@ export function rdCapacityBonus(state: GameState): number {
   return bonus;
 }
 
+export function yieldEveryOf(state: GameState): number {
+  if (hasIp(state, 'yield')) return IP_YIELD_EVERY;
+  if (state.staff.production >= PROD_FIELD_YIELD_STAFF && state.machines >= PROD_FIELD_YIELD_MACHINES) {
+    return PROD_FIELD_YIELD_EVERY;
+  }
+  return 0;
+}
+
 export function yieldExtraOf(qty: number, state: GameState): number {
-  if (!hasIp(state, 'yield') || qty <= 0) return 0;
-  return Math.floor(qty / IP_YIELD_EVERY);
+  const every = yieldEveryOf(state);
+  if (!every || qty <= 0) return 0;
+  return Math.floor(qty / every);
 }
 
 export function rdTrackStaff(state: GameState, track: RdTrack): number {
@@ -331,6 +371,7 @@ export function currentTechProject(state: GameState) {
 
 export function availableTechIps(state: GameState) {
   const owned = new Set(state.ownedIps ?? []);
+  if (state.pendingIpReplace) owned.add(state.pendingIpReplace);
   return IP_CATALOG.filter((item) => !owned.has(item.id));
 }
 
@@ -388,6 +429,18 @@ export function rdRevealOptions(state: GameState): RdAssignOption[] {
   const reveal = state.pendingRdReveals?.[0];
   if (!reveal) return [];
   const options: RdAssignOption[] = [];
+  if (state.pendingIpReplace) {
+    const incoming = ipById(state.pendingIpReplace);
+    for (const id of state.ownedIps ?? []) {
+      const drop = ipById(id);
+      options.push({
+        assign: { kind: 'replace', dropId: id },
+        title: `让出「${drop.name}」`,
+        blurb: `生效「${incoming.name}」：${incoming.effect}。「${drop.name}」卸下，可再攻关。`,
+      });
+    }
+    if (options.length) return options;
+  }
   const other: RdTrack = reveal.track === 'product' ? 'tech' : 'product';
   const otherBusy = pendingRevealOn(state, other);
   const productRemain = (state.extraProducts?.length ?? 0) < MAX_RD_PRODUCTS;
@@ -419,7 +472,7 @@ export function rdRevealOptions(state: GameState): RdAssignOption[] {
     options.push({
       assign: { kind: 'product' },
       title: `编入产品组 · 「${productProject.name}」`,
-      blurb: `加入进行中的课题，进度 ${rdTrackProgress(state, 'product')}/${rdCycleOf('product')}。`,
+      blurb: `加入进行中的课题，进度 ${rdTrackProgress(state, 'product')}/${rdCycleOf('product', rdTrackStaff(state, 'product'))}。`,
     });
   } else if (!otherBusy && rdTrackRoom(state, 'product') > 0 && productRemain) {
     (['simplify', 'substitute', 'margin'] as RdProductArchetype[]).forEach((archetype) => {
@@ -443,7 +496,7 @@ export function rdRevealOptions(state: GameState): RdAssignOption[] {
     options.push({
       assign: { kind: 'tech' },
       title: `编入工艺组 · 「${techProject.name}」`,
-      blurb: `加入进行中的课题，进度 ${rdTrackProgress(state, 'tech')}/${rdCycleOf('tech')}。`,
+      blurb: `加入进行中的课题，进度 ${rdTrackProgress(state, 'tech')}/${rdCycleOf('tech', rdTrackStaff(state, 'tech'))}。`,
     });
   } else if (!otherBusy && rdTrackRoom(state, 'tech') > 0) {
     for (const ip of techChoices) {
@@ -468,6 +521,15 @@ export function rdRevealOptions(state: GameState): RdAssignOption[] {
 function applyRdAssign(state: GameState, reveal: RdReveal, assign: RdAssign): string {
   const from = reveal.track;
   const headcount = rdTrackStaff(state, from);
+  if (assign.kind === 'replace') {
+    const incoming = state.pendingIpReplace;
+    if (!incoming) return `${headcount} 人留在工艺实验室待命`;
+    state.ownedIps = (state.ownedIps ?? []).filter((id) => id !== assign.dropId);
+    if (!state.ownedIps.includes(incoming)) state.ownedIps = [...state.ownedIps, incoming];
+    state.rdIpIndex = state.ownedIps.length;
+    state.pendingIpReplace = null;
+    return `让出「${ipById(assign.dropId).name}」，生效「${ipById(incoming).name}」`;
+  }
   if (assign.kind === 'retry') {
     const name =
       from === 'product' ? currentProductProject(state)?.name : currentTechProject(state)?.name;
@@ -529,11 +591,83 @@ function ensureRdState(state: GameState): void {
   if (!Array.isArray(state.ownedIps)) state.ownedIps = [];
   if (!Array.isArray(state.pendingRdReveals)) state.pendingRdReveals = [];
   if (!Array.isArray(state.pendingLaunchOrders)) state.pendingLaunchOrders = [];
+  if (state.pendingIpReplace === undefined) state.pendingIpReplace = null;
   state.staff.rd = Math.max(0, (state.rdProductStaff ?? 0) + (state.rdTechStaff ?? 0));
 }
 
 export function maxApFor(staff: Staff): number {
   return BASE_AP + Math.max(0, staff.management);
+}
+
+export function shopCountOf(state: GameState): number {
+  const n = state.staff.management;
+  return 3 + (n >= MGMT_SHOP_TIER ? 1 : 0) + (n >= MGMT_SHOP_MAX_TIER ? 1 : 0);
+}
+
+export function cardBuyLimitOf(state: GameState): number {
+  return state.staff.management >= MGMT_BUY_TIER ? 2 : 1;
+}
+
+export function handLimitOf(state: GameState): number {
+  const n = state.staff.management;
+  return HAND_LIMIT + (n >= MGMT_HAND_TIER ? 1 : 0) + (n >= MGMT_HAND_MAX_TIER ? 1 : 0);
+}
+
+export function passThroughRateOf(state: GameState): number {
+  if (state.climateId === 'priceWar') return 0;
+  const n = state.staff.sales;
+  if (n >= 4) return SALES_PASS_4;
+  if (n >= 3) return SALES_PASS_3;
+  if (n >= 2) return SALES_PASS_2;
+  if (n >= 1) return SALES_PASS_1;
+  return 0;
+}
+
+export function flexCapacityOf(state: GameState): number {
+  return state.staff.production >= PROD_FLEX_STAFF ? PROD_FLEX_CAP : 0;
+}
+
+export function canUseOvertime(state: GameState): boolean {
+  return (
+    (state.phase === 'actions' || state.phase === 'produce') &&
+    !state.overtimeUsedThisMonth &&
+    state.staff.production >= PROD_OVERTIME_STAFF &&
+    state.machines >= PROD_OVERTIME_MACHINES &&
+    state.cash + 1e-6 >= PROD_OVERTIME_COST
+  );
+}
+
+export function traderPriceMultOf(state: GameState, id: MaterialId): number {
+  const n = procurementOf(state);
+  const steel = id === 'a' || id === 'b';
+  if (n >= PROC_DUAL_CONTRACT_TIER) return steel ? 1.3 : 1.6;
+  if (n >= PROC_TRADER_TIER) return steel ? 1.4 : 1.8;
+  return TRADER_PRICE_MULT[id] ?? 2;
+}
+
+export function factoryBuyDiscountOf(state: GameState): number {
+  const staffOff = procurementOf(state) >= PROC_DISCOUNT_TIER ? PROC_FACTORY_DISCOUNT : 0;
+  return Math.max(staffOff, state.modifiers.nextBuyDiscount ?? 0);
+}
+
+export function contractCoverMonthsOf(state: GameState): number {
+  return procurementOf(state) >= PROC_DUAL_CONTRACT_TIER ? CONTRACT_COVER_MONTHS_LONG : CONTRACT_COVER_MONTHS;
+}
+
+export function lastContractSignMonthOf(state: GameState): number {
+  return TOTAL_MONTHS - contractCoverMonthsOf(state);
+}
+
+export function maxLiveContractsOf(state: GameState): number {
+  return procurementOf(state) >= PROC_DUAL_CONTRACT_TIER ? 2 : 1;
+}
+
+export function contractApFreeOf(state: GameState): boolean {
+  return Boolean(state.modifiers.contractApFree) || procurementOf(state) >= PROC_CONTRACT_FREE_TIER;
+}
+
+export function liveContracts(state: GameState): SupplyContract[] {
+  return (state.supplyContracts ?? []).filter((item) => item.remainingMonths > 0 || item.pendingQty > 0);
 }
 
 function orderCountFor(sales: number): number {
@@ -548,8 +682,19 @@ export function hireEffectLines(state: GameState, role: Role, rdTrack: RdTrack =
     const after = capacityOf(next);
     const slots = state.machines * WORKERS_PER_MACHINE;
     const overflow = Math.max(0, next.staff.production - slots);
+    const n = next.staff.production;
+    const perk =
+      n === PROD_FLEX_STAFF
+        ? `满第一台：每月弹性产能 +${PROD_FLEX_CAP}。`
+        : n === PROD_OVERTIME_STAFF
+          ? state.machines >= PROD_OVERTIME_MACHINES
+            ? `成型：可连班（+${PROD_OVERTIME_CAP} 产能，加班费 ${money(PROD_OVERTIME_COST)}，不耗 AP）。`
+            : `连班还需 ${PROD_OVERTIME_MACHINES} 台设备。`
+          : n === PROD_FIELD_YIELD_STAFF && state.machines >= PROD_FIELD_YIELD_MACHINES
+            ? `满编：现场出成每 ${PROD_FIELD_YIELD_EVERY} 件额外入库 1 件（有良率专利时不生效）。`
+            : `入门 ${PROD_FLEX_STAFF} 人弹性产能，成型 ${PROD_OVERTIME_STAFF} 人且 ${PROD_OVERTIME_MACHINES} 台可连班，满编 ${PROD_FIELD_YIELD_STAFF} 人现场出成。`;
     return [
-      `本月立刻到岗。设备位内每人产能 +${CAP_PER_WORKER}，超出每人 +${CAP_OVERFLOW}。`,
+      `本月立刻到岗。设备位内每人产能 +${CAP_PER_WORKER}，超出每人 +${CAP_OVERFLOW}。${perk}`,
       `本次入职：产能 ${before} → ${after}（可安置 ${slots} 人${overflow ? `，超编 ${overflow} 人` : ''}）。`,
       card,
     ];
@@ -557,8 +702,17 @@ export function hireEffectLines(state: GameState, role: Role, rdTrack: RdTrack =
   if (role === 'management') {
     const before = maxApFor(state.staff);
     const after = maxApFor({ ...state.staff, management: state.staff.management + 1 });
+    const n = state.staff.management + 1;
+    const perk =
+      n === MGMT_SHOP_TIER
+        ? `入门：本月出示 ${shopCountOf({ ...state, staff: { ...state.staff, management: n } })} 份，待执行上限 ${handLimitOf({ ...state, staff: { ...state.staff, management: n } })}。`
+        : n === MGMT_BUY_TIER
+          ? `成型：每月可立项 ${cardBuyLimitOf({ ...state, staff: { ...state.staff, management: n } })} 份。`
+          : n === MGMT_SHOP_MAX_TIER
+            ? `满编：出示 ${shopCountOf({ ...state, staff: { ...state.staff, management: n } })} 份，待执行上限 ${handLimitOf({ ...state, staff: { ...state.staff, management: n } })}。`
+            : `2 人加出示和手牌，5 人每月立项两份，6 人再加选择面。`;
     return [
-      `每名管理人员提供 1 点行动点上限（基础 ${BASE_AP} 点）。`,
+      `每名管理人员提供 1 点行动点上限（基础 ${BASE_AP} 点）。${perk}`,
       `本次入职：行动点上限 ${before} → ${after}。本月剩余行动点不补发，下月按新上限刷新。`,
       card,
     ];
@@ -571,18 +725,30 @@ export function hireEffectLines(state: GameState, role: Role, rdTrack: RdTrack =
       after > before
         ? `本次入职：下月月初订单 ${before} → ${after} 张。`
         : `下月月初订单仍为 ${before} 张。再招 1 名销售后升到 ${before + 1}。`;
+    const n = state.staff.sales + 1;
+    const pass = n >= 4 ? SALES_PASS_4 : n >= 3 ? SALES_PASS_3 : n >= 2 ? SALES_PASS_2 : SALES_PASS_1;
+    const credit = n >= 4 ? SALES_CREDIT_4 : n >= 3 ? SALES_CREDIT_3 : CREDIT_SALE_RATE;
     return [
       `本月立刻到岗，并带来 1 张市场单。本月订单 ${have} → ${have + 1} 张。`,
       `每 2 名销售人员使月初订单 +1（基础 ${BASE_MONTH_ORDERS} 张）。${baseline}`,
+      `原料上涨时售价跟进 ${pctLabel(pass)}（价格战跟不上）。赊销 ${pctLabel(credit)}。4 人成型可跟进 ${pctLabel(SALES_PASS_4)}。`,
       `逾期应收确认后分 3 个月按余额催收，收不回的部分会核销。每人使每月追回比例 +${pctLabel(AR_RECOVER_PER_SALES)}。本次入职后首月追回 ${pctLabel(arRecoveryRate(1, state.staff.sales))} → ${pctLabel(arRecoveryRate(1, state.staff.sales + 1))}。`,
       card,
     ];
   }
   if (role === 'procurement') {
-    const n = state.staff.procurement ?? 0;
+    const n = (state.staff.procurement ?? 0) + 1;
+    const perk =
+      n === PROC_TRADER_TIER
+        ? '加价盘倍率下调一档。'
+        : n === PROC_DISCOUNT_TIER
+          ? `厂供 ${Math.round((1 - PROC_FACTORY_DISCOUNT) * 10)} 折，签协议不耗 AP。`
+          : n === PROC_DUAL_CONTRACT_TIER
+            ? `成型：可同时 ${maxLiveContractsOf({ ...state, staff: { ...state.staff, procurement: n } })} 份协议，锁 ${CONTRACT_COVER_MONTHS_LONG} 个月，加价盘再降一档。`
+            : `3 人降加价盘，4 人厂供折扣并免协议 AP，5 人双协议。`;
     return [
       '本月立刻到岗，随机放宽本月现货额度（优先补最紧的料）。购入仍走采购部，按市价付现。',
-      `每人使每月钢材/塑料现货 +4、芯片 +1。本次入职后编制 ${n} → ${n + 1} 人。`,
+      `每人使每月钢材/塑料现货 +4、芯片 +1。本次入职后编制 ${n - 1} → ${n} 人。${perk}`,
       card,
     ];
   }
@@ -590,9 +756,19 @@ export function hireEffectLines(state: GameState, role: Role, rdTrack: RdTrack =
   const project = track === 'product' ? currentProductProject(state) : currentTechProject(state);
   const productOpen = (state.extraProducts?.length ?? 0) < MAX_RD_PRODUCTS;
   const techOpen = availableTechIps(state).length > 0;
+  const nextStaff = rdTrackStaff(state, track) + 1;
   const lines = [
     `编入${RD_TRACK_LABEL[track]}。人数只影响成功率（每人 ${pctLabel(RD_SUCCESS_PER_HEAD)}，每组最多 ${RD_STAFF_CAP} 人，首轮上限 ${pctLabel(RD_SUCCESS_CAP)}，失败续攻可到 100%）。有人值守时每月结算推进 1 个月。`,
   ];
+  if (track === 'product') {
+    lines.push(
+      nextStaff >= RD_STAFF_CAP
+        ? `满编后产品课题 ${rdCycleOf('product', nextStaff)} 个月一轮。`
+        : `产品组满 ${RD_STAFF_CAP} 人时课题改为 ${rdCycleOf('product', RD_STAFF_CAP)} 个月。`,
+    );
+  } else {
+    lines.push(`工艺同时只生效 ${MAX_ACTIVE_IPS} 项，多完成的必须换掉一项。`);
+  }
   if (!project) {
     lines.push(
       track === 'product'
@@ -612,9 +788,9 @@ export function buyLineCost(state: GameState, material: MaterialId, qty: number,
   if (qty <= 0) return 0;
   const unit = state.materialPrices[material] ?? 0;
   if (channel === 'trader') {
-    return roundPrice(unit * qty * (TRADER_PRICE_MULT[material] ?? 2));
+    return roundPrice(unit * qty * traderPriceMultOf(state, material));
   }
-  return roundPrice(unit * qty * (1 - state.modifiers.nextBuyDiscount));
+  return roundPrice(unit * qty * (1 - factoryBuyDiscountOf(state)));
 }
 
 export function buyCartCost(
@@ -766,6 +942,7 @@ export function capacityOf(state: GameState): number {
     capped * CAP_PER_WORKER +
     overflow * CAP_OVERFLOW +
     state.modifiers.extraCapacity +
+    flexCapacityOf(state) +
     rdCapacityBonus(state)
   );
 }
@@ -830,7 +1007,7 @@ export function factoryLayout(state: GameState, capUsed = 0): FactoryView[] {
     host.cap += workersLeft * CAP_OVERFLOW;
   }
 
-  const extra = (state.modifiers.extraCapacity ?? 0) + rdCapacityBonus(state);
+  const extra = (state.modifiers.extraCapacity ?? 0) + flexCapacityOf(state) + rdCapacityBonus(state);
   if (extra !== 0 && views[0]) {
     views[0].cap = Math.max(0, views[0].cap + extra);
   }
@@ -1088,52 +1265,65 @@ export function contractPrepayOf(state: GameState, id: MaterialId, monthlyQty: n
 
 export function canSignContract(state: GameState, id: MaterialId, monthlyQty: number): string | null {
   if (state.phase !== 'actions') return '事件结束后才能签协议。';
-  if (state.month > LAST_CONTRACT_SIGN_MONTH) return '剩余月份不足 3 个月，不能新签。';
+  if (state.month > lastContractSignMonthOf(state)) {
+    return `剩余月份不足 ${contractCoverMonthsOf(state)} 个月，不能新签。`;
+  }
   if (id === 'd' && !state.materialDUnlocked) return '特种合金尚未开线。';
   if (!contractQtyOptions(id).includes(monthlyQty)) return '月供档位不对。';
-  const live = state.supplyContract;
-  if (live && (live.remainingMonths > 0 || live.pendingQty > 0)) return '已有一份长期协议。';
-  if (!(state.modifiers.contractApFree || state.ap > 0)) return '行动点不足。';
+  ensureContracts(state);
+  const live = liveContracts(state);
+  if (live.some((item) => item.material === id)) return '这种原料已有长期协议。';
+  if (live.length >= maxLiveContractsOf(state)) {
+    return maxLiveContractsOf(state) > 1 ? '长期协议已满。' : '已有一份长期协议。';
+  }
+  if (!contractApFreeOf(state) && state.ap <= 0) return '行动点不足。';
   if (state.cash < contractPrepayOf(state, id, monthlyQty)) return '现金不够支付预付。';
   return null;
 }
 
-function syncPrepaid(state: GameState): void {
-  state.prepaid = roundMoney(state.supplyContract?.prepaid ?? 0);
+function ensureContracts(state: GameState): void {
+  if (!Array.isArray(state.supplyContracts)) {
+    state.supplyContracts = state.supplyContract ? [state.supplyContract] : [];
+  }
+  state.supplyContracts = state.supplyContracts.filter((item) => item.remainingMonths > 0 || item.pendingQty > 0);
+  state.supplyContract = state.supplyContracts[0] ?? null;
 }
 
-function writeOffPrepaid(state: GameState, reason: string): void {
-  const lost = roundMoney(state.supplyContract?.prepaid ?? 0);
+function syncPrepaid(state: GameState): void {
+  ensureContracts(state);
+  state.prepaid = roundMoney(state.supplyContracts.reduce((sum, item) => sum + (item.prepaid ?? 0), 0));
+  state.supplyContract = state.supplyContracts[0] ?? null;
+}
+
+function writeOffPrepaid(state: GameState, contract: SupplyContract, reason: string): void {
+  const lost = roundMoney(contract.prepaid ?? 0);
   if (lost > 0) {
     state.ledger.extraExpense = roundMoney(state.ledger.extraExpense + lost);
-    if (state.supplyContract) state.supplyContract.prepaid = 0;
-    syncPrepaid(state);
+    contract.prepaid = 0;
     noteDept(state, 'store', `${reason}，预付 ${money(lost)} 不予退还`, false);
-  } else {
-    syncPrepaid(state);
   }
+  syncPrepaid(state);
 }
 
-function clearContract(state: GameState): void {
-  state.supplyContract = null;
+function removeContract(state: GameState, contract: SupplyContract): void {
+  ensureContracts(state);
+  state.supplyContracts = state.supplyContracts.filter((item) => item !== contract);
   syncPrepaid(state);
 }
 
 function queueContractDelivery(state: GameState): void {
-  const contract = state.supplyContract;
-  if (!contract) return;
-  if (contract.remainingMonths <= 0 && contract.pendingQty <= 0) {
-    clearContract(state);
-    return;
+  ensureContracts(state);
+  for (const contract of state.supplyContracts) {
+    if (contract.remainingMonths <= 0 && contract.pendingQty <= 0) continue;
+    if (contract.pendingQty > 0 || contract.remainingMonths <= 0) continue;
+    contract.pendingQty = contract.monthlyQty;
+    contract.pendingCost = roundMoney(contract.monthlyQty * contract.unitPrice);
   }
-  if (contract.pendingQty > 0 || contract.remainingMonths <= 0) return;
-  contract.pendingQty = contract.monthlyQty;
-  contract.pendingCost = roundMoney(contract.monthlyQty * contract.unitPrice);
+  syncPrepaid(state);
 }
 
-function deliverContract(state: GameState): boolean {
-  const contract = state.supplyContract;
-  if (!contract || contract.pendingQty <= 0) return false;
+function deliverOneContract(state: GameState, contract: SupplyContract): boolean {
+  if (contract.pendingQty <= 0) return false;
   const qty = contract.pendingQty;
   const cost = contract.pendingCost;
   if (contract.prepaid + 1e-6 >= cost) {
@@ -1161,30 +1351,46 @@ function deliverContract(state: GameState): boolean {
     `协议到货：${materialName(contract.material)} ${qty} 件，锁价 ${money(contract.unitPrice)}/件`,
   );
   if (contract.remainingMonths <= 0) {
-    writeOffPrepaid(state, '协议履行完毕');
-    clearContract(state);
+    writeOffPrepaid(state, contract, '协议履行完毕');
+    removeContract(state, contract);
   }
   return true;
 }
 
-function forfeitContractLot(state: GameState): void {
-  const contract = state.supplyContract;
-  if (!contract || contract.pendingQty <= 0) return;
-  contract.pendingQty = 0;
-  contract.pendingCost = 0;
-  contract.remainingMonths -= 1;
-  contract.missed += 1;
-  noteDept(state, 'store', '本月协议到货未付，份额作废');
-  if (contract.missed >= 2 || contract.remainingMonths <= 0) {
-    writeOffPrepaid(state, '长期协议解约');
-    clearContract(state);
+function deliverContract(state: GameState, material?: MaterialId): boolean {
+  ensureContracts(state);
+  const targets = state.supplyContracts.filter(
+    (item) => item.pendingQty > 0 && (!material || item.material === material),
+  );
+  let any = false;
+  for (const contract of targets) {
+    if (deliverOneContract(state, contract)) any = true;
   }
+  return any;
+}
+
+function forfeitContractLot(state: GameState): void {
+  ensureContracts(state);
+  for (const contract of [...state.supplyContracts]) {
+    if (contract.pendingQty <= 0) continue;
+    contract.pendingQty = 0;
+    contract.pendingCost = 0;
+    contract.remainingMonths -= 1;
+    contract.missed += 1;
+    noteDept(state, 'store', `${materialName(contract.material)}本月协议到货未付，份额作废`);
+    if (contract.missed >= 2 || contract.remainingMonths <= 0) {
+      writeOffPrepaid(state, contract, '长期协议解约');
+      removeContract(state, contract);
+    }
+  }
+  syncPrepaid(state);
 }
 
 export function sameRdAssign(a: RdAssign, b: RdAssign): boolean {
   if (a.kind !== b.kind) return false;
   if (a.kind === 'tech' && b.kind === 'tech') return (a.ipId ?? null) === (b.ipId ?? null);
   if (a.kind === 'product' && b.kind === 'product') return (a.archetype ?? null) === (b.archetype ?? null);
+  if (a.kind === 'replace' && b.kind === 'replace') return a.dropId === b.dropId;
   return true;
 }
 
@@ -2012,6 +2218,9 @@ function remeasureInventoryProvision(state: GameState): number {
 
 export function creditSaleRateOf(state: GameState): number {
   if ((state.modifiers?.creditSaleRate ?? 0) > 0) return Math.min(1, state.modifiers.creditSaleRate);
+  const n = state.staff.sales ?? 0;
+  if (n >= 4) return SALES_CREDIT_4;
+  if (n >= 3) return SALES_CREDIT_3;
   return CREDIT_SALE_RATE;
 }
 
@@ -2217,6 +2426,34 @@ function rollMarket(state: GameState): void {
   for (const product of unlockedCatalog(state)) {
     moveProductPrice(state, product.id, trendStep(state.marketTrend.products[product.id] ?? 0));
   }
+  applyCostPassThrough(state);
+}
+
+function bomCostAtPrices(bom: Bom, prices: Partial<Record<MaterialId, number>>): number {
+  let cost = 0;
+  for (const key of MATERIAL_IDS) {
+    cost += (bom[key] ?? 0) * (prices[key] ?? 0);
+  }
+  return roundPrice(cost);
+}
+
+function applyCostPassThrough(state: GameState): void {
+  const rate = passThroughRateOf(state);
+  const delta: Partial<Record<ProductId, number>> = {};
+  if (rate > 0) {
+    for (const product of unlockedCatalog(state)) {
+      const before = bomCostAtPrices(product.bom, state.prevMaterialPrices ?? {});
+      const after = bomSpotCost(state, product.bom);
+      const dCost = roundMoney(after - before);
+      if (dCost <= 0) continue;
+      const bump = roundMoney(dCost * rate);
+      if (bump <= 0) continue;
+      const current = state.productPrices[product.id] ?? product.basePrice;
+      state.productPrices[product.id] = boundProductPrice(state, product.id, current + bump);
+      delta[product.id] = bump;
+    }
+  }
+  state.passThroughDelta = delta;
 }
 
 function rollSpotQty(id: MaterialId, state: GameState): number {
@@ -2325,6 +2562,7 @@ function prepareMonth(state: GameState): void {
   applyClimateModifiers(state);
   state.shop = [];
   state.cardsBoughtThisMonth = 0;
+  state.overtimeUsedThisMonth = false;
   state.selectedProduct = null;
   state.pendingDeal = null;
   state.monthOrders = [];
@@ -2449,9 +2687,9 @@ function setRdFailBonus(state: GameState, track: RdTrack, value: number): void {
 
 function launchQtyOf(state: GameState, productId: ProductId): number {
   const def = productOf(state, productId);
-  if (isVolumeProduct(def)) return 10;
-  if (isPremiumProduct(def)) return 3;
-  return 6;
+  if (isVolumeProduct(def)) return LAUNCH_QTY_VOLUME;
+  if (isPremiumProduct(def)) return LAUNCH_QTY_PREMIUM;
+  return LAUNCH_QTY_STANDARD;
 }
 
 function grantLaunchOrders(state: GameState, productId: ProductId): void {
@@ -2629,11 +2867,21 @@ function resolveRd(state: GameState, track: RdTrack): string {
   const ip = currentTechProject(state);
   if (!ip) return '工艺专利已经齐了。';
   if (success) {
-    state.ownedIps = [...(state.ownedIps ?? []), ip.id];
     state.rdTechProjectId = null;
-    state.rdIpIndex = (state.ownedIps ?? []).length;
     setRdFailBonus(state, 'tech', 0);
-    const body = `知识产权入账：${ip.name}。${ip.effect}。不资本化，直接形成产线增益。`;
+    const active = state.ownedIps ?? [];
+    if (active.length >= MAX_ACTIVE_IPS) {
+      state.pendingIpReplace = ip.id;
+      const body = `已掌握「${ip.name}」。${ip.effect}。同时只能生效 ${MAX_ACTIVE_IPS} 项工艺，请让出一项。`;
+      state.pendingRdReveals = [
+        ...(state.pendingRdReveals ?? []),
+        { track, success: true, title: `掌握 ${ip.name}`, body, chance, staff },
+      ];
+      return body;
+    }
+    state.ownedIps = [...active, ip.id];
+    state.rdIpIndex = state.ownedIps.length;
+    const body = `知识产权入账：${ip.name}。${ip.effect}。同时最多 ${MAX_ACTIVE_IPS} 项生效，不资本化。`;
     state.pendingRdReveals = [
       ...(state.pendingRdReveals ?? []),
       { track, success: true, title: `掌握 ${ip.name}`, body, chance, staff },
@@ -2661,7 +2909,7 @@ function advanceRd(state: GameState, track: RdTrack, points: number): string | n
       ? '工艺实验室闲置，等待点选课题。'
       : '工艺专利已经齐了，团队在做持续改善。';
   }
-  const cycle = rdCycleOf(track);
+  const cycle = rdCycleOf(track, rdTrackStaff(state, track));
   const next = rdTrackProgress(state, track) + points;
   setRdProgress(state, track, next);
   if (next < cycle) {
@@ -2679,7 +2927,7 @@ function pickLabRushTrack(state: GameState): RdTrack | null {
   if (rdHasProject(state, 'tech')) candidates.push('tech');
   if (candidates.length === 0) return null;
   const scored = candidates.map((track) => {
-    const cycle = rdCycleOf(track);
+    const cycle = rdCycleOf(track, rdTrackStaff(state, track));
     const progress = rdTrackProgress(state, track);
     const staff = rdTrackStaff(state, track);
     return { track, remain: cycle - progress, staff };
@@ -2711,7 +2959,8 @@ function suitWeight(state: GameState, suit: Role): number {
 }
 
 function dealMonthProposals(state: GameState): void {
-  state.shop = [rollCard(state), rollCard(state), rollCard(state)];
+  const n = shopCountOf(state);
+  state.shop = Array.from({ length: n }, () => rollCard(state));
 }
 
 export function isProposalReady(card: CardInstance, month: number): boolean {
@@ -3371,7 +3620,7 @@ export function createInitialState(): GameState {
   const state: GameState = {
     phase: 'title',
     month: 1,
-    cash: 24,
+    cash: STARTING_CASH,
     debt: 0,
     loans: [],
     wagesPayable: 0,
@@ -3399,7 +3648,7 @@ export function createInitialState(): GameState {
     factories: 1,
     slots: SLOTS_PER_FACTORY,
     machines: 1,
-    staff: { production: 2, management: 1, sales: 0, rd: 0, procurement: 0 },
+    staff: { production: 1, management: 0, sales: 0, rd: 0, procurement: 0 },
     materials,
     finished: {},
     materialPrices: { a: 0.4, b: 0.4, c: 1, d: 2 },
@@ -3411,6 +3660,9 @@ export function createInitialState(): GameState {
     traderSpot: { a: 0, b: 0, c: 0, d: 0 },
     prepaid: 0,
     supplyContract: null,
+    supplyContracts: [],
+    overtimeUsedThisMonth: false,
+    passThroughDelta: {},
     quarterSpotBonus: {},
     demand: { basic: 20, standard: 10, premium: 5 },
     unlockedProducts: ['basic', 'standard', 'premium'],
@@ -3429,6 +3681,7 @@ export function createInitialState(): GameState {
     ownedIps: [],
     pendingRdReveals: [],
     pendingLaunchOrders: [],
+    pendingIpReplace: null,
     shop: [],
     cardsBoughtThisMonth: 0,
     hand: [],
@@ -3444,7 +3697,7 @@ export function createInitialState(): GameState {
     extraProduce: {},
     lastReport: null,
     prevReport: null,
-    log: ['北港制造开业。账上有启动资金，库里有第一批料。'],
+    log: ['北港制造开业。账上有启动资金，一台设备和一名工人，办公室要自己招。'],
     deptActs: emptyDeptActs(),
     endKind: null,
     uidSeq: 0,
@@ -3463,7 +3716,7 @@ export function createInitialState(): GameState {
     challengePoolIds: [],
     boardHistory: [],
     boardMinutes: null,
-    quarterStats: emptyQuarterStats(3, 0, 24, 1),
+    quarterStats: emptyQuarterStats(1, 0, STARTING_CASH, 1),
     usedClimateIds: [],
     recentEventFamilies: [],
     quarterEventTones: [],
@@ -3549,7 +3802,7 @@ function purchaseMaterials(
     state.quarterStats.boughtQty = (state.quarterStats.boughtQty ?? 0) + bought;
   }
   syncMaterialBooks(state);
-  const off = Math.round(state.modifiers.nextBuyDiscount * 100);
+  const off = Math.round(factoryBuyDiscountOf(state) * 100);
   const apNote = q3ProcurementFree(state.month) ? '，本季采购不耗 AP' : '';
   const discNote = usedSpotDiscount && off > 0 ? `（厂供 ${100 - off}折）` : '';
   const buyNote = `采购 ${parts.join('，')}，合计 ${money(total)}${discNote}${apNote}`;
@@ -3617,6 +3870,10 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
   if (!state.traderSpot) state.traderSpot = emptySpot();
   if (typeof state.prepaid !== 'number') state.prepaid = state.supplyContract?.prepaid ?? 0;
   if (state.supplyContract === undefined) state.supplyContract = null;
+  ensureContracts(state);
+  if (typeof state.overtimeUsedThisMonth !== 'boolean') state.overtimeUsedThisMonth = false;
+  if (!state.passThroughDelta) state.passThroughDelta = {};
+  if (state.pendingIpReplace === undefined) state.pendingIpReplace = null;
   if (!state.quarterSpotBonus) state.quarterSpotBonus = {};
   if (typeof state.modifiers.contractApFree !== 'boolean') state.modifiers.contractApFree = false;
   if (typeof state.modifiers.contractPrepayDiscount !== 'number') state.modifiers.contractPrepayDiscount = 0;
@@ -3843,34 +4100,37 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
       }
       const unit = contractUnitPrice(state, action.material);
       const prepay = roundMoney(unit * action.monthlyQty);
-      if (!state.modifiers.contractApFree && !spendAp(state)) {
+      const cover = contractCoverMonthsOf(state);
+      if (!contractApFreeOf(state) && !spendAp(state)) {
         pushLog(state, '行动点不足。');
         return state;
       }
       pay(state, prepay, 'buy');
-      state.supplyContract = {
+      ensureContracts(state);
+      const signed: SupplyContract = {
         material: action.material,
         monthlyQty: action.monthlyQty,
         unitPrice: unit,
-        remainingMonths: CONTRACT_COVER_MONTHS,
+        remainingMonths: cover,
         prepaid: prepay,
         missed: 0,
         pendingQty: 0,
         pendingCost: 0,
       };
+      state.supplyContracts = [...state.supplyContracts, signed];
       syncPrepaid(state);
-      const apNote = state.modifiers.contractApFree ? '，本月窗口不耗 AP' : '';
+      const apNote = contractApFreeOf(state) ? '，不耗 AP' : '';
       noteDept(
         state,
         'store',
-        `签订长期协议：${materialName(action.material)} ${action.monthlyQty} 件/月 × ${CONTRACT_COVER_MONTHS} 个月，锁价 ${money(unit)}/件，预付 ${money(prepay)}${apNote}`,
+        `签订长期协议：${materialName(action.material)} ${action.monthlyQty} 件/月 × ${cover} 个月，锁价 ${money(unit)}/件，预付 ${money(prepay)}${apNote}`,
       );
       return state;
     }
 
     case 'COLLECT_CONTRACT': {
       if (state.phase !== 'actions' && state.phase !== 'produce') return prev;
-      if (!deliverContract(state)) {
+      if (!deliverContract(state, action.material)) {
         pushLog(state, '协议到货未收：现金不够，或本月没有待付到货。');
       }
       return state;
@@ -3878,13 +4138,36 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
 
     case 'CANCEL_CONTRACT': {
       if (state.phase !== 'actions') return prev;
-      if (!state.supplyContract) {
+      ensureContracts(state);
+      const target =
+        (action.material
+          ? state.supplyContracts.find((item) => item.material === action.material)
+          : state.supplyContracts[0]) ?? null;
+      if (!target) {
         pushLog(state, '没有可解约的长期协议。');
         return state;
       }
-      writeOffPrepaid(state, '主动解约');
-      clearContract(state);
-      noteDept(state, 'store', '长期协议已解除');
+      writeOffPrepaid(state, target, '主动解约');
+      removeContract(state, target);
+      noteDept(state, 'store', `长期协议已解除：${materialName(target.material)}`);
+      return state;
+    }
+
+    case 'USE_OVERTIME': {
+      if (state.phase !== 'actions' && state.phase !== 'produce') return prev;
+      if (!canUseOvertime(state)) {
+        pushLog(state, '现在不能连班：需要 6 名生产工、2 台设备，本月未连过班，并付加班费。');
+        return state;
+      }
+      pay(state, PROD_OVERTIME_COST, 'extra');
+      state.modifiers.extraCapacity += PROD_OVERTIME_CAP;
+      state.overtimeUsedThisMonth = true;
+      noteDept(
+        state,
+        'infra',
+        `连班：加班费 ${money(PROD_OVERTIME_COST)}，本月产能 +${PROD_OVERTIME_CAP}`,
+        false,
+      );
       return state;
     }
 
@@ -3933,13 +4216,13 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
 
     case 'BUY_CARD': {
       if (state.phase !== 'actions' || !state.shop[action.index]) return prev;
-      if ((state.cardsBoughtThisMonth ?? 0) >= 1) {
-        pushLog(state, '本月已经立过一项，下月再看新提案。');
+      if ((state.cardsBoughtThisMonth ?? 0) >= cardBuyLimitOf(state)) {
+        pushLog(state, `本月已经立过 ${cardBuyLimitOf(state)} 项，下月再看新提案。`);
         return state;
       }
-      if (state.hand.length >= HAND_LIMIT) {
+      if (state.hand.length >= handLimitOf(state)) {
         if (!action.replaceUid) {
-          pushLog(state, `待执行已满（${HAND_LIMIT}）。立项时请换下一份。`);
+          pushLog(state, `待执行已满（${handLimitOf(state)}）。立项时请换下一份。`);
           return state;
         }
         const dropAt = state.hand.findIndex((card) => card.uid === action.replaceUid);
@@ -3950,7 +4233,7 @@ function reduceInner(prev: GameState, action: GameAction): GameState {
       const card = state.shop[action.index]!;
       state.hand.push({ ...card, readyMonth: state.month + 1 });
       state.shop.splice(action.index, 1);
-      state.cardsBoughtThisMonth = 1;
+      state.cardsBoughtThisMonth = (state.cardsBoughtThisMonth ?? 0) + 1;
       const name = cardById(card.defId).name;
       noteDept(state, 'ceo', `立项「${name}」，本月不耗现金和行动点，下月可落地`);
       return state;

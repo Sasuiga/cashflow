@@ -5,10 +5,8 @@ import {
   FACTORY_COST,
   FACTORY_LIFE_MONTHS,
   FACTORY_UPKEEP,
-  HAND_LIMIT,
   HIRE_COST,
   INTEREST_RATE,
-  LAST_CONTRACT_SIGN_MONTH,
   LOAN_DEFAULT_RATE,
   LOAN_LATE_FEE_RATE,
   LOAN_PER_MACHINE,
@@ -18,12 +16,13 @@ import {
   MACHINE_LIFE_MONTHS,
   MATERIALS,
   IP_CATALOG,
+  MAX_ACTIVE_IPS,
   MAX_RD_PRODUCTS,
-  PRODUCT_RD_MONTHS,
+  PROD_OVERTIME_CAP,
+  PROD_OVERTIME_COST,
   RD_STAFF_CAP,
   RD_SUCCESS_CAP,
   RD_SUCCESS_PER_HEAD,
-  TECH_RD_MONTHS,
   catalogOf,
   ROLES,
   SALARY,
@@ -31,6 +30,7 @@ import {
   WORKERS_PER_MACHINE,
   cardById,
   cardNeedsMaterial,
+  rdCycleOf,
 } from '../game/data';
 import {
   arOverdueOf,
@@ -39,7 +39,11 @@ import {
   buyCartCost,
   buyLineCost,
   canSignContract,
+  canUseOvertime,
   capacityOf,
+  cardBuyLimitOf,
+  contractApFreeOf,
+  contractCoverMonthsOf,
   contractPrepayOf,
   contractQtyOptions,
   contractUnitPrice,
@@ -48,17 +52,23 @@ import {
   canOpenProductRd,
   currentProductProject,
   currentTechProject,
+  factoryBuyDiscountOf,
   factoryLayout,
+  flexCapacityOf,
   finishedMaxAge,
   finishedProvisionOf,
+  handLimitOf,
   hireEffectLines,
   isProposalReady,
+  lastContractSignMonthOf,
+  liveContracts,
   loanDueThisMonthOf,
   loanLimit,
   loanOverdueOf,
   materialMaxAge,
   materialProvisionOf,
   maxExtraProduce,
+  maxLiveContractsOf,
   monthlySalary,
   monthOutlook,
   orderCapLoads,
@@ -76,9 +86,11 @@ import {
   loanAmountOptions,
   materialCrateSize,
   sellPriceOf,
+  shopCountOf,
   spotOf,
   totalStaff,
   traderOf,
+  traderPriceMultOf,
 } from '../game/engine';
 import { MONTH_NAMES, RD_ARCHETYPE_BLURB, RD_ARCHETYPE_LABEL, RD_TRACK_LABEL, ROLE_HINT, ROLE_LABEL, bomLabel, factoryName, materialName, money, pctLabel, priceDelta, qty, roundMoney, signedMoney } from '../game/format';
 import { goalById, q3ProcurementFree } from '../game/board';
@@ -132,6 +144,7 @@ function orderPreview(state: GameState, order: MonthOrder) {
   const revenue = roundMoney(order.qty * price);
   const credit = roundMoney(revenue * creditSaleRateOf(state));
   const unitMat = bomBookCost(state, order.productId);
+  const pass = state.passThroughDelta?.[order.productId] ?? 0;
   return {
     price,
     revenue,
@@ -141,6 +154,7 @@ function orderPreview(state: GameState, order: MonthOrder) {
     unitMat,
     unitGross: roundMoney(price - unitMat),
     gross: roundMoney(revenue - order.qty * unitMat),
+    passThrough: pass,
   };
 }
 
@@ -206,7 +220,7 @@ function RdLabCard({
 }) {
   const staff = rdTrackStaff(state, track);
   const progress = rdTrackProgress(state, track);
-  const cycle = track === 'product' ? PRODUCT_RD_MONTHS : TECH_RD_MONTHS;
+  const cycle = rdCycleOf(track, staff);
   const rate = rdTrackRate(state, track);
   const product = track === 'product' ? currentProductProject(state) : null;
   const tech = track === 'tech' ? currentTechProject(state) : null;
@@ -319,7 +333,7 @@ function IpTree({ state }: { state: GameState }) {
               <b>{ip.name}</b>
               <em>{ip.effect}</em>
             </span>
-            <span>{got ? '已解锁' : current ? '在研' : '未解锁'}</span>
+            <span>{got ? '生效中' : current ? '在研' : '未装备'}</span>
           </div>
         );
       })}
@@ -734,9 +748,15 @@ export function OperationsPage({
           .join('、')
       : '';
   const buyers = procurementOf(state);
-  const liveContract = Boolean(
-    state.supplyContract && ((state.supplyContract.remainingMonths ?? 0) > 0 || (state.supplyContract.pendingQty ?? 0) > 0),
-  );
+  const contracts = liveContracts(state);
+  const liveContract = contracts.length > 0;
+  const canSignMore = contracts.length < maxLiveContractsOf(state);
+  const buyLimit = cardBuyLimitOf(state);
+  const handCap = handLimitOf(state);
+  const shopN = shopCountOf(state);
+  const overtimeOk = canUseOvertime(state);
+  const flexCap = flexCapacityOf(state);
+  const staffDiscount = factoryBuyDiscountOf(state);
   const contractSignCost = contractPrepayOf(state, contractMat, contractQty);
   const contractBlock = canSignContract(state, contractMat, contractQty);
   const playCard = playCardUid ? state.hand.find((card) => card.uid === playCardUid) : null;
@@ -807,15 +827,15 @@ export function OperationsPage({
             <p className="hint">
               {acting
                 ? pendingAdopt !== null
-                  ? `待执行已满（${HAND_LIMIT}）。点选一份换下，或取消。`
-                  : '每月可免费立项一份，次月才能落地。落地只耗 1 AP，不另付现金。不立项也完全合法。'
-                : '事件结束后才能立项和落地。编制决定本月会出现哪类提案。'}
+                  ? `待执行已满（${handCap}）。点选一份换下，或取消。`
+                  : `每月可免费立项 ${buyLimit} 份，次月才能落地。落地只耗 1 AP，不另付现金。管理人越多，出示和立项越多。`
+                : `事件结束后才能立项和落地。编制决定本月会出现哪类提案。本月出示 ${shopN} 份。`}
             </p>
             {state.shop.length > 0 ? (
               <div className="cards" style={{ marginTop: 12 }}>
                 {state.shop.map((card, index) => {
                   const def = cardById(card.defId);
-                  const adopted = (state.cardsBoughtThisMonth ?? 0) >= 1;
+                  const adopted = (state.cardsBoughtThisMonth ?? 0) >= buyLimit;
                   const picking = pendingAdopt === index;
                   return (
                     <article
@@ -839,7 +859,7 @@ export function OperationsPage({
                             className="btn small"
                             style={{ marginTop: 10 }}
                             onClick={() => {
-                              if (state.hand.length >= HAND_LIMIT) {
+                              if (state.hand.length >= handCap) {
                                 setPendingAdopt(index);
                                 return;
                               }
@@ -947,21 +967,31 @@ export function OperationsPage({
                   return (
                     <button
                       key={order.id}
-                      className={['product', on ? 'on' : '', !can ? 'locked' : '', order.kind === 'contract' ? 'contract' : '']
+                      type="button"
+                      className={['product', on ? 'on' : 'off', !can ? 'locked' : '', order.kind === 'contract' ? 'contract' : '']
                         .filter(Boolean)
                         .join(' ')}
+                      aria-pressed={on}
                       disabled={(!acting && !producing) || (!can && !on)}
                       onClick={() => dispatch({ type: 'TOGGLE_ORDER', id: order.id })}
                     >
-                      <b>
-                        {order.kind === 'contract' ? '合同 · ' : ''}
-                        {item.tier} · {item.name} {order.qty} 件
-                      </b>
+                      <header className="product-top">
+                        <b>
+                          {order.kind === 'contract' ? <span className="product-kind">合同</span> : null}
+                          {item.tier} · {item.name} {order.qty} 件
+                        </b>
+                        <em className="product-flag">{on ? '已接' : '未接'}</em>
+                      </header>
                       <div className="meta">
                         <div className="meta-row">
                           <span>订单收入 {money(view.revenue)}</span>
-                          <span>毛利 {money(view.gross)}</span>
+                          <span>毛利 {money(view.gross)}（账面）</span>
                         </div>
+                        {view.passThrough > 0 ? (
+                          <div className="meta-row">
+                            <span className="good">售价已跟原料 +{money(view.passThrough)}/件</span>
+                          </div>
+                        ) : null}
                         <div className="meta-row">
                           <span>现销 {money(view.cash)}</span>
                           <span>赊销 {money(view.credit)}</span>
@@ -1018,7 +1048,7 @@ export function OperationsPage({
               </table>
             </div>
           </Facts>
-          <Actions note="厂供是便宜正道。额度用完后贸易商加价盘仍可买，集采折扣只打厂供。">
+          <Actions note="厂供是便宜正道。额度用完后贸易商加价盘仍可买。编制折扣和集采折扣取高者，只打厂供。">
             <p className="dept-kicker">厂供现货</p>
             <div className="spot-list">
               {visibleMaterials.map((item) => {
@@ -1072,7 +1102,9 @@ export function OperationsPage({
               })}
             </div>
             <p className="dept-kicker" style={{ marginTop: 16 }}>贸易商 · 加价盘</p>
-            <p className="hint">钢材/塑料 1.5 倍，芯片/合金 2 倍。厂供卖完后仍可买。</p>
+            <p className="hint">
+              钢材/塑料 {traderPriceMultOf(state, 'a')} 倍，芯片/合金 {traderPriceMultOf(state, 'c')} 倍。厂供卖完后仍可买。
+            </p>
             <div className="spot-list">
               {visibleMaterials.map((item) => {
                 const remaining = traderOf(state, item.id);
@@ -1084,7 +1116,7 @@ export function OperationsPage({
                   <article key={`trader-${item.id}`} className={['spot-card', 'trader', soldOut ? 'soldout' : '', pick > 0 ? 'on' : ''].filter(Boolean).join(' ')}>
                     <header className="spot-top">
                       <b>{item.name}</b>
-                      <span>{money(roundMoney((state.materialPrices[item.id] ?? 0) * (item.id === 'a' || item.id === 'b' ? 1.5 : 2)))} / 件</span>
+                      <span>{money(roundMoney((state.materialPrices[item.id] ?? 0) * traderPriceMultOf(state, item.id)))} / 件</span>
                     </header>
                     <div className="spot-row">
                       <p className="spot-meta">
@@ -1113,9 +1145,9 @@ export function OperationsPage({
                 );
               })}
             </div>
-            {state.modifiers.nextBuyDiscount > 0 && (
+            {staffDiscount > 0 && (
               <p className="hint" style={{ marginTop: 8 }}>
-                本单厂供集采折扣 {Math.round(state.modifiers.nextBuyDiscount * 100)}%。不加价盘。
+                本单厂供折扣 {Math.round(staffDiscount * 100)}%。不加价盘。
               </p>
             )}
           </Actions>
@@ -1145,31 +1177,44 @@ export function OperationsPage({
             </div>
             {cartItems.length > 0 && state.cash < cartTotal && <p className="hint">现金不够支付本单。</p>}
           </Actions>
-          <Actions note="签的是未来三个完整月，本月不到货。冲击不砍协议到货。同时只许一份。">
+          <Actions
+            note={`签的是未来 ${contractCoverMonthsOf(state)} 个完整月，本月不到货。冲击不砍协议到货。同时最多 ${maxLiveContractsOf(state)} 份。`}
+          >
             <p className="dept-kicker">长期协议</p>
-            {state.supplyContract && liveContract ? (
-              <div className="spot-card on">
+            {contracts.map((item) => (
+              <div key={`${item.material}-${item.unitPrice}-${item.remainingMonths}`} className="spot-card on" style={{ marginBottom: 8 }}>
                 <header className="spot-top">
-                  <b>{materialName(state.supplyContract.material)} {state.supplyContract.monthlyQty} 件/月</b>
-                  <span>锁价 {money(state.supplyContract.unitPrice)} / 件</span>
+                  <b>
+                    {materialName(item.material)} {item.monthlyQty} 件/月
+                  </b>
+                  <span>锁价 {money(item.unitPrice)} / 件</span>
                 </header>
                 <p className="spot-meta">
-                  剩余 {state.supplyContract.remainingMonths} 个月
-                  {state.supplyContract.prepaid > 0 ? ` · 预付 ${money(state.supplyContract.prepaid)}` : ''}
-                  {state.supplyContract.pendingQty > 0 ? ` · 待付到货 ${qty(state.supplyContract.pendingQty)}` : ''}
+                  剩余 {item.remainingMonths} 个月
+                  {item.prepaid > 0 ? ` · 预付 ${money(item.prepaid)}` : ''}
+                  {item.pendingQty > 0 ? ` · 待付到货 ${qty(item.pendingQty)}` : ''}
                 </p>
                 <div className="footer-actions" style={{ justifyContent: 'flex-start', marginTop: 8 }}>
-                  {state.supplyContract.pendingQty > 0 ? (
-                    <button className="btn small" disabled={!acting} onClick={() => dispatch({ type: 'COLLECT_CONTRACT' })}>
+                  {item.pendingQty > 0 ? (
+                    <button
+                      className="btn small"
+                      disabled={!acting}
+                      onClick={() => dispatch({ type: 'COLLECT_CONTRACT', material: item.material })}
+                    >
                       收取到货 · 0 AP
                     </button>
                   ) : null}
-                  <button className="btn small ghost" disabled={!acting} onClick={() => dispatch({ type: 'CANCEL_CONTRACT' })}>
+                  <button
+                    className="btn small ghost"
+                    disabled={!acting}
+                    onClick={() => dispatch({ type: 'CANCEL_CONTRACT', material: item.material })}
+                  >
                     提前解约
                   </button>
                 </div>
               </div>
-            ) : (
+            ))}
+            {canSignMore ? (
               <>
                 <div className="spot-lots" style={{ marginTop: 8 }}>
                   {visibleMaterials.map((item) => (
@@ -1200,8 +1245,8 @@ export function OperationsPage({
                 </div>
                 <p className="hint" style={{ marginTop: 8 }}>
                   锁价 {money(contractUnitPrice(state, contractMat))}/件 · 预付一个月 {money(contractSignCost)}
-                  {state.modifiers.contractApFree ? ' · 本月窗口不耗 AP' : ' · 耗 1 AP'}
-                  {state.month > LAST_CONTRACT_SIGN_MONTH ? ' · 剩余月份不足，不能新签' : ''}
+                  {contractApFreeOf(state) ? ' · 不耗 AP' : ' · 耗 1 AP'}
+                  {state.month > lastContractSignMonthOf(state) ? ' · 剩余月份不足，不能新签' : ''}
                 </p>
                 <button
                   className="btn small"
@@ -1212,7 +1257,7 @@ export function OperationsPage({
                 </button>
                 {contractBlock && acting ? <p className="hint">{contractBlock}</p> : null}
               </>
-            )}
+            ) : null}
           </Actions>
           <Facts title="原料报价">
             <table className="sheet dark compact quote-sheet">
@@ -1254,7 +1299,7 @@ export function OperationsPage({
             <PlantBoard
               plants={plants}
               openIndex={openPlant >= plants.length ? -1 : openPlant}
-              extraCapacity={state.modifiers.extraCapacity}
+              extraCapacity={state.modifiers.extraCapacity + flexCap}
               onToggle={(index) => setOpenPlant(openPlant === index ? -1 : index)}
             />
           </Facts>
@@ -1274,6 +1319,9 @@ export function OperationsPage({
             <button className="chip" disabled={!acting} onClick={() => setHireRole('production')}>
               招聘生产人员
             </button>
+            <button className="chip" disabled={!overtimeOk} onClick={() => dispatch({ type: 'USE_OVERTIME' })}>
+              连班 +{PROD_OVERTIME_CAP} · {money(PROD_OVERTIME_COST)}
+            </button>
             <button className="chip" disabled={!acting} onClick={() => setPlantKind('machine')}>
               购买设备
             </button>
@@ -1289,7 +1337,7 @@ export function OperationsPage({
         <Stage
           id="rd"
           title="研发部"
-          summary={`产品组 ${rdTrackStaff(state, 'product')}/${RD_STAFF_CAP} 人 · 工艺组 ${rdTrackStaff(state, 'tech')}/${RD_STAFF_CAP} 人 · 知识产权 ${(state.ownedIps ?? []).length}/${IP_CATALOG.length}`}
+          summary={`产品组 ${rdTrackStaff(state, 'product')}/${RD_STAFF_CAP} 人 · 工艺组 ${rdTrackStaff(state, 'tech')}/${RD_STAFF_CAP} 人 · 工艺生效 ${state.ownedIps?.length ?? 0}/${MAX_ACTIVE_IPS}`}
         >
           <Facts>
             <div className="rd-labs">
@@ -1307,7 +1355,7 @@ export function OperationsPage({
               />
             </div>
             <p className="hint" style={{ marginTop: 12 }}>
-              产品课题 3 个月，开题时自选简化、替代芯片或冲毛利；工艺课题 2 个月，招人或派人时选择知识产权。每人 +{pctLabel(RD_SUCCESS_PER_HEAD)} 成功率，每组最多 {RD_STAFF_CAP} 人、首轮上限 {pctLabel(RD_SUCCESS_CAP)}，失败续攻可到 100%。有人值守才走表，招人不加速进度。
+              产品课题默认 3 个月，满 3 人改为 2 个月；工艺课题 2 个月。每人 +{pctLabel(RD_SUCCESS_PER_HEAD)} 成功率，每组最多 {RD_STAFF_CAP} 人、首轮上限 {pctLabel(RD_SUCCESS_CAP)}，失败续攻可到 100%。有人值守才走表。工艺同时只生效 {MAX_ACTIVE_IPS} 项，多完成的必须换掉一项。
               {rdCapacityBonus(state) > 0 ? ` 已装备知识产权为本月产能 +${rdCapacityBonus(state)}。` : ''}
             </p>
           </Facts>

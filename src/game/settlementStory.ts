@@ -726,7 +726,9 @@ function explainInventoryNet(ctx: ExplainCtx): SettleRow[] {
 function explainPrepaid(ctx: ExplainCtx): SettleRow[] {
   const { state, books } = ctx;
   const rows: SettleRow[] = [];
-  const contract = state.supplyContract?.prepaid ?? 0;
+  const contract = Array.isArray(state.supplyContracts)
+    ? state.supplyContracts.reduce((sum, item) => sum + (item.prepaid ?? 0), 0)
+    : (state.supplyContract?.prepaid ?? 0);
   pushOcc(rows, unsigned('供应协议预付', contract, { detail: '尚未到货摊销的预付款' }));
   const other = leftover(books.prepaid ?? 0, contract);
   pushOcc(rows, unsigned('其他预付款', other));
