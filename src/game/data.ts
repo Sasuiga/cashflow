@@ -214,7 +214,7 @@ export function rdCycleOf(track: RdTrack): number {
 export function rdSuccessRate(staff: number, failBonus = 0): number {
   const heads = Math.min(RD_STAFF_CAP, Math.max(0, staff));
   const raw = heads * RD_SUCCESS_PER_HEAD + Math.max(0, failBonus);
-  return Math.round(Math.min(RD_SUCCESS_CAP, raw) * 100) / 100;
+  return Math.round(Math.min(1, raw) * 100) / 100;
 }
 
 export function ipById(id: IpId): IpDef {

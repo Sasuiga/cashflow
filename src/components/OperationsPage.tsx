@@ -1307,7 +1307,7 @@ export function OperationsPage({
               />
             </div>
             <p className="hint" style={{ marginTop: 12 }}>
-              产品课题 3 个月，开题时自选简化、替代芯片或冲毛利；工艺课题 2 个月，招人或派人时选择知识产权。每人 +{pctLabel(RD_SUCCESS_PER_HEAD)} 成功率，每组最多 {RD_STAFF_CAP} 人、上限 {pctLabel(RD_SUCCESS_CAP)}。有人值守才走表，招人不加速进度。
+              产品课题 3 个月，开题时自选简化、替代芯片或冲毛利；工艺课题 2 个月，招人或派人时选择知识产权。每人 +{pctLabel(RD_SUCCESS_PER_HEAD)} 成功率，每组最多 {RD_STAFF_CAP} 人、首轮上限 {pctLabel(RD_SUCCESS_CAP)}，失败续攻可到 100%。有人值守才走表，招人不加速进度。
               {rdCapacityBonus(state) > 0 ? ` 已装备知识产权为本月产能 +${rdCapacityBonus(state)}。` : ''}
             </p>
           </Facts>

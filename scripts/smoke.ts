@@ -325,7 +325,7 @@ function checkRdLabs(): void {
   assert(rdSuccessRate(3) === 0.9, '3 人成功率应为 90% 上限');
   assert(rdSuccessRate(4) === 0.9, '超过 3 人仍应封顶 90%');
   assert(rdSuccessRate(1, 0.1) === 0.4, '失败经验应抬高小团队成功率');
-  assert(rdSuccessRate(3, 0.1) === 0.9, '失败经验不能突破 90% 上限');
+  assert(rdSuccessRate(3, 0.1) === 1, '3 人失败后续攻应能到 100%');
 
   let state = confirmBoard(reduce(createInitialState(), { type: 'START_GAME' }));
   state = reduce(state, { type: 'CONFIRM_BRIEFING' });

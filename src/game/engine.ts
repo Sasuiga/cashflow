@@ -586,7 +586,7 @@ export function hireEffectLines(state: GameState, role: Role, rdTrack: RdTrack =
   const productOpen = (state.extraProducts?.length ?? 0) < MAX_RD_PRODUCTS;
   const techOpen = availableTechIps(state).length > 0;
   const lines = [
-    `编入${RD_TRACK_LABEL[track]}。人数只影响成功率（每人 ${pctLabel(RD_SUCCESS_PER_HEAD)}，每组最多 ${RD_STAFF_CAP} 人，上限 ${pctLabel(RD_SUCCESS_CAP)}）。有人值守时每月结算推进 1 个月。`,
+    `编入${RD_TRACK_LABEL[track]}。人数只影响成功率（每人 ${pctLabel(RD_SUCCESS_PER_HEAD)}，每组最多 ${RD_STAFF_CAP} 人，首轮上限 ${pctLabel(RD_SUCCESS_CAP)}，失败续攻可到 100%）。有人值守时每月结算推进 1 个月。`,
   ];
   if (!project) {
     lines.push(
@@ -2591,7 +2591,7 @@ function resolveRd(state: GameState, track: RdTrack): string {
       return body;
     }
     setRdFailBonus(state, 'product', RD_FAIL_BONUS);
-      const body = `${draft.name} 没跑通，进度清零。若继续攻关，下次成功率 +${pctLabel(RD_FAIL_BONUS)}（仍封顶 ${pctLabel(RD_SUCCESS_CAP)}）。`;
+      const body = `${draft.name} 没跑通，进度清零。若继续攻关，下次成功率 +${pctLabel(RD_FAIL_BONUS)}（3 人时可到 100%）。`;
     state.pendingRdReveals = [
       ...(state.pendingRdReveals ?? []),
       { track, success: false, title: `${draft.name} 未过关`, body, chance, staff },
@@ -2614,7 +2614,7 @@ function resolveRd(state: GameState, track: RdTrack): string {
     return body;
   }
   setRdFailBonus(state, 'tech', RD_FAIL_BONUS);
-  const body = `${ip.name} 样件没过，进度清零。若继续攻关，下次成功率 +${pctLabel(RD_FAIL_BONUS)}（仍封顶 ${pctLabel(RD_SUCCESS_CAP)}）。`;
+  const body = `${ip.name} 样件没过，进度清零。若继续攻关，下次成功率 +${pctLabel(RD_FAIL_BONUS)}（3 人时可到 100%）。`;
   state.pendingRdReveals = [
     ...(state.pendingRdReveals ?? []),
     { track, success: false, title: `${ip.name} 未过关`, body, chance, staff },
